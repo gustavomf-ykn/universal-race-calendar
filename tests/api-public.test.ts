@@ -25,6 +25,19 @@ describe("API public and guarded routes without database", () => {
     expect(body.info.title).toBe("Universal Race Calendar API");
   });
 
+  it("adds CORS headers to public responses", async () => {
+    process.env.CORS_ORIGINS = "https://example.test";
+    const corsApp = await buildApp();
+    const response = await corsApp.inject({
+      method: "GET",
+      url: "/health",
+      headers: { origin: "https://example.test" },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["access-control-allow-origin"]).toBe("https://example.test");
+    await corsApp.close();
+  });
+
   it("guards internal routes before they access the database", async () => {
     const unauthorized = await app.inject({ method: "GET", url: "/v1/sources" });
     expect(unauthorized.statusCode).toBe(401);

@@ -24,6 +24,7 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/race_calendar?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/race_calendar?schema=public
       AI_PROVIDER: mock
       INTERNAL_API_KEY: test-internal-key
     steps:

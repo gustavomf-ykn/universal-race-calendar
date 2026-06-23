@@ -37,3 +37,14 @@ Exigem `X-API-Key`.
 Quando o conteudo nao mudou desde o ultimo check, o endpoint retorna `status = success`, `eventId = null` e `reasons = ["unchanged_content"]`.
 
 `POST /v1/imports/ticketsports/run` descobre corridas de rua na TicketSports, cria/atualiza sources por `adapter + externalId`, roda o pipeline sincrono e retorna um resumo de importacao.
+
+## Producao
+
+`GET /v1/events?sourceType=ticketsports&limit=100` e o endpoint principal para sites consumirem o catalogo publico inicial.
+
+Em producao, `POST /v1/imports/ticketsports/run` deve ser chamado pelo workflow **Production Import** com:
+
+- `PRODUCTION_API_BASE_URL`
+- `PRODUCTION_INTERNAL_API_KEY`
+
+O banco deve ser persistente. Reimportacoes da TicketSports atualizam eventos existentes por `sourceType + sourceExternalId`, criam nova `EventVersion` e evitam duplicar a API publica.

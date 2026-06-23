@@ -1,0 +1,69 @@
+name: Production Import
+
+on:
+  workflow_dispatch:
+    inputs:
+      quantity:
+        description: "Maximum TicketSports street-race events to import"
+        required: true
+        default: "1000"
+      concurrency:
+        description: "Import concurrency"
+        required: true
+        default: "3"
+      delay_ms:
+        description: "Delay between detail requests in milliseconds"
+        required: true
+        default: "300"
+  schedule:
+    - cron: "17 8 * * *"
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    env:
+      PRODUCTION_API_BASE_URL: ${{ secrets.PRODUCTION_API_BASE_URL }}
+      PRODUCTION_INTERNAL_API_KEY: ${{ secrets.PRODUCTION_INTERNAL_API_KEY }}
+      IMPORT_QUANTITY: ${{ inputs.quantity || '1000' }}
+      IMPORT_CONCURRENCY: ${{ inputs.concurrency || '3' }}
+      IMPORT_DELAY_MS: ${{ inputs.delay_ms || '300' }}
+    steps:
+      - name: Check required secrets
+        run: |
+          test -n "$PRODUCTION_API_BASE_URL"
+          test -n "$PRODUCTION_INTERNAL_API_KEY"
+      - name: Run TicketSports import
+        run: |
+          mkdir -p artifacts
+          jq -n \
+            --argjson quantity "$IMPORT_QUANTITY" \
+            --argjson concurrency "$IMPORT_CONCURRENCY" \
+            --argjson delayMs "$IMPORT_DELAY_MS" \
+            '{quantity: $quantity, concurrency: $concurrency, delayMs: $delayMs}' > artifacts/import-request.json
+          curl -fsS \
+            -X POST "$PRODUCTION_API_BASE_URL/v1/imports/ticketsports/run" \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: $PRODUCTION_INTERNAL_API_KEY" \
+            --data @artifacts/import-request.json \
+            -o artifacts/import-result.json
+      - name: Validate public events
+        run: |
+          curl -fsS "$PRODUCTION_API_BASE_URL/v1/events?sourceType=ticketsports&limit=5" -o artifacts/sample-events.json
+          jq -e '.data | type == "array"' artifacts/sample-events.json
+      - name: Write summary
+        run: |
+          echo "## Production TicketSports import" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Import result:" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/import-result.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Sample events:" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/sample-events.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-import-results
+          path: artifacts/*.json

@@ -84,3 +84,54 @@ pnpm db:migrate
 pnpm dev:api
 pnpm --filter @race-calendar/worker check-source <sourceId>
 ```
+
+## Deploy de produto
+
+O caminho simples para teste com site real e dados persistentes e:
+
+- Neon Postgres para o banco.
+- Render Web Service para a API.
+- GitHub Actions para importacao recorrente da TicketSports.
+
+No Neon, configure duas connection strings:
+
+```bash
+DATABASE_URL="postgresql://...-pooler.../neondb?sslmode=require"
+DIRECT_URL="postgresql://.../neondb?sslmode=require"
+```
+
+No Render, crie um Web Service apontando para este repositorio:
+
+```bash
+Build Command: pnpm install --frozen-lockfile && pnpm db:generate && pnpm db:migrate && pnpm build
+Start Command: pnpm start:api
+Health Check Path: /health
+```
+
+Env vars recomendadas no Render:
+
+```bash
+NODE_ENV=production
+DATABASE_URL=...
+DIRECT_URL=...
+INTERNAL_API_KEY=...
+CORS_ORIGINS=*
+AI_PROVIDER=mock
+TICKETSPORTS_IMPORT_QUANTITY=1000
+TICKETSPORTS_IMPORT_CONCURRENCY=3
+TICKETSPORTS_IMPORT_DELAY_MS=300
+TICKETSPORTS_IMPORT_QUICK_FILTER=corrida-de-rua
+```
+
+Depois do deploy, configure estes secrets no GitHub:
+
+```bash
+PRODUCTION_API_BASE_URL=https://sua-api.onrender.com
+PRODUCTION_INTERNAL_API_KEY=mesmo-valor-do-INTERNAL_API_KEY
+```
+
+Para importar corridas no ambiente persistente, rode o workflow **Production Import** na aba Actions. Para consumir no site teste:
+
+```bash
+curl "https://sua-api.onrender.com/v1/events?sourceType=ticketsports&limit=100"
+```

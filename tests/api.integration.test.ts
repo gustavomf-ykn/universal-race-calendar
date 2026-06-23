@@ -134,11 +134,12 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     await prisma.event.deleteMany();
     await prisma.source.deleteMany();
 
+    let detailPayload = ticketsportsFixture;
     const registry = new SourceAdapterRegistry({
       adapters: [
         new TicketSportsAdapter({
           async getJson() {
-            return ticketsportsFixture;
+            return detailPayload;
           },
           async getText() {
             throw new Error("getText should not be called");
@@ -171,6 +172,7 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     expect(firstImport.discoveredCount).toBe(1);
     expect(firstImport.publishedEvents).toBe(1);
     expect(await prisma.source.count({ where: { adapter: "ticketsports" } })).toBe(1);
+    expect(await prisma.event.count({ where: { sourceType: "ticketsports", sourceExternalId: "74641" } })).toBe(1);
 
     const publicList = await app.inject({ method: "GET", url: "/v1/events?sourceType=ticketsports&limit=100" });
     expect(publicList.statusCode).toBe(200);
@@ -189,6 +191,36 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     });
     expect(secondImport.unchangedEvents).toBe(1);
     expect(await prisma.source.count({ where: { adapter: "ticketsports" } })).toBe(1);
+    expect(await prisma.event.count({ where: { sourceType: "ticketsports", sourceExternalId: "74641" } })).toBe(1);
+
+    detailPayload = {
+      ...ticketsportsFixture,
+      title: "Meia Maratona de Florianopolis Atualizada",
+      eventContents: [
+        {
+          title: "O Evento",
+          description: "<p>Meia Maratona de Florianopolis atualizada com percursos de 5 km e 10 km.</p>",
+        },
+      ],
+    };
+    const updatedImport = await importTicketSportsEvents({
+      quickFilter: "corrida-de-rua",
+      quantity: 1,
+      concurrency: 1,
+      delayMs: 0,
+      registry,
+      discoverEvents,
+    });
+    expect(updatedImport.publishedEvents).toBe(1);
+    expect(await prisma.event.count({ where: { sourceType: "ticketsports", sourceExternalId: "74641" } })).toBe(1);
+    const updatedEvent = await prisma.event.findFirstOrThrow({
+      where: { sourceType: "ticketsports", sourceExternalId: "74641" },
+      include: { distances: true, versions: true },
+    });
+    expect(updatedEvent.name).toBe("Meia Maratona de Florianopolis Atualizada");
+    expect(updatedEvent.distances.map((distance) => distance.label)).toContain("10 km");
+    expect(updatedEvent.distances.map((distance) => distance.label)).not.toContain("21 km");
+    expect(updatedEvent.versions).toHaveLength(2);
   });
 
   it("exposes the internal TicketSports import endpoint as a synchronous job", async () => {

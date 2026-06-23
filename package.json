@@ -8,6 +8,7 @@
     "build": "pnpm -r build",
     "dev:api": "pnpm --filter @race-calendar/api dev",
     "dev:worker": "pnpm --filter @race-calendar/worker dev",
+    "start:api": "node apps/api/dist/apps/api/src/server.js",
     "lint": "eslint .",
     "format": "prettier --write .",
     "typecheck": "pnpm -r typecheck",

@@ -1,4 +1,5 @@
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import cors from "@fastify/cors";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import { importTicketSportsEvents, runSourceCheck, type ImportTicketSportsEventsOptions } from "@race-calendar/curation";
@@ -29,6 +30,9 @@ type EventListQuery = {
 export async function buildApp(options: BuildAppOptions = {}) {
   const app = Fastify({ logger: true });
   const runTicketSportsImport = options.importTicketSportsEvents ?? importTicketSportsEvents;
+  await app.register(cors, {
+    origin: corsOrigins(),
+  });
   await app.register(swagger, {
     openapi: {
       info: {
@@ -361,4 +365,13 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
 
 function toRad(value: number): number {
   return (value * Math.PI) / 180;
+}
+
+function corsOrigins(): boolean | string[] {
+  const value = process.env.CORS_ORIGINS?.trim();
+  if (!value || value === "*") return true;
+  return value
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 }
