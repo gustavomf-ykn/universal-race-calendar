@@ -3,8 +3,8 @@ import cors from "@fastify/cors";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import { importTicketSportsEvents, runSourceCheck, type ImportTicketSportsEventsOptions } from "@race-calendar/curation";
-import { createSource, dateToIsoDate, getSource, listSources, prisma } from "@race-calendar/database";
-import { eventStatusSchema, modalitySchema, sourceKindSchema } from "@race-calendar/schemas";
+import { createSource, dateToIsoDate, getLatestImportRun, getSource, listSources, prisma } from "@race-calendar/database";
+import { eventStatusSchema, modalitySchema, publicationStatusSchema, sourceKindSchema } from "@race-calendar/schemas";
 
 export type BuildAppOptions = {
   importTicketSportsEvents?: (options?: ImportTicketSportsEventsOptions) => ReturnType<typeof importTicketSportsEvents>;
@@ -184,12 +184,20 @@ export async function buildApp(options: BuildAppOptions = {}) {
     const quickFilter = stringOrNull(body.quickFilter);
     const concurrency = optionalPositiveInt(body.concurrency);
     const delayMs = optionalNonNegativeInt(body.delayMs);
+    const offset = optionalNonNegativeInt(body.offset);
     if (quantity != null) importOptions.quantity = quantity;
     if (quickFilter != null) importOptions.quickFilter = quickFilter;
     if (concurrency != null) importOptions.concurrency = concurrency;
     if (delayMs != null) importOptions.delayMs = delayMs;
+    if (offset != null) importOptions.offset = offset;
     const result = await runTicketSportsImport(importOptions);
     return reply.code(result.status === "success" ? 200 : 207).send(result);
+  });
+
+  app.get("/v1/imports/ticketsports/latest", { preHandler: requireInternalApiKey }, async (request, reply) => {
+    const latest = await getLatestImportRun("ticketsports");
+    if (!latest) return reply.code(404).send({ error: "import_run_not_found" });
+    return serializeImportRun(latest);
   });
 
   app.get("/v1/extraction-jobs/:id", { preHandler: requireInternalApiKey }, async (request, reply) => {
@@ -197,6 +205,52 @@ export async function buildApp(options: BuildAppOptions = {}) {
     const job = await prisma.extractionJob.findUnique({ where: { id } });
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return job;
+  });
+
+  app.get("/v1/audit/events", { preHandler: requireInternalApiKey }, async (request) => {
+    const query = request.query as { publicationStatus?: string; sourceType?: string; page?: string; limit?: string };
+    const page = positiveInt(query.page, 1);
+    const limit = Math.min(positiveInt(query.limit, 50), 100);
+    const parsedPublicationStatus = publicationStatusSchema.safeParse(query.publicationStatus);
+    const publicationStatus = parsedPublicationStatus.success ? parsedPublicationStatus.data : "pending_review";
+    const where = {
+      publicationStatus,
+      ...(query.sourceType ? { sourceType: query.sourceType } : {}),
+    };
+    const [total, rows] = await Promise.all([
+      prisma.event.count({ where }),
+      prisma.event.findMany({
+        where,
+        orderBy: { updatedAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+    ]);
+    return {
+      data: rows.map((event) => ({
+        id: event.id,
+        slug: event.slug,
+        name: event.name,
+        date: dateToIsoDate(event.date),
+        city: event.city,
+        state: event.state,
+        country: event.country,
+        locationName: event.locationName,
+        address: event.address,
+        sourceType: event.sourceType,
+        sourceExternalId: event.sourceExternalId,
+        eventStatus: event.eventStatus,
+        publicationStatus: event.publicationStatus,
+        dedupeStatus: event.dedupeStatus,
+        duplicateOfEventId: event.duplicateOfEventId,
+        confidence: event.confidence,
+        warnings: event.warnings,
+        publishabilityReasons: event.publishabilityReasons,
+        registrationUrl: event.registrationUrl,
+        updatedAt: event.updatedAt.toISOString(),
+      })),
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
   });
 
   return app;
@@ -365,6 +419,29 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
 
 function toRad(value: number): number {
   return (value * Math.PI) / 180;
+}
+
+function serializeImportRun(run: Awaited<ReturnType<typeof getLatestImportRun>>) {
+  if (!run) return null;
+  return {
+    id: run.id,
+    source: run.source,
+    quickFilter: run.quickFilter,
+    status: run.status,
+    requestedQuantity: run.requestedQuantity,
+    offset: run.offset,
+    discoveredCount: run.discoveredCount,
+    processedCount: run.processedCount,
+    publishedEvents: run.publishedEvents,
+    manualReviewEvents: run.manualReviewEvents,
+    unchangedEvents: run.unchangedEvents,
+    failedCount: run.failedCount,
+    failures: run.failures,
+    startedAt: run.startedAt.toISOString(),
+    finishedAt: run.finishedAt.toISOString(),
+    durationMs: run.finishedAt.getTime() - run.startedAt.getTime(),
+    createdAt: run.createdAt.toISOString(),
+  };
 }
 
 function corsOrigins(): boolean | string[] {

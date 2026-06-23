@@ -4,6 +4,7 @@ import {
   completeExtractionJob,
   createExtractionJob,
   getSource,
+  saveImportRun,
   markSourceChecked,
   markSourceFailed,
   saveCanonicalEvent,
@@ -66,6 +67,8 @@ export type TicketSportsImportResult = {
   status: "success" | "partial_success";
   source: "ticketsports";
   quickFilter: string;
+  requestedQuantity: number;
+  offset: number;
   discoveredCount: number;
   processedCount: number;
   publishedEvents: number;
@@ -80,6 +83,7 @@ export type TicketSportsImportResult = {
 export type ImportTicketSportsEventsOptions = DiscoverTicketSportsEventsOptions & {
   concurrency?: number;
   delayMs?: number;
+  offset?: number;
   registry?: SourceAdapterRegistry;
   discoverEvents?: () => Promise<TicketSportsDiscoveredEvent[]>;
 };
@@ -188,12 +192,14 @@ export async function importTicketSportsEvents(options: ImportTicketSportsEvents
   const startedAt = new Date();
   const quickFilter = cleanText(options.quickFilter ?? process.env.TICKETSPORTS_IMPORT_QUICK_FILTER ?? "corrida-de-rua");
   const quantity = positiveInt(options.quantity, Number(process.env.TICKETSPORTS_IMPORT_QUANTITY ?? 1000));
+  const offset = nonNegativeInt(options.offset, Number(process.env.TICKETSPORTS_IMPORT_OFFSET ?? 0));
   const concurrency = Math.max(1, Math.min(positiveInt(options.concurrency, Number(process.env.TICKETSPORTS_IMPORT_CONCURRENCY ?? 3)), 10));
   const delayMs = nonNegativeInt(options.delayMs, Number(process.env.TICKETSPORTS_IMPORT_DELAY_MS ?? 300));
   const registry = options.registry ?? new SourceAdapterRegistry();
-  const discoverOptions: DiscoverTicketSportsEventsOptions = { quantity, quickFilter };
+  const discoverOptions: DiscoverTicketSportsEventsOptions = { quantity: quantity + offset, quickFilter };
   if (options.client) discoverOptions.client = options.client;
-  const discovered = options.discoverEvents ? await options.discoverEvents() : await discoverTicketSportsEvents(discoverOptions);
+  const allDiscovered = options.discoverEvents ? await options.discoverEvents() : await discoverTicketSportsEvents(discoverOptions);
+  const discovered = allDiscovered.slice(offset, offset + quantity);
   const failures: TicketSportsImportResult["failures"] = [];
   let processedCount = 0;
   let publishedEvents = 0;
@@ -235,12 +241,14 @@ export async function importTicketSportsEvents(options: ImportTicketSportsEvents
   }
 
   await Promise.all(Array.from({ length: Math.min(concurrency, discovered.length) }, () => worker()));
-  return {
+  const result: TicketSportsImportResult = {
     jobId: `import_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
     status: failures.length ? "partial_success" : "success",
     source: "ticketsports",
     quickFilter,
-    discoveredCount: discovered.length,
+    requestedQuantity: quantity,
+    offset,
+    discoveredCount: allDiscovered.length,
     processedCount,
     publishedEvents,
     manualReviewEvents,
@@ -250,6 +258,24 @@ export async function importTicketSportsEvents(options: ImportTicketSportsEvents
     startedAt: startedAt.toISOString(),
     finishedAt: new Date().toISOString(),
   };
+  await saveImportRun({
+    id: result.jobId,
+    source: result.source,
+    quickFilter: result.quickFilter,
+    status: result.status,
+    requestedQuantity: result.requestedQuantity,
+    offset: result.offset,
+    discoveredCount: result.discoveredCount,
+    processedCount: result.processedCount,
+    publishedEvents: result.publishedEvents,
+    manualReviewEvents: result.manualReviewEvents,
+    unchangedEvents: result.unchangedEvents,
+    failedCount: result.failedCount,
+    failures: result.failures,
+    startedAt: result.startedAt,
+    finishedAt: result.finishedAt,
+  });
+  return result;
 }
 
 export async function curateSourceExtraction(
@@ -395,7 +421,7 @@ export function evaluatePublishability(normalizedEvent: Pick<
   return { canPublish: false, publicationStatus: "pending_review", reasons };
 }
 
-const criticalWarnings = new Set(["missing_date", "conflicting_date", "conflicting_location"]);
+const criticalWarnings = new Set(["missing_date", "conflicting_date", "conflicting_location", "suspicious_city"]);
 
 function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtraction {
   const record = asRecord(raw.rawSourceData);
@@ -411,6 +437,7 @@ function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtra
   if (!normalizeDate(date)) warnings.push("missing_date");
   if (!location.city) warnings.push("missing_city");
   if (!location.state) warnings.push("missing_state");
+  if (location.suspiciousCity) warnings.push("suspicious_city");
   if (!registrationUrl) warnings.push("missing_registration_url");
   const confidence = warnings.length ? 0.72 : 0.92;
 
@@ -427,7 +454,7 @@ function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtra
     address: evidence(address, address ? 0.88 : 0),
     latitude: numberOrNull(record.latitude),
     longitude: numberOrNull(record.longitude),
-    modality: modalityFromTicketSportsText(text),
+    modality: modalityFromTicketSportsText(title, text),
     distances: distancesFromText(text),
     prices: pricesFromText(text),
     kits: [],
@@ -459,33 +486,82 @@ function parseTicketSportsLocation(address: string): {
   state: string | null;
   country: string | null;
   locationName: string | null;
+  suspiciousCity: boolean;
 } {
   const text = cleanText(address);
-  if (!text) return { city: null, state: null, country: "BR", locationName: null };
+  if (!text) return { city: null, state: null, country: "BR", locationName: null, suspiciousCity: false };
   const state = text.match(/,\s*([A-Z]{2})(?:,|\b)/)?.[1]?.toUpperCase() ?? null;
   const country = /,\s*(Brasil|BR)\b/i.test(text) ? "BR" : "BR";
   const locationName = cleanText(text.split(":")[0]) || null;
-  if (!state) return { city: locationName, state: null, country, locationName };
+  if (!state) {
+    const city = looksLikeVenueOrStreet(locationName) ? null : locationName;
+    return { city, state: null, country, locationName, suspiciousCity: Boolean(locationName && !city) };
+  }
   const beforeState = text.split(new RegExp(`,\\s*${state}\\b`, "i"))[0] ?? "";
-  const city = locationName && text.includes(":") ? locationName : cleanText(beforeState.split(",").at(-1));
-  return { city: city || null, state, country, locationName };
+  const explicitBeforeDash = cleanText(beforeState.match(/,\s*([^,]+?)\s*-\s*[A-Z]{2}\b/i)?.[1]);
+  const candidates = [
+    cleanText(text.match(new RegExp(`,\\s*([^,]+?)\\s*,\\s*${state}\\b`, "i"))?.[1]),
+    explicitBeforeDash,
+    locationName && text.includes(":") ? locationName : null,
+    cleanText(beforeState.split(",").at(-1)),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  const city = candidates.find((candidate) => !looksLikeVenueOrStreet(candidate)) ?? null;
+  return { city, state, country, locationName, suspiciousCity: !city };
 }
 
 function distancesFromText(text: string): RaceEventExtraction["distances"] {
-  return unique(text.match(/\b(?:[1-9]\d?(?:[,.]\d+)?)\s*(?:km|k)\b/gi) ?? [])
-    .map((label) => {
-      const distanceKm = normalizeDistanceKm(label);
-      return {
-        label: cleanText(label.replace(",", ".")),
-        distanceKm,
-        modality: "road" as const,
-        startTime: null,
-        elevationGain: null,
-        sourceText: label,
-        confidence: distanceKm ? 0.82 : 0.4,
-      };
-    })
-    .filter((distance) => distance.distanceKm != null && distance.distanceKm <= 100);
+  const byDistanceKm = new Map<number, RaceEventExtraction["distances"][number]>();
+  for (const label of unique(text.match(/\b(?:[1-9]\d?(?:[,.]\d+)?)\s*(?:km|k)\b/gi) ?? [])) {
+    const distanceKm = normalizeDistanceKm(label);
+    if (distanceKm == null || distanceKm > 100) continue;
+    const key = Number(distanceKm.toFixed(3));
+    if (byDistanceKm.has(key)) continue;
+    byDistanceKm.set(key, {
+      label: formatDistanceLabel(distanceKm),
+      distanceKm,
+      modality: "road" as const,
+      startTime: null,
+      elevationGain: null,
+      sourceText: label,
+      confidence: 0.82,
+    });
+  }
+  return Array.from(byDistanceKm.values()).sort((a, b) => (a.distanceKm ?? 0) - (b.distanceKm ?? 0));
+}
+
+function formatDistanceLabel(distanceKm: number): string {
+  return `${Number.isInteger(distanceKm) ? distanceKm : Number(distanceKm.toFixed(2))} km`;
+}
+
+function looksLikeVenueOrStreet(value: string | null): boolean {
+  const text = cleanText(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (!text) return false;
+  const venuePrefixes = [
+    "av ",
+    "av.",
+    "avenida ",
+    "rua ",
+    "rodovia ",
+    "estrada ",
+    "praca ",
+    "parque ",
+    "shopping ",
+    "estadio ",
+    "ginasio ",
+    "centro ",
+    "arena ",
+    "complexo ",
+    "campus ",
+    "represa ",
+    "lagoa ",
+    "orla ",
+    "posto ",
+    "km ",
+  ];
+  return venuePrefixes.some((prefix) => text.startsWith(prefix));
 }
 
 function pricesFromText(text: string): RaceEventExtraction["prices"] {
@@ -512,11 +588,15 @@ function eventStatusFromTicketSports(status: string | null, text: string): RaceE
   return "unknown";
 }
 
-function modalityFromTicketSportsText(text: string): RaceEventExtraction["modality"] {
-  const lower = text.toLowerCase();
-  if (lower.includes("trail")) return "trail";
-  if (lower.includes("kids") || lower.includes("infantil")) return "kids";
-  if (lower.includes("caminhada")) return "walk";
+function modalityFromTicketSportsText(title: string, text: string): RaceEventExtraction["modality"] {
+  const titleText = title.toLowerCase();
+  const fullText = text.toLowerCase();
+  if (titleText.includes("trail")) return "trail";
+  if (/\b(kids?|infantil)\b/.test(titleText)) return "kids";
+  if (titleText.includes("caminhada") && !/(corrida|maratona|meia|desafio|circuito)/.test(titleText)) return "walk";
+  if (/(corrida|maratona|meia|desafio|circuito|run)\b/.test(titleText)) return "road";
+  if (fullText.includes("trail")) return "trail";
+  if (fullText.includes("caminhada") && !/(corrida|maratona|meia)/.test(fullText)) return "walk";
   return "road";
 }
 

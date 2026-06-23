@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Universal Race Calendar</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Corridas</h1>
+        <p id="summary">Carregando calendario publico...</p>
+      </div>
+      <a class="api-link" id="apiLink" href="https://universal-race-calendar.onrender.com/docs">API</a>
+    </header>
+
+    <main>
+      <form class="filters" id="filters">
+        <label>
+          Busca
+          <input id="search" name="search" type="search" placeholder="Nome da prova" />
+        </label>
+        <label>
+          UF
+          <input id="state" name="state" maxlength="2" placeholder="SP" />
+        </label>
+        <label>
+          Cidade
+          <input id="city" name="city" placeholder="Sao Paulo" />
+        </label>
+        <label>
+          A partir de
+          <input id="from" name="from" type="date" />
+        </label>
+        <label>
+          Distancia minima
+          <input id="distanceMin" name="distanceMin" type="number" min="0" step="1" placeholder="5" />
+        </label>
+        <label>
+          Distancia maxima
+          <input id="distanceMax" name="distanceMax" type="number" min="0" step="1" placeholder="42" />
+        </label>
+        <button type="submit">Filtrar</button>
+      </form>
+
+      <section class="status" id="status" aria-live="polite"></section>
+      <section class="events" id="events"></section>
+    </main>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

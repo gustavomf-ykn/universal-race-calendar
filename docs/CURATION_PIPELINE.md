@@ -24,6 +24,10 @@ Publica automaticamente se:
 
 Caso contrario, `publicationStatus = pending_review`.
 
+Warnings criticos iniciais incluem data/local conflitante e cidade suspeita. Na TicketSports, endereco que parece rua, avenida, parque ou venue sem cidade clara nao deve virar `city`; o evento fica para revisao.
+
+Distancias extraidas de texto sao canonizadas por quilometragem. Variantes como `5K`, `5 km` e `5 Km` viram uma unica distancia `5 km`.
+
 ## Versoes
 
 Valores iniciais:

@@ -110,6 +110,27 @@ model RawSourceExtraction {
   @@index([contentHash])
 }
 
+model ImportRun {
+  id                 String   @id
+  source             String
+  quickFilter        String
+  status             String
+  requestedQuantity  Int
+  offset             Int      @default(0)
+  discoveredCount    Int
+  processedCount     Int
+  publishedEvents    Int
+  manualReviewEvents Int
+  unchangedEvents    Int
+  failedCount        Int
+  failures           Json
+  startedAt          DateTime
+  finishedAt         DateTime
+  createdAt          DateTime @default(now())
+
+  @@index([source, createdAt])
+}
+
 model Event {
   id                  String            @id @default(cuid())
   slug                String            @unique

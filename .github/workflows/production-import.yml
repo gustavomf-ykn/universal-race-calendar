@@ -11,6 +11,10 @@ on:
         description: "Import concurrency"
         required: true
         default: "3"
+      chunk_size:
+        description: "Events processed per API request"
+        required: true
+        default: "100"
       delay_ms:
         description: "Delay between detail requests in milliseconds"
         required: true
@@ -26,6 +30,7 @@ jobs:
       PRODUCTION_INTERNAL_API_KEY: ${{ secrets.PRODUCTION_INTERNAL_API_KEY }}
       IMPORT_QUANTITY: ${{ inputs.quantity || '1000' }}
       IMPORT_CONCURRENCY: ${{ inputs.concurrency || '3' }}
+      IMPORT_CHUNK_SIZE: ${{ inputs.chunk_size || '100' }}
       IMPORT_DELAY_MS: ${{ inputs.delay_ms || '300' }}
     steps:
       - name: Check required secrets
@@ -35,17 +40,51 @@ jobs:
       - name: Run TicketSports import
         run: |
           mkdir -p artifacts
-          jq -n \
-            --argjson quantity "$IMPORT_QUANTITY" \
-            --argjson concurrency "$IMPORT_CONCURRENCY" \
-            --argjson delayMs "$IMPORT_DELAY_MS" \
-            '{quantity: $quantity, concurrency: $concurrency, delayMs: $delayMs}' > artifacts/import-request.json
-          curl -fsS \
-            -X POST "$PRODUCTION_API_BASE_URL/v1/imports/ticketsports/run" \
-            -H "Content-Type: application/json" \
-            -H "X-API-Key: $PRODUCTION_INTERNAL_API_KEY" \
-            --data @artifacts/import-request.json \
-            -o artifacts/import-result.json
+          offset=0
+          run_index=1
+          while [ "$offset" -lt "$IMPORT_QUANTITY" ]; do
+            remaining=$((IMPORT_QUANTITY - offset))
+            if [ "$remaining" -lt "$IMPORT_CHUNK_SIZE" ]; then
+              chunk_quantity="$remaining"
+            else
+              chunk_quantity="$IMPORT_CHUNK_SIZE"
+            fi
+            request_file="artifacts/import-request-${run_index}.json"
+            result_file="artifacts/import-result-${run_index}.json"
+            jq -n \
+              --argjson quantity "$chunk_quantity" \
+              --argjson offset "$offset" \
+              --argjson concurrency "$IMPORT_CONCURRENCY" \
+              --argjson delayMs "$IMPORT_DELAY_MS" \
+              '{quantity: $quantity, offset: $offset, concurrency: $concurrency, delayMs: $delayMs}' > "$request_file"
+            curl -fsS \
+              -X POST "$PRODUCTION_API_BASE_URL/v1/imports/ticketsports/run" \
+              -H "Content-Type: application/json" \
+              -H "X-API-Key: $PRODUCTION_INTERNAL_API_KEY" \
+              --data @"$request_file" \
+              -o "$result_file"
+            processed="$(jq -r '.processedCount' "$result_file")"
+            if [ "$processed" = "0" ]; then
+              break
+            fi
+            offset=$((offset + chunk_quantity))
+            run_index=$((run_index + 1))
+          done
+          jq -s '{
+            status: (if any(.status == "partial_success") then "partial_success" else "success" end),
+            source: "ticketsports",
+            requestedQuantity: (map(.requestedQuantity) | add // 0),
+            chunkCount: length,
+            discoveredCount: (map(.discoveredCount) | max // 0),
+            processedCount: (map(.processedCount) | add // 0),
+            publishedEvents: (map(.publishedEvents) | add // 0),
+            manualReviewEvents: (map(.manualReviewEvents) | add // 0),
+            unchangedEvents: (map(.unchangedEvents) | add // 0),
+            failedCount: (map(.failedCount) | add // 0),
+            startedAt: (.[0].startedAt // null),
+            finishedAt: (.[-1].finishedAt // null),
+            chunks: .
+          }' artifacts/import-result-*.json > artifacts/import-result.json
       - name: Validate public events
         run: |
           curl -fsS "$PRODUCTION_API_BASE_URL/v1/events?sourceType=ticketsports&limit=5" -o artifacts/sample-events.json

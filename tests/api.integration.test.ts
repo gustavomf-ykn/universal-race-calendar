@@ -25,6 +25,7 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     await prisma.rawSourceExtraction.deleteMany();
     await prisma.event.deleteMany();
     await prisma.source.deleteMany();
+    await prisma.importRun.deleteMany();
   });
 
   afterAll(async () => {
@@ -133,6 +134,7 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     await prisma.rawSourceExtraction.deleteMany();
     await prisma.event.deleteMany();
     await prisma.source.deleteMany();
+    await prisma.importRun.deleteMany();
 
     let detailPayload = ticketsportsFixture;
     const registry = new SourceAdapterRegistry({
@@ -169,6 +171,8 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
       discoverEvents,
     });
     expect(firstImport.status).toBe("success");
+    expect(firstImport.requestedQuantity).toBe(1);
+    expect(firstImport.offset).toBe(0);
     expect(firstImport.discoveredCount).toBe(1);
     expect(firstImport.publishedEvents).toBe(1);
     expect(await prisma.source.count({ where: { adapter: "ticketsports" } })).toBe(1);
@@ -221,6 +225,15 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     expect(updatedEvent.distances.map((distance) => distance.label)).toContain("10 km");
     expect(updatedEvent.distances.map((distance) => distance.label)).not.toContain("21 km");
     expect(updatedEvent.versions).toHaveLength(2);
+
+    const latestImport = await app.inject({
+      method: "GET",
+      url: "/v1/imports/ticketsports/latest",
+      headers: { "x-api-key": "test-internal-key" },
+    });
+    expect(latestImport.statusCode).toBe(200);
+    expect(latestImport.json<{ source: string; processedCount: number; durationMs: number }>().source).toBe("ticketsports");
+    expect(latestImport.json<{ processedCount: number }>().processedCount).toBe(1);
   });
 
   it("exposes the internal TicketSports import endpoint as a synchronous job", async () => {
@@ -230,6 +243,8 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
         status: "success",
         source: "ticketsports",
         quickFilter: "corrida-de-rua",
+        requestedQuantity: 1,
+        offset: 0,
         discoveredCount: 1,
         processedCount: 1,
         publishedEvents: 1,
@@ -251,5 +266,15 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     expect(response.json<{ jobId: string; publishedEvents: number }>().jobId).toBe("import_test");
     expect(response.json<{ publishedEvents: number }>().publishedEvents).toBe(1);
     await fakeApp.close();
+  });
+
+  it("lists review-pending events through the internal audit endpoint", async () => {
+    const reviewList = await app.inject({
+      method: "GET",
+      url: "/v1/audit/events?publicationStatus=pending_review&limit=10",
+      headers: { "x-api-key": "test-internal-key" },
+    });
+    expect(reviewList.statusCode).toBe(200);
+    expect(reviewList.json<{ data: unknown[]; pagination: { total: number } }>().data).toBeInstanceOf(Array);
   });
 });

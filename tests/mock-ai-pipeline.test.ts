@@ -73,7 +73,43 @@ describe("mock AI pipeline", () => {
     expect(result.normalizedEvent.eventStatus).toBe("scheduled");
     expect(result.normalizedEvent.registrationUrl).toContain("ticketsports.com.br");
     expect(result.normalizedEvent.distances.map((distance) => distance.distanceKm)).toContain(21);
+    expect(result.normalizedEvent.distances.map((distance) => distance.label)).toEqual(["5 km", "10 km", "21 km"]);
     expect(result.normalizedEvent.prices[0]?.price).toBe(120);
     expect(result.normalizedEvent.publicationStatus).toBe("published");
+  });
+
+  it("keeps suspicious TicketSports street addresses out of city and review-pends them", async () => {
+    const adapter = new TicketSportsAdapter({
+      async getJson() {
+        return {
+          ...ticketsportsFixture,
+          title: "CIRCUITO DESBRAVA - RIO DE JANEIRO 2026",
+          address: "Avenida Delfim Moreira, RJ, Brasil",
+          eventContents: [
+            {
+              title: "Percursos",
+              description: "<p>Corrida de 5K, 5 km e 10 Km. Caminhada opcional para acompanhantes.</p>",
+            },
+          ],
+        };
+      },
+      async getText() {
+        throw new Error("getText should not be called");
+      },
+    });
+    const raw = await adapter.fetchAndExtract({
+      sourceId: "src_ticketsports",
+      sourceExternalId: "85556",
+      url: "https://www.ticketsports.com.br/e/circuito-desbrava-85556",
+    });
+
+    const result = await curateTicketSportsSourceExtraction(raw);
+
+    expect(result.normalizedEvent.city).toBeNull();
+    expect(result.normalizedEvent.locationName).toBe("Avenida Delfim Moreira, RJ, Brasil");
+    expect(result.normalizedEvent.modality).toBe("road");
+    expect(result.normalizedEvent.distances.map((distance) => distance.label)).toEqual(["5 km", "10 km"]);
+    expect(result.normalizedEvent.publicationStatus).toBe("pending_review");
+    expect(result.normalizedEvent.publishabilityReasons).toContain("critical_warning");
   });
 });

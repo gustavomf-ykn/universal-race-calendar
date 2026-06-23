@@ -103,7 +103,7 @@ DIRECT_URL="postgresql://.../neondb?sslmode=require"
 No Render, crie um Web Service apontando para este repositorio:
 
 ```bash
-Build Command: pnpm install --frozen-lockfile && pnpm db:generate && pnpm db:migrate && pnpm build
+Build Command: pnpm install --frozen-lockfile --prod=false && pnpm db:generate && pnpm db:migrate && pnpm build
 Start Command: pnpm start:api
 Health Check Path: /health
 ```
@@ -134,4 +134,29 @@ Para importar corridas no ambiente persistente, rode o workflow **Production Imp
 
 ```bash
 curl "https://sua-api.onrender.com/v1/events?sourceType=ticketsports&limit=100"
+```
+
+O workflow **Production Import** executa a importacao em lotes para evitar uma unica requisicao longa. O artifact `production-import-results` contem o resumo agregado e os JSONs de cada lote.
+
+## Site teste
+
+Existe uma vitrine estatica em `apps/site`. Ela consome a API publica de producao por padrao:
+
+```bash
+start apps/site/index.html
+```
+
+Para apontar para outra API:
+
+```text
+apps/site/index.html?api=http://localhost:3000
+```
+
+## Auditoria minima
+
+Endpoints internos para acompanhar qualidade e importacao:
+
+```bash
+curl -H "X-API-Key: dev-internal-key" "http://localhost:3000/v1/audit/events?publicationStatus=pending_review"
+curl -H "X-API-Key: dev-internal-key" "http://localhost:3000/v1/imports/ticketsports/latest"
 ```

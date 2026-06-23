@@ -106,6 +106,55 @@ export async function saveRawSourceExtraction(raw: RawSourceExtraction) {
   });
 }
 
+export type SaveImportRunInput = {
+  id: string;
+  source: string;
+  quickFilter: string;
+  status: string;
+  requestedQuantity: number;
+  offset: number;
+  discoveredCount: number;
+  processedCount: number;
+  publishedEvents: number;
+  manualReviewEvents: number;
+  unchangedEvents: number;
+  failedCount: number;
+  failures: Array<{ externalId: string; error: string }>;
+  startedAt: string;
+  finishedAt: string;
+};
+
+export async function saveImportRun(input: SaveImportRunInput) {
+  return prisma.importRun.create({
+    data: {
+      id: input.id,
+      source: input.source,
+      quickFilter: input.quickFilter,
+      status: input.status,
+      requestedQuantity: input.requestedQuantity,
+      offset: input.offset,
+      discoveredCount: input.discoveredCount,
+      processedCount: input.processedCount,
+      publishedEvents: input.publishedEvents,
+      manualReviewEvents: input.manualReviewEvents,
+      unchangedEvents: input.unchangedEvents,
+      failedCount: input.failedCount,
+      failures: json(input.failures),
+      startedAt: new Date(input.startedAt),
+      finishedAt: new Date(input.finishedAt),
+    },
+  });
+}
+
+export async function getLatestImportRun(source?: string) {
+  return prisma.importRun.findFirst(
+    withoutUndefined({
+      where: source ? { source } : undefined,
+      orderBy: { createdAt: "desc" as const },
+    }),
+  );
+}
+
 export async function saveCanonicalEvent(event: CanonicalRaceEvent): Promise<{
   event: { id: string };
   canonicalEvent: CanonicalRaceEvent;

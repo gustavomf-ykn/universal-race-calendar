@@ -28,6 +28,8 @@ A saida do adapter e sempre `RawSourceExtraction`. Ela nao e o modelo publico da
 
 O importador `import-ticketsports` cria/atualiza `Source` por `adapter + externalId` e roda o check de cada evento descoberto. No MVP, a normalizacao da TicketSports e deterministica e nao chama provider de IA.
 
+Em producao, o workflow chama a importacao em lotes usando `quantity` e `offset`. Cada lote grava um `ImportRun` com contadores, falhas e duracao.
+
 ## RawSourceExtraction
 
 Representa o conteudo bruto importante de uma fonte:
