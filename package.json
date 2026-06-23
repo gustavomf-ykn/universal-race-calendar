@@ -1,0 +1,37 @@
+{
+  "name": "universal-race-calendar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev:api": "pnpm --filter @race-calendar/api dev",
+    "dev:worker": "pnpm --filter @race-calendar/worker dev",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "pnpm --filter @race-calendar/database db:generate",
+    "db:migrate": "pnpm --filter @race-calendar/database db:migrate",
+    "db:seed": "pnpm --filter @race-calendar/database db:seed"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "@race-calendar/ai": "workspace:*",
+    "@race-calendar/curation": "workspace:*",
+    "@race-calendar/database": "workspace:*",
+    "@race-calendar/schemas": "workspace:*",
+    "@race-calendar/scraper": "workspace:*",
+    "@race-calendar/sources": "workspace:*",
+    "@race-calendar/utils": "workspace:*",
+    "@types/node": "^22.10.7",
+    "eslint": "^9.18.0",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.20.0",
+    "vitest": "^2.1.8"
+  }
+}

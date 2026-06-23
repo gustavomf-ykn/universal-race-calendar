@@ -1,0 +1,21 @@
+{
+  "name": "@race-calendar/scraper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@race-calendar/utils": "workspace:*",
+    "cheerio": "1.0.0-rc.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "typescript": "^5.7.2"
+  }
+}

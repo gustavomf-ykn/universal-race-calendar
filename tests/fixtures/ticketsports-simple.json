@@ -1,0 +1,20 @@
+{
+  "eventId": "123456",
+  "title": "Meia Maratona de Florianopolis",
+  "date": "16/08/2026",
+  "realDate": "2026-08-16",
+  "address": "Florianopolis, SC",
+  "organizer": "Organizadora Exemplo",
+  "uri": "https://www.ticketsports.com.br/e/meia-maratona-florianopolis-123456",
+  "headerImageSource": "https://www.ticketsports.com.br/images/evento.jpg",
+  "eventContents": [
+    {
+      "title": "O Evento",
+      "description": "<p>Meia Maratona de Florianopolis com percursos de 5 km, 10 km e 21 km.</p>"
+    },
+    {
+      "title": "Inscricoes",
+      "description": "<p>1o lote R$ 120,00 ate 10/07/2026.</p><p>Inscricoes pelo site oficial.</p>"
+    }
+  ]
+}

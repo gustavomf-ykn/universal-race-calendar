@@ -1,0 +1,23 @@
+{
+  "name": "@race-calendar/curation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@race-calendar/ai": "workspace:*",
+    "@race-calendar/database": "workspace:*",
+    "@race-calendar/schemas": "workspace:*",
+    "@race-calendar/sources": "workspace:*",
+    "@race-calendar/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

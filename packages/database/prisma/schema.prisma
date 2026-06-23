@@ -1,0 +1,285 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SourceKind {
+  official_page
+  registration_page
+  organizer_page
+  aggregator
+}
+
+enum SourceStatus {
+  active
+  paused
+  error
+}
+
+enum EventStatus {
+  scheduled
+  postponed
+  cancelled
+  sold_out
+  finished
+  unknown
+}
+
+enum PublicationStatus {
+  draft
+  pending_review
+  published
+  hidden
+  rejected
+}
+
+enum Modality {
+  road
+  trail
+  mixed
+  kids
+  walk
+  unknown
+}
+
+enum DedupeStatus {
+  unique
+  possible_duplicate
+  duplicate
+  needs_review
+}
+
+enum ExtractionJobStatus {
+  pending
+  processing
+  success
+  validation_failed
+  provider_failed
+  manual_review
+}
+
+model Source {
+  id              String                @id @default(cuid())
+  name            String
+  url             String
+  type            SourceKind
+  country         String?
+  state           String?
+  city            String?
+  status          SourceStatus          @default(active)
+  adapter         String?
+  externalId      String?
+  metadata        Json?
+  checkIntervalMinutes Int?
+  lastHash        String?
+  lastCheckedAt   DateTime?
+  lastSuccessAt   DateTime?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  events          Event[]
+  rawExtractions  RawSourceExtraction[]
+  extractionJobs  ExtractionJob[]
+}
+
+model RawSourceExtraction {
+  id               String   @id @default(cuid())
+  sourceId         String
+  source           Source   @relation(fields: [sourceId], references: [id])
+  sourceType       String
+  sourceExternalId String?
+  url              String
+  contentHash      String
+  title            String?
+  importantHtml    String   @db.Text
+  importantText    String   @db.Text
+  rawSourceData    Json
+  extractedLinks   Json
+  adapter          String
+  adapterVersion   String
+  fetchedAt        DateTime
+  createdAt        DateTime @default(now())
+
+  @@index([sourceId])
+  @@index([contentHash])
+}
+
+model Event {
+  id                  String            @id @default(cuid())
+  slug                String            @unique
+  name                String
+  description         String?           @db.Text
+  date                DateTime?
+  startTime           String?
+  endTime             String?
+  city                String?
+  state               String?
+  country             String?
+  locationName        String?
+  address             String?
+  latitude            Float?
+  longitude           Float?
+  modality            Modality          @default(unknown)
+  eventStatus         EventStatus       @default(unknown)
+  publicationStatus   PublicationStatus @default(draft)
+  registrationUrl     String?
+  officialUrl         String?
+  regulationUrl       String?
+  organizerName       String?
+  organizerUrl        String?
+  mainImageUrl        String?
+  sourceId            String?
+  source              Source?           @relation(fields: [sourceId], references: [id])
+  sourceType          String?
+  sourceExternalId    String?
+  sourceUrl           String?
+  confidence          Float             @default(0)
+  canonicalFingerprint String
+  dedupeStatus        DedupeStatus      @default(unique)
+  duplicateOfEventId  String?
+  warnings            Json
+  publishabilityReasons Json
+  publishedAt         DateTime?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  distances           EventDistance[]
+  prices              EventPrice[]
+  kits                EventKit[]
+  kitPickups          EventKitPickup[]
+  schedule            EventSchedule[]
+  rules               EventRule[]
+  images              EventImage[]
+  versions            EventVersion[]
+  extractionJobs      ExtractionJob[]
+
+  @@index([publicationStatus])
+  @@index([date])
+  @@index([city, state, country])
+  @@index([canonicalFingerprint])
+}
+
+model EventDistance {
+  id            String   @id @default(cuid())
+  eventId       String
+  event         Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  label         String
+  distanceKm    Float?
+  modality      Modality @default(unknown)
+  startTime     String?
+  elevationGain Float?
+  sourceText    String?  @db.Text
+  confidence    Float    @default(0)
+}
+
+model EventPrice {
+  id         String   @id @default(cuid())
+  eventId    String
+  event      Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name       String?
+  price      Float?
+  currency   String   @default("BRL")
+  startDate  DateTime?
+  endDate    DateTime?
+  status     String   @default("unknown")
+  sourceText String?  @db.Text
+  confidence Float    @default(0)
+}
+
+model EventKit {
+  id         String  @id @default(cuid())
+  eventId    String
+  event      Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name       String?
+  items      Json
+  price      Float?
+  sourceText String? @db.Text
+  confidence Float   @default(0)
+}
+
+model EventKitPickup {
+  id                String   @id @default(cuid())
+  eventId           String
+  event             Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  location          String?
+  address           String?
+  date              DateTime?
+  startTime         String?
+  endTime           String?
+  requiredDocuments Json
+  sourceText        String?  @db.Text
+  confidence        Float    @default(0)
+}
+
+model EventSchedule {
+  id         String   @id @default(cuid())
+  eventId    String
+  event      Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  date       DateTime?
+  time       String?
+  activity   String
+  location   String?
+  sourceText String?  @db.Text
+  confidence Float    @default(0)
+}
+
+model EventRule {
+  id         String  @id @default(cuid())
+  eventId    String
+  event      Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  category   String
+  text       String  @db.Text
+  sourceText String? @db.Text
+  confidence Float   @default(0)
+}
+
+model EventImage {
+  id        String @id @default(cuid())
+  eventId   String
+  event     Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  url       String
+  sortOrder Int    @default(0)
+}
+
+model EventVersion {
+  id              String   @id @default(cuid())
+  eventId         String
+  event           Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  schemaVersion   String
+  curationVersion String
+  snapshot        Json
+  createdAt       DateTime @default(now())
+}
+
+model ExtractionJob {
+  id              String              @id @default(cuid())
+  sourceId        String
+  source          Source              @relation(fields: [sourceId], references: [id])
+  eventId         String?
+  event           Event?              @relation(fields: [eventId], references: [id])
+  provider        String?
+  model           String?
+  adapter         String?
+  adapterVersion  String?
+  schemaVersion   String?
+  curationVersion String?
+  inputHash       String?
+  status          ExtractionJobStatus  @default(pending)
+  rawInput        Json?
+  rawOutput       Json?
+  validatedJson   Json?
+  normalizedJson  Json?
+  confidence      Float?
+  warnings        Json?
+  reasons         Json?
+  errorMessage    String?             @db.Text
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  createdAt       DateTime            @default(now())
+
+  @@index([sourceId])
+  @@index([eventId])
+  @@index([status])
+}

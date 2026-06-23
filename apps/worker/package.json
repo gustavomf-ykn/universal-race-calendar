@@ -1,0 +1,21 @@
+{
+  "name": "@race-calendar/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "check-source": "tsx src/index.ts check-source",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@race-calendar/curation": "workspace:*",
+    "@race-calendar/database": "workspace:*",
+    "@race-calendar/sources": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
