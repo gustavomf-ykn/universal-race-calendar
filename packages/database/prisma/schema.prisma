@@ -83,6 +83,8 @@ model Source {
   events          Event[]
   rawExtractions  RawSourceExtraction[]
   extractionJobs  ExtractionJob[]
+
+  @@unique([adapter, externalId])
 }
 
 model RawSourceExtraction {

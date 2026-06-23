@@ -2,9 +2,10 @@
   "eventId": "123456",
   "title": "Meia Maratona de Florianopolis",
   "date": "16/08/2026",
-  "realDate": "2026-08-16",
-  "address": "Florianopolis, SC",
+  "realDate": "2026-08-16 06:30",
+  "address": "Florianopolis: Beira-Mar Norte, Florianopolis, SC, Brasil",
   "organizer": "Organizadora Exemplo",
+  "status": "Aberto",
   "uri": "https://www.ticketsports.com.br/e/meia-maratona-florianopolis-123456",
   "headerImageSource": "https://www.ticketsports.com.br/images/evento.jpg",
   "eventContents": [

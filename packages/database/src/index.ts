@@ -39,6 +39,33 @@ export async function createSource(input: CreateSourceInput) {
   });
 }
 
+export async function upsertSourceByAdapterExternalId(input: CreateSourceInput & { adapter: string; externalId: string }) {
+  const existing = await prisma.source.findFirst({
+    where: {
+      adapter: input.adapter,
+      externalId: input.externalId,
+    },
+  });
+  if (!existing) return createSource(input);
+
+  return prisma.source.update({
+    where: { id: existing.id },
+    data: withoutUndefined({
+      name: input.name,
+      url: input.url,
+      type: input.type,
+      country: input.country,
+      state: input.state,
+      city: input.city,
+      adapter: input.adapter,
+      externalId: input.externalId,
+      metadata: json(input.metadata ?? {}),
+      checkIntervalMinutes: input.checkIntervalMinutes,
+      status: "active",
+    }),
+  });
+}
+
 export async function listSources() {
   return prisma.source.findMany({ orderBy: { createdAt: "desc" } });
 }

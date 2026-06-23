@@ -28,6 +28,24 @@ export type SourceHttpClient = {
   getJson(url: string, options?: { headers?: Record<string, string>; delayMs?: number }): Promise<unknown>;
 };
 
+export type TicketSportsDiscoveredEvent = {
+  sourceType: "ticketsports";
+  adapter: "ticketsports";
+  externalId: string;
+  name: string;
+  url: string;
+  country: string;
+  state: string | null;
+  city: string | null;
+  metadata: Record<string, unknown>;
+};
+
+export type DiscoverTicketSportsEventsOptions = {
+  quantity?: number;
+  quickFilter?: string;
+  client?: SourceHttpClient;
+};
+
 type SourceAdapterRegistryOptions = {
   adapters?: SourceAdapter[];
 };
@@ -108,9 +126,10 @@ export class TicketSportsAdapter implements SourceAdapter {
     const importantText = cleanText(
       [
         title,
-        stringValue(record.date) ?? stringValue(record.realDate),
+        stringValue(record.realDate) ?? stringValue(record.date),
         stringValue(record.address),
         stringValue(record.organizer),
+        stringValue(record.status),
         htmlToImportantText(importantHtml),
         stringValue(record.sharingText),
       ]
@@ -128,9 +147,16 @@ export class TicketSportsAdapter implements SourceAdapter {
       importantHtml,
       importantText,
       rawSourceData: record,
-      extractedLinks: extractLinks(importantHtml, url),
+      extractedLinks: uniqueUrls([url, ...extractLinks(importantHtml, url)]),
       fetchedAt: new Date().toISOString(),
-      contentHash: contentHashFromParts([title, importantText, JSON.stringify(record.eventContents ?? null)]),
+      contentHash: contentHashFromParts([
+        title,
+        importantText,
+        stringValue(record.status),
+        stringValue(record.headerImageSource),
+        stringValue(record.logoImageSource),
+        JSON.stringify(record.eventContents ?? null),
+      ]),
       adapter: this.adapter,
       adapterVersion: this.adapterVersion,
     });
@@ -142,9 +168,55 @@ export class TicketSportsAdapter implements SourceAdapter {
   }
 }
 
+export async function discoverTicketSportsEvents(
+  options: DiscoverTicketSportsEventsOptions = {},
+): Promise<TicketSportsDiscoveredEvent[]> {
+  const quantity = positiveInt(options.quantity, Number(process.env.TICKETSPORTS_IMPORT_QUANTITY ?? 1000));
+  const quickFilter = cleanText(options.quickFilter ?? process.env.TICKETSPORTS_IMPORT_QUICK_FILTER ?? "corrida-de-rua");
+  const client = options.client ?? new ScraperHttpClient();
+  const payload = await client.getJson(ticketSportsListUrl({ quantity, quickFilter }), {
+    headers: ticketSportsHeaders(),
+  });
+  const rows = Array.isArray(payload) ? payload : [];
+  return rows.flatMap((item) => {
+    const record = asRecord(item);
+    const eventId = numberOrString(record.eventId);
+    const url = stringValue(record.uri);
+    const title = cleanText(stringValue(record.title));
+    if (!eventId || !url || !title) return [];
+    const location = parseTicketSportsLocation(stringValue(record.address));
+    return [
+      {
+        sourceType: "ticketsports",
+        adapter: "ticketsports",
+        externalId: eventId,
+        name: title,
+        url,
+        country: location.country ?? "BR",
+        state: location.state,
+        city: location.city,
+        metadata: {
+          quickFilter,
+          listItem: record,
+          discoveredAt: new Date().toISOString(),
+        },
+      },
+    ];
+  });
+}
+
 export function ticketSportsDetailUrl(eventId: string): string {
   const params = new URLSearchParams({ eventId, athleteId: "0", clientTypeId: "1" });
   return `https://www.ticketsports.com.br/api/events/detail?${params.toString()}`;
+}
+
+export function ticketSportsListUrl(input: { quantity: number; quickFilter: string }): string {
+  const params = new URLSearchParams({
+    quantity: String(input.quantity),
+    atlheteId: "0",
+    quickFilter: input.quickFilter,
+  });
+  return `https://www.ticketsports.com.br/api/events/list?${params.toString()}`;
 }
 
 function ticketSportsHeaders(): Record<string, string> {
@@ -177,6 +249,22 @@ function sectionsFromTicketSports(value: unknown): Array<{ title: string; html: 
   });
 }
 
+function parseTicketSportsLocation(value: string | null): { city: string | null; state: string | null; country: string | null } {
+  const text = cleanText(value);
+  if (!text) return { city: null, state: null, country: "BR" };
+  const state = text.match(/,\s*([A-Z]{2})(?:,|\b)/)?.[1]?.toUpperCase() ?? null;
+  const country = /,\s*(Brasil|BR)\b/i.test(text) ? "BR" : "BR";
+  if (!state) return { city: cityBeforeColon(text), state: null, country };
+  const beforeState = text.split(new RegExp(`,\\s*${state}\\b`, "i"))[0] ?? "";
+  const city = cityBeforeColon(beforeState) ?? cleanText(beforeState.split(",").at(-1));
+  return { city: city || null, state, country };
+}
+
+function cityBeforeColon(value: string): string | null {
+  const left = value.split(":")[0];
+  return cleanText(left) || null;
+}
+
 function registrationUrlFromTicketSportsPayload(payload: Record<string, unknown>, fallbackUrl: string): string {
   const uri = stringValue(payload.uri);
   if (!uri) return fallbackUrl;
@@ -198,6 +286,27 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function numberOrString(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return stringValue(value);
+}
+
+function positiveInt(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function uniqueUrls(urls: string[]): string[] {
+  return [...new Set(urls.filter((url) => {
+    try {
+      new URL(url);
+      return true;
+    } catch {
+      return false;
+    }
+  }))];
 }
 
 function escapeHtml(value: string): string {

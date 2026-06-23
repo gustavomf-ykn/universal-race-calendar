@@ -1,6 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { buildApp } from "../apps/api/src/app.js";
 import { prisma } from "@race-calendar/database";
+import { importTicketSportsEvents } from "@race-calendar/curation";
+import { SourceAdapterRegistry, TicketSportsAdapter } from "@race-calendar/sources";
+
+const ticketsportsFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports-simple.json", "utf-8")) as Record<
+  string,
+  unknown
+>;
+const ticketsportsListFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports-list.json", "utf-8")) as Array<
+  Record<string, unknown>
+>;
 
 describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
@@ -115,5 +126,98 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     const duplicateJob = duplicateCheck.json<{ status: string; reasons: string[] }>();
     expect(duplicateJob.status).toBe("manual_review");
     expect(duplicateJob.reasons).toContain("possible_duplicate");
+  });
+
+  it("imports TicketSports street races and exposes them through the public API", async () => {
+    await prisma.extractionJob.deleteMany();
+    await prisma.rawSourceExtraction.deleteMany();
+    await prisma.event.deleteMany();
+    await prisma.source.deleteMany();
+
+    const registry = new SourceAdapterRegistry({
+      adapters: [
+        new TicketSportsAdapter({
+          async getJson() {
+            return ticketsportsFixture;
+          },
+          async getText() {
+            throw new Error("getText should not be called");
+          },
+        }),
+      ],
+    });
+    const discoverEvents = async () =>
+      ticketsportsListFixture.map((item) => ({
+        sourceType: "ticketsports" as const,
+        adapter: "ticketsports" as const,
+        externalId: String(item.eventId),
+        name: String(item.title),
+        url: String(item.uri),
+        country: "BR",
+        state: "MG",
+        city: "Uberaba",
+        metadata: { listItem: item },
+      }));
+
+    const firstImport = await importTicketSportsEvents({
+      quickFilter: "corrida-de-rua",
+      quantity: 1,
+      concurrency: 1,
+      delayMs: 0,
+      registry,
+      discoverEvents,
+    });
+    expect(firstImport.status).toBe("success");
+    expect(firstImport.discoveredCount).toBe(1);
+    expect(firstImport.publishedEvents).toBe(1);
+    expect(await prisma.source.count({ where: { adapter: "ticketsports" } })).toBe(1);
+
+    const publicList = await app.inject({ method: "GET", url: "/v1/events?sourceType=ticketsports&limit=100" });
+    expect(publicList.statusCode).toBe(200);
+    const body = publicList.json<{ data: Array<{ name: string; sourceType?: string; registrationUrl: string }> }>();
+    expect(body.data).toHaveLength(1);
+    expect(body.data[0]?.name).toBe("Meia Maratona de Florianopolis");
+    expect(body.data[0]?.registrationUrl).toContain("ticketsports.com.br");
+
+    const secondImport = await importTicketSportsEvents({
+      quickFilter: "corrida-de-rua",
+      quantity: 1,
+      concurrency: 1,
+      delayMs: 0,
+      registry,
+      discoverEvents,
+    });
+    expect(secondImport.unchangedEvents).toBe(1);
+    expect(await prisma.source.count({ where: { adapter: "ticketsports" } })).toBe(1);
+  });
+
+  it("exposes the internal TicketSports import endpoint as a synchronous job", async () => {
+    const fakeApp = await buildApp({
+      importTicketSportsEvents: async () => ({
+        jobId: "import_test",
+        status: "success",
+        source: "ticketsports",
+        quickFilter: "corrida-de-rua",
+        discoveredCount: 1,
+        processedCount: 1,
+        publishedEvents: 1,
+        manualReviewEvents: 0,
+        unchangedEvents: 0,
+        failedCount: 0,
+        failures: [],
+        startedAt: new Date("2026-06-23T00:00:00.000Z").toISOString(),
+        finishedAt: new Date("2026-06-23T00:00:01.000Z").toISOString(),
+      }),
+    });
+    const response = await fakeApp.inject({
+      method: "POST",
+      url: "/v1/imports/ticketsports/run",
+      headers: { "x-api-key": "test-internal-key" },
+      payload: { quantity: 1, delayMs: 0 },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json<{ jobId: string; publishedEvents: number }>().jobId).toBe("import_test");
+    expect(response.json<{ publishedEvents: number }>().publishedEvents).toBe(1);
+    await fakeApp.close();
   });
 });

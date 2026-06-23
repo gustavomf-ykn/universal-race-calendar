@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { MockSourceAdapter, TicketSportsAdapter } from "@race-calendar/sources";
+import { discoverTicketSportsEvents, MockSourceAdapter, TicketSportsAdapter, ticketSportsListUrl } from "@race-calendar/sources";
 import { rawSourceExtractionSchema } from "@race-calendar/schemas";
 
 const ticketsportsFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports-simple.json", "utf-8")) as Record<
   string,
   unknown
 >;
+const ticketsportsListFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports-list.json", "utf-8")) as unknown[];
 
 describe("source adapters", () => {
   it("recognizes TicketSports URLs", () => {
@@ -48,5 +49,31 @@ describe("source adapters", () => {
     expect(extraction.importantHtml).toContain("Meia Maratona de Florianopolis");
     expect(extraction.rawSourceData.eventId).toBe("123456");
     expect(extraction.contentHash).toHaveLength(64);
+  });
+
+  it("discovers TicketSports street race events from list payload", async () => {
+    const discovered = await discoverTicketSportsEvents({
+      quantity: 1000,
+      quickFilter: "corrida-de-rua",
+      client: {
+        async getJson(url) {
+          expect(url).toBe(ticketSportsListUrl({ quantity: 1000, quickFilter: "corrida-de-rua" }));
+          return ticketsportsListFixture;
+        },
+        async getText() {
+          throw new Error("getText should not be called for list payloads");
+        },
+      },
+    });
+
+    expect(discovered).toHaveLength(1);
+    expect(discovered[0]).toMatchObject({
+      adapter: "ticketsports",
+      externalId: "74641",
+      name: "9a MEIA MARATONA DE UBERABA",
+      city: "Uberaba",
+      state: "MG",
+      country: "BR",
+    });
   });
 });

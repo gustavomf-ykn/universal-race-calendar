@@ -1,14 +1,19 @@
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
-import { runSourceCheck } from "@race-calendar/curation";
+import { importTicketSportsEvents, runSourceCheck, type ImportTicketSportsEventsOptions } from "@race-calendar/curation";
 import { createSource, dateToIsoDate, getSource, listSources, prisma } from "@race-calendar/database";
 import { eventStatusSchema, modalitySchema, sourceKindSchema } from "@race-calendar/schemas";
+
+export type BuildAppOptions = {
+  importTicketSportsEvents?: (options?: ImportTicketSportsEventsOptions) => ReturnType<typeof importTicketSportsEvents>;
+};
 
 type EventListQuery = {
   country?: string | undefined;
   state?: string | undefined;
   city?: string | undefined;
+  sourceType?: string | undefined;
   from?: string | undefined;
   to?: string | undefined;
   distanceMin?: string | undefined;
@@ -21,8 +26,9 @@ type EventListQuery = {
   sort?: string | undefined;
 };
 
-export async function buildApp() {
+export async function buildApp(options: BuildAppOptions = {}) {
   const app = Fastify({ logger: true });
+  const runTicketSportsImport = options.importTicketSportsEvents ?? importTicketSportsEvents;
   await app.register(swagger, {
     openapi: {
       info: {
@@ -77,6 +83,7 @@ export async function buildApp() {
           registrationUrl: event.registrationUrl,
           officialUrl: event.officialUrl,
           mainImageUrl: event.mainImageUrl,
+          sourceType: event.sourceType,
         };
       }),
       pagination: {
@@ -166,6 +173,21 @@ export async function buildApp() {
     return reply.code(result.status === "success" ? 200 : 202).send(result);
   });
 
+  app.post("/v1/imports/ticketsports/run", { preHandler: requireInternalApiKey }, async (request, reply) => {
+    const body = objectBody(request.body);
+    const importOptions: ImportTicketSportsEventsOptions = {};
+    const quantity = optionalPositiveInt(body.quantity);
+    const quickFilter = stringOrNull(body.quickFilter);
+    const concurrency = optionalPositiveInt(body.concurrency);
+    const delayMs = optionalNonNegativeInt(body.delayMs);
+    if (quantity != null) importOptions.quantity = quantity;
+    if (quickFilter != null) importOptions.quickFilter = quickFilter;
+    if (concurrency != null) importOptions.concurrency = concurrency;
+    if (delayMs != null) importOptions.delayMs = delayMs;
+    const result = await runTicketSportsImport(importOptions);
+    return reply.code(result.status === "success" ? 200 : 207).send(result);
+  });
+
   app.get("/v1/extraction-jobs/:id", { preHandler: requireInternalApiKey }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const job = await prisma.extractionJob.findUnique({ where: { id } });
@@ -241,6 +263,7 @@ function publicEventsWhere(query: EventListQuery) {
   if (query.country) where.country = query.country.toUpperCase();
   if (query.state) where.state = query.state.toUpperCase();
   if (query.city) where.city = { contains: query.city, mode: "insensitive" as const };
+  if (query.sourceType) where.sourceType = query.sourceType;
   const parsedModality = modalitySchema.safeParse(query.modality);
   if (parsedModality.success) where.modality = parsedModality.data;
   const parsedStatus = eventStatusSchema.safeParse(query.status);
@@ -285,6 +308,16 @@ async function requireInternalApiKey(request: FastifyRequest, reply: FastifyRepl
 function positiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function optionalPositiveInt(value: unknown): number | undefined {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function optionalNonNegativeInt(value: unknown): number | undefined {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
 function numeric(value: string | undefined): number | null {

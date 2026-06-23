@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { MockAIProvider } from "@race-calendar/ai";
-import { curateSourceExtraction, evaluatePublishability } from "@race-calendar/curation";
-import { MockSourceAdapter } from "@race-calendar/sources";
+import { curateSourceExtraction, curateTicketSportsSourceExtraction, evaluatePublishability } from "@race-calendar/curation";
+import { MockSourceAdapter, TicketSportsAdapter } from "@race-calendar/sources";
+
+const ticketsportsFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports-simple.json", "utf-8")) as Record<
+  string,
+  unknown
+>;
 
 describe("mock AI pipeline", () => {
   it("runs raw source extraction through curation and normalization", async () => {
@@ -39,5 +45,35 @@ describe("mock AI pipeline", () => {
     expect(publishability.publicationStatus).toBe("pending_review");
     expect(publishability.reasons).toContain("missing_date");
     expect(publishability.reasons).toContain("low_confidence");
+  });
+
+  it("normalizes TicketSports payload deterministically without an AI provider", async () => {
+    const adapter = new TicketSportsAdapter({
+      async getJson() {
+        return ticketsportsFixture;
+      },
+      async getText() {
+        throw new Error("getText should not be called");
+      },
+    });
+    const raw = await adapter.fetchAndExtract({
+      sourceId: "src_ticketsports",
+      sourceExternalId: "123456",
+      url: "https://www.ticketsports.com.br/e/meia-maratona-florianopolis-123456",
+    });
+
+    const result = await curateTicketSportsSourceExtraction(raw);
+
+    expect(result.normalizedEvent.name).toBe("Meia Maratona de Florianopolis");
+    expect(result.normalizedEvent.date).toBe("2026-08-16");
+    expect(result.normalizedEvent.startTime).toBe("06:30");
+    expect(result.normalizedEvent.city).toBe("Florianopolis");
+    expect(result.normalizedEvent.state).toBe("SC");
+    expect(result.normalizedEvent.modality).toBe("road");
+    expect(result.normalizedEvent.eventStatus).toBe("scheduled");
+    expect(result.normalizedEvent.registrationUrl).toContain("ticketsports.com.br");
+    expect(result.normalizedEvent.distances.map((distance) => distance.distanceKm)).toContain(21);
+    expect(result.normalizedEvent.prices[0]?.price).toBe(120);
+    expect(result.normalizedEvent.publicationStatus).toBe("published");
   });
 });

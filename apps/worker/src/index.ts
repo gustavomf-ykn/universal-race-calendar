@@ -1,4 +1,4 @@
-import { runSourceCheck } from "@race-calendar/curation";
+import { importTicketSportsEvents, runSourceCheck } from "@race-calendar/curation";
 import { getSource, listSources, prisma } from "@race-calendar/database";
 
 async function main(argv = process.argv.slice(2)) {
@@ -18,8 +18,15 @@ async function main(argv = process.argv.slice(2)) {
     return;
   }
 
+  if (command === "import-ticketsports") {
+    const result = await importTicketSportsEvents();
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
   console.log("Commands:");
   console.log("  check-source <sourceId>");
+  console.log("  import-ticketsports");
   console.log("  list-sources");
 }
 

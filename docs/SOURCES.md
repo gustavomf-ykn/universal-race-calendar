@@ -17,6 +17,7 @@ type SourceAdapter = {
 TicketSports e a primeira fonte real. O adapter reaproveita a abordagem do `scraper-cbr`:
 
 - detectar URLs `ticketsports.com.br`;
+- descobrir corridas de rua via `/api/events/list?quickFilter=corrida-de-rua`;
 - buscar `api/events/detail` quando houver `eventId`;
 - extrair `eventContents`;
 - limpar HTML/texto;
@@ -24,6 +25,8 @@ TicketSports e a primeira fonte real. O adapter reaproveita a abordagem do `scra
 - calcular `contentHash`.
 
 A saida do adapter e sempre `RawSourceExtraction`. Ela nao e o modelo publico da API.
+
+O importador `import-ticketsports` cria/atualiza `Source` por `adapter + externalId` e roda o check de cada evento descoberto. No MVP, a normalizacao da TicketSports e deterministica e nao chama provider de IA.
 
 ## RawSourceExtraction
 
