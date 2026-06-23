@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "check-source": "tsx src/index.ts check-source",
+    "export-events": "tsx src/index.ts export-events",
     "import-ticketsports": "tsx src/index.ts import-ticketsports",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
