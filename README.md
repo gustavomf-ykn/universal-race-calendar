@@ -136,7 +136,7 @@ Para importar corridas no ambiente persistente, rode o workflow **Production Imp
 curl "https://sua-api.onrender.com/v1/events?sourceType=ticketsports&limit=100"
 ```
 
-O workflow **Production Import** executa a importacao em lotes para evitar uma unica requisicao longa. O artifact `production-import-results` contem o resumo agregado e os JSONs de cada lote.
+O workflow **Production Import** executa a importacao em lotes para evitar uma unica requisicao longa. O artifact `production-import-results` contem o resumo agregado e os JSONs de cada lote. Use o input `force=true` quando quiser reaplicar mudancas de parser/curadoria em eventos cujo conteudo bruto nao mudou.
 
 ## Site teste
 

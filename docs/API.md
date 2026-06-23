@@ -47,6 +47,7 @@ Parametros opcionais do corpo:
 - `concurrency`
 - `delayMs`
 - `quickFilter`
+- `force`
 
 `GET /v1/imports/ticketsports/latest` retorna o ultimo resumo persistido da importacao TicketSports, incluindo duracao e contadores.
 
@@ -63,4 +64,4 @@ Em producao, `POST /v1/imports/ticketsports/run` deve ser chamado pelo workflow 
 
 O banco deve ser persistente. Reimportacoes da TicketSports atualizam eventos existentes por `sourceType + sourceExternalId`, criam nova `EventVersion` e evitam duplicar a API publica.
 
-O workflow de producao chama o endpoint em lotes configuraveis por `chunk_size`, evitando uma unica requisicao longa.
+O workflow de producao chama o endpoint em lotes configuraveis por `chunk_size`, evitando uma unica requisicao longa. Use `force=true` quando uma mudanca de parser/curadoria precisar reprocessar eventos cujo HTML bruto nao mudou.

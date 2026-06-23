@@ -62,6 +62,10 @@ export type SourceCheckJobResult = {
   reasons: string[];
 };
 
+export type RunSourceCheckOptions = {
+  force?: boolean;
+};
+
 export type TicketSportsImportResult = {
   jobId: string;
   status: "success" | "partial_success";
@@ -84,11 +88,16 @@ export type ImportTicketSportsEventsOptions = DiscoverTicketSportsEventsOptions 
   concurrency?: number;
   delayMs?: number;
   offset?: number;
+  force?: boolean;
   registry?: SourceAdapterRegistry;
   discoverEvents?: () => Promise<TicketSportsDiscoveredEvent[]>;
 };
 
-export async function runSourceCheck(sourceId: string, registry = new SourceAdapterRegistry()): Promise<SourceCheckJobResult> {
+export async function runSourceCheck(
+  sourceId: string,
+  registry = new SourceAdapterRegistry(),
+  options: RunSourceCheckOptions = {},
+): Promise<SourceCheckJobResult> {
   const source = await getSource(sourceId);
   if (!source) throw new Error(`Source not found: ${sourceId}`);
   const job = await createExtractionJob(source.id);
@@ -103,7 +112,7 @@ export async function runSourceCheck(sourceId: string, registry = new SourceAdap
       sourceExternalId: source.externalId,
       metadata: (source.metadata as Record<string, unknown> | null) ?? {},
     });
-    if (source.lastHash === raw.contentHash) {
+    if (!options.force && source.lastHash === raw.contentHash) {
       await markSourceChecked(source.id, raw.contentHash, true);
       const completed = await completeExtractionJob({
         jobId: job.id,
@@ -226,7 +235,7 @@ export async function importTicketSportsEvents(options: ImportTicketSportsEvents
           checkIntervalMinutes: null,
         });
         if (delayMs) await wait(delayMs);
-        const result = await runSourceCheck(source.id, registry);
+        const result = await runSourceCheck(source.id, registry, { force: options.force === true });
         processedCount += 1;
         if (result.status === "success" && result.eventId) publishedEvents += 1;
         if (result.status === "success" && !result.eventId) unchangedEvents += 1;

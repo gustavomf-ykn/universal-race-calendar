@@ -185,11 +185,13 @@ export async function buildApp(options: BuildAppOptions = {}) {
     const concurrency = optionalPositiveInt(body.concurrency);
     const delayMs = optionalNonNegativeInt(body.delayMs);
     const offset = optionalNonNegativeInt(body.offset);
+    const force = optionalBoolean(body.force);
     if (quantity != null) importOptions.quantity = quantity;
     if (quickFilter != null) importOptions.quickFilter = quickFilter;
     if (concurrency != null) importOptions.concurrency = concurrency;
     if (delayMs != null) importOptions.delayMs = delayMs;
     if (offset != null) importOptions.offset = offset;
+    if (force != null) importOptions.force = force;
     const result = await runTicketSportsImport(importOptions);
     return reply.code(result.status === "success" ? 200 : 207).send(result);
   });
@@ -376,6 +378,13 @@ function optionalPositiveInt(value: unknown): number | undefined {
 function optionalNonNegativeInt(value: unknown): number | undefined {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function optionalBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return undefined;
 }
 
 function numeric(value: string | undefined): number | null {
