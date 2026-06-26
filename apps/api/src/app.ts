@@ -11,7 +11,14 @@ import {
   type ImportTicketSportsEventsOptions,
 } from "@race-calendar/curation";
 import { createSource, dateToIsoDate, getLatestImportRun, getSource, listSources, prisma } from "@race-calendar/database";
-import { eventStatusSchema, modalitySchema, publicationStatusSchema, sourceKindSchema } from "@race-calendar/schemas";
+import {
+  curationJobStatusSchema,
+  dedupeStatusSchema,
+  eventStatusSchema,
+  modalitySchema,
+  publicationStatusSchema,
+  sourceKindSchema,
+} from "@race-calendar/schemas";
 
 export type BuildAppOptions = {
   importTicketSportsEvents?: (options?: ImportTicketSportsEventsOptions) => ReturnType<typeof importTicketSportsEvents>;
@@ -32,6 +39,12 @@ type EventListQuery = {
   page?: string | undefined;
   limit?: string | undefined;
   sort?: string | undefined;
+};
+
+type AdminEventListQuery = EventListQuery & {
+  publicationStatus?: string | undefined;
+  eventStatus?: string | undefined;
+  warnings?: string | undefined;
 };
 
 export async function buildApp(options: BuildAppOptions = {}) {
@@ -245,6 +258,157 @@ export async function buildApp(options: BuildAppOptions = {}) {
     return job;
   });
 
+  app.get("/v1/admin/events", { preHandler: requireInternalApiKey }, async (request) => {
+    const query = request.query as AdminEventListQuery;
+    const page = positiveInt(query.page, 1);
+    const limit = Math.min(positiveInt(query.limit, 50), 100);
+    const where = adminEventsWhere(query);
+    const [total, rows] = await Promise.all([
+      prisma.event.count({ where }),
+      prisma.event.findMany({
+        where,
+        include: {
+          distances: true,
+          prices: true,
+          images: { orderBy: { sortOrder: "asc" } },
+          source: true,
+        },
+        orderBy: { updatedAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+    ]);
+
+    return {
+      data: rows.map(serializeAdminEventListItem),
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
+  });
+
+  app.get("/v1/admin/events/:id", { preHandler: requireInternalApiKey }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const event = await prisma.event.findUnique({
+      where: { id },
+      include: {
+        distances: true,
+        prices: true,
+        kits: true,
+        kitPickups: true,
+        schedule: true,
+        rules: true,
+        images: { orderBy: { sortOrder: "asc" } },
+        source: true,
+        versions: { orderBy: { createdAt: "desc" }, take: 5 },
+        curationJobs: { orderBy: { createdAt: "desc" }, take: 10 },
+        extractionJobs: { orderBy: { createdAt: "desc" }, take: 10 },
+      },
+    });
+    if (!event) return reply.code(404).send({ error: "event_not_found" });
+    const latestRawExtraction = event.sourceId
+      ? await prisma.rawSourceExtraction.findFirst({
+          where: { sourceId: event.sourceId },
+          orderBy: { createdAt: "desc" },
+        })
+      : null;
+    return serializeAdminEventDetail(event, latestRawExtraction);
+  });
+
+  app.patch("/v1/admin/events/:id/publication-status", { preHandler: requireInternalApiKey }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = objectBody(request.body);
+    const parsed = publicationStatusSchema.safeParse(body.publicationStatus ?? body.status);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_publication_status" });
+    return updateEventPublicationStatus(id, parsed.data, reply);
+  });
+
+  app.patch("/v1/admin/events/:id/dedupe-status", { preHandler: requireInternalApiKey }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = objectBody(request.body);
+    const parsed = dedupeStatusSchema.safeParse(body.dedupeStatus ?? body.status);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_dedupe_status" });
+    const duplicateOfEventId = stringOrNull(body.duplicateOfEventId);
+    const data: { dedupeStatus: typeof parsed.data; duplicateOfEventId?: string | null } = {
+      dedupeStatus: parsed.data,
+    };
+    if (duplicateOfEventId) data.duplicateOfEventId = duplicateOfEventId;
+    if (parsed.data === "unique") data.duplicateOfEventId = null;
+    const event = await prisma.event
+      .update({
+        where: { id },
+        data,
+        include: { distances: true, prices: true, images: { orderBy: { sortOrder: "asc" } }, source: true },
+      })
+      .catch(() => null);
+    if (!event) return reply.code(404).send({ error: "event_not_found" });
+    return serializeAdminEventListItem(event);
+  });
+
+  app.post("/v1/admin/events/:id/publish", { preHandler: requireInternalApiKey }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    return updateEventPublicationStatus(id, "published", reply);
+  });
+
+  app.post("/v1/admin/events/:id/hide", { preHandler: requireInternalApiKey }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    return updateEventPublicationStatus(id, "hidden", reply);
+  });
+
+  app.post("/v1/admin/events/:id/reject", { preHandler: requireInternalApiKey }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    return updateEventPublicationStatus(id, "rejected", reply);
+  });
+
+  app.get("/v1/admin/curation/jobs", { preHandler: requireInternalApiKey }, async (request) => {
+    const query = request.query as {
+      status?: string;
+      provider?: string;
+      model?: string;
+      eventId?: string;
+      from?: string;
+      to?: string;
+      page?: string;
+      limit?: string;
+    };
+    const page = positiveInt(query.page, 1);
+    const limit = Math.min(positiveInt(query.limit, 50), 100);
+    const where = curationJobsWhere(query);
+    const [total, rows] = await Promise.all([
+      prisma.curationJob.count({ where }),
+      prisma.curationJob.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+    ]);
+
+    return {
+      data: rows.map(serializeCurationJobListItem),
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
+  });
+
+  app.get("/v1/admin/import-runs", { preHandler: requireInternalApiKey }, async (request) => {
+    const query = request.query as { source?: string; status?: string; from?: string; to?: string; page?: string; limit?: string };
+    const page = positiveInt(query.page, 1);
+    const limit = Math.min(positiveInt(query.limit, 50), 100);
+    const where = importRunsWhere(query);
+    const [total, rows] = await Promise.all([
+      prisma.importRun.count({ where }),
+      prisma.importRun.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+    ]);
+
+    return {
+      data: rows.map(serializeImportRun),
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
+  });
+
   app.get("/v1/audit/curation-summary", { preHandler: requireInternalApiKey }, async () => auditCuration());
 
   app.get("/v1/audit/events", { preHandler: requireInternalApiKey }, async (request) => {
@@ -356,6 +520,226 @@ async function sendEventDetail(id: string, reply: FastifyReply) {
     confidence: event.confidence,
     lastCuratedAt: event.curatedAt?.toISOString() ?? null,
     lastUpdatedAt: event.updatedAt.toISOString(),
+  };
+}
+
+function serializeAdminEventListItem(event: any) {
+  const currentLot = currentPriceLot(event.prices ?? []);
+  return {
+    id: event.id,
+    slug: event.slug,
+    name: event.name,
+    description: event.description,
+    date: dateToIsoDate(event.date),
+    startTime: event.startTime,
+    endTime: event.endTime,
+    city: event.city,
+    state: event.state,
+    country: event.country,
+    locationName: event.locationName,
+    address: event.address,
+    latitude: event.latitude,
+    longitude: event.longitude,
+    modality: event.modality,
+    eventStatus: event.eventStatus,
+    publicationStatus: event.publicationStatus,
+    registrationUrl: event.registrationUrl,
+    officialUrl: event.officialUrl,
+    regulationUrl: event.regulationUrl,
+    organizerName: event.organizerName,
+    organizerUrl: event.organizerUrl,
+    mainImageUrl: event.mainImageUrl,
+    distances: (event.distances ?? []).map((distance: any) => distance.label ?? distance),
+    distanceDetails: event.distances ?? [],
+    prices: event.prices ?? [],
+    lowestPrice: lowestPrice(event.prices ?? []),
+    currentLot,
+    currentPrice: currentLot?.price ?? null,
+    currentLotName: currentLot?.name ?? null,
+    currency: currentLot?.currency ?? event.prices?.[0]?.currency ?? null,
+    images: (event.images ?? []).map((image: any) => image.url ?? image),
+    sourceType: event.sourceType,
+    sourceExternalId: event.sourceExternalId,
+    sourceUrl: event.sourceUrl,
+    source: event.source
+      ? {
+          id: event.source.id,
+          name: event.source.name,
+          type: event.source.type,
+          url: event.source.url,
+          adapter: event.source.adapter,
+          externalId: event.source.externalId,
+        }
+      : null,
+    confidence: event.confidence,
+    curationStatus: event.curationStatus,
+    curatedAt: event.curatedAt?.toISOString() ?? null,
+    curationProvider: event.curationProvider,
+    curationModel: event.curationModel,
+    curationVersion: event.curationVersion,
+    canonicalFingerprint: event.canonicalFingerprint,
+    dedupeStatus: event.dedupeStatus,
+    duplicateOfEventId: event.duplicateOfEventId,
+    warnings: event.warnings,
+    publishabilityReasons: event.publishabilityReasons,
+    publishedAt: event.publishedAt?.toISOString() ?? null,
+    createdAt: event.createdAt.toISOString(),
+    updatedAt: event.updatedAt.toISOString(),
+    lastCuratedAt: event.curatedAt?.toISOString() ?? null,
+    lastUpdatedAt: event.updatedAt.toISOString(),
+  };
+}
+
+function serializeAdminEventDetail(event: any, latestRawExtraction: any | null) {
+  return {
+    ...serializeAdminEventListItem(event),
+    kits: event.kits ?? [],
+    kitPickup: event.kitPickups?.[0] ?? null,
+    kitPickups: event.kitPickups ?? [],
+    schedule: event.schedule ?? [],
+    rules: event.rules ?? [],
+    versions: (event.versions ?? []).map((version: any) => ({
+      id: version.id,
+      schemaVersion: version.schemaVersion,
+      curationVersion: version.curationVersion,
+      createdAt: version.createdAt.toISOString(),
+    })),
+    curationJobs: (event.curationJobs ?? []).map(serializeCurationJobListItem),
+    extractionJobs: (event.extractionJobs ?? []).map((job: any) => ({
+      id: job.id,
+      status: job.status,
+      provider: job.provider,
+      model: job.model,
+      adapter: job.adapter,
+      adapterVersion: job.adapterVersion,
+      schemaVersion: job.schemaVersion,
+      curationVersion: job.curationVersion,
+      confidence: job.confidence,
+      warnings: job.warnings,
+      reasons: job.reasons,
+      errorMessage: job.errorMessage,
+      startedAt: job.startedAt?.toISOString() ?? null,
+      finishedAt: job.finishedAt?.toISOString() ?? null,
+      createdAt: job.createdAt.toISOString(),
+    })),
+    latestRawExtraction: latestRawExtraction
+      ? {
+          id: latestRawExtraction.id,
+          adapter: latestRawExtraction.adapter,
+          adapterVersion: latestRawExtraction.adapterVersion,
+          contentHash: latestRawExtraction.contentHash,
+          title: latestRawExtraction.title,
+          url: latestRawExtraction.url,
+          fetchedAt: latestRawExtraction.fetchedAt.toISOString(),
+          createdAt: latestRawExtraction.createdAt.toISOString(),
+          rawSourceData: latestRawExtraction.rawSourceData,
+          importantText: latestRawExtraction.importantText,
+          importantHtml: latestRawExtraction.importantHtml,
+          extractedLinks: latestRawExtraction.extractedLinks,
+        }
+      : null,
+  };
+}
+
+function adminEventsWhere(query: AdminEventListQuery) {
+  const where: any = {};
+  const parsedPublicationStatus = publicationStatusSchema.safeParse(query.publicationStatus);
+  if (parsedPublicationStatus.success) where.publicationStatus = parsedPublicationStatus.data;
+  const parsedEventStatus = eventStatusSchema.safeParse(query.eventStatus ?? query.status);
+  if (parsedEventStatus.success) where.eventStatus = parsedEventStatus.data;
+  if (query.country) where.country = query.country.toUpperCase();
+  if (query.state) where.state = query.state.toUpperCase();
+  if (query.city) where.city = { contains: query.city, mode: "insensitive" as const };
+  if (query.sourceType) where.sourceType = query.sourceType;
+  if (query.search) where.name = { contains: query.search, mode: "insensitive" as const };
+  const from = isoDate(query.from);
+  const to = isoDate(query.to);
+  if (from || to) {
+    where.date = {
+      gte: from ? new Date(`${from}T00:00:00.000Z`) : undefined,
+      lte: to ? new Date(`${to}T23:59:59.999Z`) : undefined,
+    };
+  }
+  if (query.warnings) {
+    where.warnings = { array_contains: [query.warnings] };
+  }
+  return where;
+}
+
+async function updateEventPublicationStatus(id: string, publicationStatus: "draft" | "pending_review" | "published" | "hidden" | "rejected", reply: FastifyReply) {
+  const event = await prisma.event
+    .update({
+      where: { id },
+      data: {
+        publicationStatus,
+        publishedAt: publicationStatus === "published" ? new Date() : null,
+      },
+      include: { distances: true, prices: true, images: { orderBy: { sortOrder: "asc" } }, source: true },
+    })
+    .catch(() => null);
+  if (!event) return reply.code(404).send({ error: "event_not_found" });
+  return serializeAdminEventListItem(event);
+}
+
+function curationJobsWhere(query: {
+  status?: string;
+  provider?: string;
+  model?: string;
+  eventId?: string;
+  from?: string;
+  to?: string;
+}) {
+  const where: any = {};
+  const parsedStatus = curationJobStatusSchema.safeParse(query.status);
+  if (parsedStatus.success) where.status = parsedStatus.data;
+  if (query.provider) where.provider = query.provider;
+  if (query.model) where.model = query.model;
+  if (query.eventId) where.eventId = query.eventId;
+  const from = isoDate(query.from);
+  const to = isoDate(query.to);
+  if (from || to) {
+    where.createdAt = {
+      gte: from ? new Date(`${from}T00:00:00.000Z`) : undefined,
+      lte: to ? new Date(`${to}T23:59:59.999Z`) : undefined,
+    };
+  }
+  return where;
+}
+
+function importRunsWhere(query: { source?: string; status?: string; from?: string; to?: string }) {
+  const where: any = {};
+  if (query.source) where.source = query.source;
+  if (query.status) where.status = query.status;
+  const from = isoDate(query.from);
+  const to = isoDate(query.to);
+  if (from || to) {
+    where.createdAt = {
+      gte: from ? new Date(`${from}T00:00:00.000Z`) : undefined,
+      lte: to ? new Date(`${to}T23:59:59.999Z`) : undefined,
+    };
+  }
+  return where;
+}
+
+function serializeCurationJobListItem(job: any) {
+  return {
+    id: job.id,
+    eventId: job.eventId,
+    rawSourceExtractionId: job.rawSourceExtractionId,
+    provider: job.provider,
+    model: job.model,
+    status: job.status,
+    contentHash: job.contentHash,
+    schemaVersion: job.schemaVersion,
+    curationVersion: job.curationVersion,
+    appliedChanges: job.appliedChanges,
+    warnings: job.warnings,
+    confidence: job.confidence,
+    isDryRun: job.isDryRun,
+    errorMessage: job.errorMessage,
+    createdAt: job.createdAt.toISOString(),
+    finishedAt: job.finishedAt?.toISOString() ?? null,
+    durationMs: job.finishedAt ? job.finishedAt.getTime() - job.createdAt.getTime() : null,
   };
 }
 

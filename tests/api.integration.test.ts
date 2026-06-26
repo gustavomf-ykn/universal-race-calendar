@@ -277,4 +277,68 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     expect(reviewList.statusCode).toBe(200);
     expect(reviewList.json<{ data: unknown[]; pagination: { total: number } }>().data).toBeInstanceOf(Array);
   });
+
+  it("supports admin event, curation job, and import run endpoints", async () => {
+    const event = await prisma.event.findFirstOrThrow();
+
+    const unauthorized = await app.inject({ method: "GET", url: "/v1/admin/events" });
+    expect(unauthorized.statusCode).toBe(401);
+
+    const adminList = await app.inject({
+      method: "GET",
+      url: "/v1/admin/events?sourceType=ticketsports&limit=10",
+      headers: { "x-api-key": "test-internal-key" },
+    });
+    expect(adminList.statusCode).toBe(200);
+    expect(adminList.json<{ data: unknown[]; pagination: { total: number } }>().data.length).toBeGreaterThan(0);
+
+    const adminDetail = await app.inject({
+      method: "GET",
+      url: `/v1/admin/events/${event.id}`,
+      headers: { "x-api-key": "test-internal-key" },
+    });
+    expect(adminDetail.statusCode).toBe(200);
+    expect(adminDetail.json<{ id: string; publicationStatus: string }>().id).toBe(event.id);
+
+    const hide = await app.inject({
+      method: "POST",
+      url: `/v1/admin/events/${event.id}/hide`,
+      headers: { "x-api-key": "test-internal-key" },
+    });
+    expect(hide.statusCode).toBe(200);
+    expect(hide.json<{ publicationStatus: string }>().publicationStatus).toBe("hidden");
+
+    const publish = await app.inject({
+      method: "POST",
+      url: `/v1/admin/events/${event.id}/publish`,
+      headers: { "x-api-key": "test-internal-key" },
+    });
+    expect(publish.statusCode).toBe(200);
+    expect(publish.json<{ publicationStatus: string }>().publicationStatus).toBe("published");
+
+    const dedupe = await app.inject({
+      method: "PATCH",
+      url: `/v1/admin/events/${event.id}/dedupe-status`,
+      headers: { "x-api-key": "test-internal-key" },
+      payload: { dedupeStatus: "needs_review" },
+    });
+    expect(dedupe.statusCode).toBe(200);
+    expect(dedupe.json<{ dedupeStatus: string }>().dedupeStatus).toBe("needs_review");
+
+    const jobs = await app.inject({
+      method: "GET",
+      url: "/v1/admin/curation/jobs?limit=10",
+      headers: { "x-api-key": "test-internal-key" },
+    });
+    expect(jobs.statusCode).toBe(200);
+    expect(jobs.json<{ data: unknown[]; pagination: { total: number } }>().data).toBeInstanceOf(Array);
+
+    const imports = await app.inject({
+      method: "GET",
+      url: "/v1/admin/import-runs?source=ticketsports&limit=10",
+      headers: { "x-api-key": "test-internal-key" },
+    });
+    expect(imports.statusCode).toBe(200);
+    expect(imports.json<{ data: unknown[]; pagination: { total: number } }>().data).toBeInstanceOf(Array);
+  });
 });
