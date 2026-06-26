@@ -1,4 +1,4 @@
-import { importTicketSportsEvents, runSourceCheck } from "@race-calendar/curation";
+import { auditCuration, importTicketSportsEvents, runAICurationBatch, runAICurationForEvent, runSourceCheck } from "@race-calendar/curation";
 import { getSource, listSources, prisma } from "@race-calendar/database";
 
 async function main(argv = process.argv.slice(2)) {
@@ -79,10 +79,36 @@ async function main(argv = process.argv.slice(2)) {
     return;
   }
 
+  if (command === "curate:ai") {
+    const options = parseOptions(argv.slice(1));
+    const dryRun = options["dry-run"] === "true";
+    const force = options.force === "true";
+    if (options["event-id"]) {
+      const result = await runAICurationForEvent(options["event-id"], { dryRun, force });
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    const result = await runAICurationBatch({
+      limit: positiveInt(options.limit, 10),
+      only: curationOnlyValue(options.only),
+      dryRun,
+      force,
+    });
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (command === "audit:curation") {
+    console.log(JSON.stringify(await auditCuration(), null, 2));
+    return;
+  }
+
   console.log("Commands:");
   console.log("  check-source <sourceId>");
+  console.log("  curate:ai [--event-id=<id>] [--limit=10] [--dry-run] [--force] [--only=not_curated|published|pending_review|failed]");
   console.log("  export-events [--sourceType=ticketsports] [--limit=100]");
   console.log("  import-ticketsports");
+  console.log("  audit:curation");
   console.log("  list-sources");
 }
 
@@ -96,15 +122,33 @@ main()
   });
 
 function parseOptions(args: string[]): Record<string, string> {
-  return Object.fromEntries(
-    args.flatMap((arg) => {
-      const match = arg.match(/^--([^=]+)=(.*)$/);
-      return match?.[1] ? [[match[1], match[2] ?? ""]] : [];
-    }),
-  );
+  const entries: Array<[string, string]> = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg) continue;
+    const match = arg.match(/^--([^=]+)=(.*)$/);
+    if (match?.[1]) {
+      entries.push([match[1], match[2] ?? ""]);
+      continue;
+    }
+    const flag = arg.match(/^--(.+)$/)?.[1];
+    if (!flag) continue;
+    const next = args[index + 1];
+    if (next && !next.startsWith("--")) {
+      entries.push([flag, next]);
+      index += 1;
+    } else {
+      entries.push([flag, "true"]);
+    }
+  }
+  return Object.fromEntries(entries);
 }
 
 function positiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function curationOnlyValue(value: string | undefined): "not_curated" | "published" | "pending_review" | "failed" | undefined {
+  return value === "not_curated" || value === "published" || value === "pending_review" || value === "failed" ? value : undefined;
 }

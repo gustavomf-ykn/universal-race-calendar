@@ -2,7 +2,14 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
-import { importTicketSportsEvents, runSourceCheck, type ImportTicketSportsEventsOptions } from "@race-calendar/curation";
+import {
+  auditCuration,
+  importTicketSportsEvents,
+  runAICurationBatch,
+  runAICurationForEvent,
+  runSourceCheck,
+  type ImportTicketSportsEventsOptions,
+} from "@race-calendar/curation";
 import { createSource, dateToIsoDate, getLatestImportRun, getSource, listSources, prisma } from "@race-calendar/database";
 import { eventStatusSchema, modalitySchema, publicationStatusSchema, sourceKindSchema } from "@race-calendar/schemas";
 
@@ -65,10 +72,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
     return {
       data: rows.map((event) => {
-        const lowest = event.prices
-          .map((price) => price.price)
-          .filter((price): price is number => typeof price === "number")
-          .sort((a, b) => a - b)[0];
+        const currentLot = currentPriceLot(event.prices);
         return {
           id: event.id,
           slug: event.slug,
@@ -82,12 +86,15 @@ export async function buildApp(options: BuildAppOptions = {}) {
           modality: event.modality,
           eventStatus: event.eventStatus,
           distances: event.distances.map((distance) => distance.label),
-          lowestPrice: lowest ?? null,
-          currency: event.prices[0]?.currency ?? null,
+          lowestPrice: lowestPrice(event.prices),
+          currentPrice: currentLot?.price ?? null,
+          currentLotName: currentLot?.name ?? null,
+          currency: currentLot?.currency ?? event.prices[0]?.currency ?? null,
           registrationUrl: event.registrationUrl,
           officialUrl: event.officialUrl,
           mainImageUrl: event.mainImageUrl,
           sourceType: event.sourceType,
+          lastCuratedAt: event.curatedAt?.toISOString() ?? null,
         };
       }),
       pagination: {
@@ -209,6 +216,37 @@ export async function buildApp(options: BuildAppOptions = {}) {
     return job;
   });
 
+  app.post("/v1/curation/events/:id/run", { preHandler: requireInternalApiKey }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = objectBody(request.body);
+    const result = await runAICurationForEvent(id, {
+      dryRun: optionalBoolean(body.dryRun) ?? false,
+      force: optionalBoolean(body.force) ?? false,
+    });
+    return reply.code(result.status === "success" || result.status === "skipped_cached" ? 200 : 202).send(result);
+  });
+
+  app.post("/v1/curation/events/batch", { preHandler: requireInternalApiKey }, async (request, reply) => {
+    const body = objectBody(request.body);
+    const only = curationOnlyValue(body.only);
+    const result = await runAICurationBatch({
+      limit: optionalPositiveInt(body.limit) ?? 10,
+      only,
+      dryRun: optionalBoolean(body.dryRun) ?? false,
+      force: optionalBoolean(body.force) ?? false,
+    });
+    return reply.code(result.status === "success" ? 200 : 207).send(result);
+  });
+
+  app.get("/v1/curation/jobs/:id", { preHandler: requireInternalApiKey }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const job = await prisma.curationJob.findUnique({ where: { id } });
+    if (!job) return reply.code(404).send({ error: "curation_job_not_found" });
+    return job;
+  });
+
+  app.get("/v1/audit/curation-summary", { preHandler: requireInternalApiKey }, async () => auditCuration());
+
   app.get("/v1/audit/events", { preHandler: requireInternalApiKey }, async (request) => {
     const query = request.query as { publicationStatus?: string; sourceType?: string; page?: string; limit?: string };
     const page = positiveInt(query.page, 1);
@@ -303,6 +341,10 @@ async function sendEventDetail(id: string, reply: FastifyReply) {
     schedule: event.schedule,
     rules: event.rules,
     images: event.images.map((image) => image.url),
+    currentLot: currentPriceLot(event.prices),
+    currentPrice: currentPriceLot(event.prices)?.price ?? null,
+    currentLotName: currentPriceLot(event.prices)?.name ?? null,
+    currency: currentPriceLot(event.prices)?.currency ?? event.prices[0]?.currency ?? null,
     source: event.source
       ? {
           id: event.source.id,
@@ -312,6 +354,7 @@ async function sendEventDetail(id: string, reply: FastifyReply) {
         }
       : null,
     confidence: event.confidence,
+    lastCuratedAt: event.curatedAt?.toISOString() ?? null,
     lastUpdatedAt: event.updatedAt.toISOString(),
   };
 }
@@ -451,6 +494,29 @@ function serializeImportRun(run: Awaited<ReturnType<typeof getLatestImportRun>>)
     durationMs: run.finishedAt.getTime() - run.startedAt.getTime(),
     createdAt: run.createdAt.toISOString(),
   };
+}
+
+function lowestPrice(prices: Array<{ price: number | null }>): number | null {
+  return (
+    prices
+      .map((price) => price.price)
+      .filter((price): price is number => typeof price === "number")
+      .sort((a, b) => a - b)[0] ?? null
+  );
+}
+
+function currentPriceLot<T extends { isCurrent: boolean; price: number | null; currency: string; name: string | null; endDate?: Date | null }>(
+  prices: T[],
+): T | null {
+  const current = prices.find((price) => price.isCurrent);
+  if (current) return current;
+  return prices
+    .filter((price) => typeof price.price === "number")
+    .sort((a, b) => (a.price ?? Number.POSITIVE_INFINITY) - (b.price ?? Number.POSITIVE_INFINITY))[0] ?? null;
+}
+
+function curationOnlyValue(value: unknown): "not_curated" | "published" | "pending_review" | "failed" | undefined {
+  return value === "not_curated" || value === "published" || value === "pending_review" || value === "failed" ? value : undefined;
 }
 
 function corsOrigins(): boolean | string[] {

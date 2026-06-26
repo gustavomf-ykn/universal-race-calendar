@@ -83,6 +83,8 @@ pnpm test
 pnpm db:migrate
 pnpm dev:api
 pnpm --filter @race-calendar/worker check-source <sourceId>
+pnpm --filter @race-calendar/worker curate:ai --limit=10 --dry-run
+pnpm --filter @race-calendar/worker audit:curation
 ```
 
 ## Deploy de produto
@@ -117,6 +119,8 @@ DIRECT_URL=...
 INTERNAL_API_KEY=...
 CORS_ORIGINS=*
 AI_PROVIDER=mock
+AI_CURATION_ENABLED=false
+AI_CURATION_REQUIRED=false
 TICKETSPORTS_IMPORT_QUANTITY=1000
 TICKETSPORTS_IMPORT_CONCURRENCY=3
 TICKETSPORTS_IMPORT_DELAY_MS=300
@@ -159,4 +163,25 @@ Endpoints internos para acompanhar qualidade e importacao:
 ```bash
 curl -H "X-API-Key: dev-internal-key" "http://localhost:3000/v1/audit/events?publicationStatus=pending_review"
 curl -H "X-API-Key: dev-internal-key" "http://localhost:3000/v1/imports/ticketsports/latest"
+curl -H "X-API-Key: dev-internal-key" "http://localhost:3000/v1/audit/curation-summary"
 ```
+
+## Curadoria IA
+
+Por padrao a producao continua segura com `AI_CURATION_ENABLED=false`, usando o parser deterministico da TicketSports. Para testar a camada nova sem alterar eventos:
+
+```bash
+AI_PROVIDER=mock pnpm --filter @race-calendar/worker curate:ai --limit=10 --dry-run
+```
+
+Para usar um endpoint real compativel com OpenAI Chat Completions:
+
+```bash
+AI_CURATION_ENABLED=true
+AI_PROVIDER=openai-compatible
+AI_BASE_URL=https://seu-provider.example/v1
+AI_API_KEY=...
+AI_MODEL=...
+```
+
+Use `AI_CURATION_REQUIRED=true` apenas quando eventos sem curadoria IA/cache valido devem ficar em `pending_review`.

@@ -63,6 +63,24 @@ enum ExtractionJobStatus {
   manual_review
 }
 
+enum CurationStatus {
+  not_curated
+  curated
+  failed
+  skipped_cached
+  manual_review
+}
+
+enum CurationJobStatus {
+  pending
+  processing
+  success
+  validation_failed
+  provider_failed
+  skipped_cached
+  manual_review
+}
+
 model Source {
   id              String                @id @default(cuid())
   name            String
@@ -105,6 +123,7 @@ model RawSourceExtraction {
   adapterVersion   String
   fetchedAt        DateTime
   createdAt        DateTime @default(now())
+  curationJobs     CurationJob[]
 
   @@index([sourceId])
   @@index([contentHash])
@@ -161,6 +180,11 @@ model Event {
   sourceExternalId    String?
   sourceUrl           String?
   confidence          Float             @default(0)
+  curationStatus      CurationStatus    @default(not_curated)
+  curatedAt           DateTime?
+  curationProvider    String?
+  curationModel       String?
+  curationVersion     String?
   canonicalFingerprint String
   dedupeStatus        DedupeStatus      @default(unique)
   duplicateOfEventId  String?
@@ -178,6 +202,7 @@ model Event {
   images              EventImage[]
   versions            EventVersion[]
   extractionJobs      ExtractionJob[]
+  curationJobs        CurationJob[]
 
   @@index([publicationStatus])
   @@index([date])
@@ -209,6 +234,7 @@ model EventPrice {
   startDate  DateTime?
   endDate    DateTime?
   status     String   @default("unknown")
+  isCurrent  Boolean  @default(false)
   sourceText String?  @db.Text
   confidence Float    @default(0)
 }
@@ -306,5 +332,35 @@ model ExtractionJob {
 
   @@index([sourceId])
   @@index([eventId])
+  @@index([status])
+}
+
+model CurationJob {
+  id                    String             @id @default(cuid())
+  eventId               String?
+  event                 Event?             @relation(fields: [eventId], references: [id])
+  rawSourceExtractionId String?
+  rawSourceExtraction   RawSourceExtraction? @relation(fields: [rawSourceExtractionId], references: [id])
+  provider              String
+  model                 String
+  status                CurationJobStatus  @default(pending)
+  contentHash           String
+  schemaVersion         String
+  curationVersion       String
+  rawInput              Json?
+  rawOutput             Json?
+  validatedJson         Json?
+  normalizedJson        Json?
+  appliedChanges        Json?
+  warnings              Json?
+  confidence            Float?
+  isDryRun              Boolean            @default(false)
+  errorMessage          String?            @db.Text
+  createdAt             DateTime           @default(now())
+  finishedAt            DateTime?
+
+  @@index([eventId])
+  @@index([rawSourceExtractionId])
+  @@index([provider, model, contentHash, schemaVersion, curationVersion, status])
   @@index([status])
 }

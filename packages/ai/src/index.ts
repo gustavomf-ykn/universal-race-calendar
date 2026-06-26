@@ -3,6 +3,8 @@ import { cleanText, normalizeDate, normalizeDistanceKm, normalizePrice, normaliz
 
 export type ExtractRaceEventInput = {
   raw: RawSourceExtraction;
+  currentEvent?: unknown;
+  today?: string;
 };
 
 export type AIProvider = {
@@ -11,12 +13,41 @@ export type AIProvider = {
   extractRaceEvent(input: ExtractRaceEventInput): Promise<RaceEventExtraction>;
 };
 
+export type OpenAICompatibleProviderOptions = {
+  baseUrl: string;
+  apiKey?: string | undefined;
+  model: string;
+  timeoutMs?: number;
+  maxRetries?: number;
+  fetchImpl?: typeof fetch;
+  name?: string;
+};
+
 export function createAIProviderFromEnv(): AIProvider {
   const provider = process.env.AI_PROVIDER ?? "mock";
   const model = process.env.AI_MODEL ?? "mock-race-event-v1";
   if (provider === "mock") return new MockAIProvider(model);
+  if (provider === "openai-compatible") {
+    return new OpenAICompatibleProvider({
+      baseUrl: requiredEnv("AI_BASE_URL"),
+      apiKey: process.env.AI_API_KEY,
+      model,
+      timeoutMs: Number(process.env.AI_TIMEOUT_MS ?? 30000),
+      maxRetries: Number(process.env.AI_MAX_RETRIES ?? 2),
+      name: "openai-compatible",
+    });
+  }
   if (provider === "ollama") return new OllamaProvider(model);
-  if (provider === "openrouter") return new OpenRouterProvider(model);
+  if (provider === "openrouter") {
+    return new OpenAICompatibleProvider({
+      baseUrl: process.env.AI_BASE_URL ?? "https://openrouter.ai/api/v1",
+      apiKey: process.env.AI_API_KEY,
+      model,
+      timeoutMs: Number(process.env.AI_TIMEOUT_MS ?? 30000),
+      maxRetries: Number(process.env.AI_MAX_RETRIES ?? 2),
+      name: "openrouter",
+    });
+  }
   if (provider === "gemini") return new GeminiProvider(model);
   throw new Error(`Unsupported AI_PROVIDER: ${provider}`);
 }
@@ -99,6 +130,69 @@ export class StubAIProvider implements AIProvider {
   }
 }
 
+export class OpenAICompatibleProvider implements AIProvider {
+  readonly name: string;
+  readonly model: string;
+  private readonly baseUrl: string;
+  private readonly apiKey: string | undefined;
+  private readonly timeoutMs: number;
+  private readonly maxRetries: number;
+  private readonly fetchImpl: typeof fetch;
+
+  constructor(options: OpenAICompatibleProviderOptions) {
+    this.name = options.name ?? "openai-compatible";
+    this.model = options.model;
+    this.baseUrl = options.baseUrl.replace(/\/+$/g, "");
+    this.apiKey = options.apiKey;
+    this.timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : 30000;
+    this.maxRetries = Number.isFinite(options.maxRetries) && options.maxRetries != null && options.maxRetries >= 0 ? options.maxRetries : 2;
+    this.fetchImpl = options.fetchImpl ?? fetch;
+  }
+
+  async extractRaceEvent(input: ExtractRaceEventInput): Promise<RaceEventExtraction> {
+    const content = await this.chatCompletion(buildCurationMessages(input));
+    const parsed = parseJsonObjectFromText(content);
+    return raceEventExtractionSchema.parse(parsed);
+  }
+
+  private async chatCompletion(messages: Array<{ role: "system" | "user"; content: string }>): Promise<string> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      try {
+        const response = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: withoutUndefined({
+            "content-type": "application/json",
+            authorization: this.apiKey ? `Bearer ${this.apiKey}` : undefined,
+          }),
+          body: JSON.stringify({
+            model: this.model,
+            messages,
+            temperature: 0,
+            response_format: { type: "json_object" },
+          }),
+          signal: controller.signal,
+        });
+        const text = await response.text();
+        if (!response.ok) throw new Error(`AI provider returned ${response.status}: ${text.slice(0, 500)}`);
+        const payload = JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }> };
+        const content = payload.choices?.[0]?.message?.content;
+        if (!content) throw new Error("AI provider response did not include choices[0].message.content");
+        return content;
+      } catch (error) {
+        lastError = error;
+        if (attempt >= this.maxRetries) break;
+        await wait(250 * (attempt + 1));
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+}
+
 export class OllamaProvider extends StubAIProvider {
   constructor(model: string) {
     super("ollama", model);
@@ -115,6 +209,65 @@ export class GeminiProvider extends StubAIProvider {
   constructor(model: string) {
     super("gemini", model);
   }
+}
+
+export function parseJsonObjectFromText(text: string): unknown {
+  const cleaned = cleanText(text);
+  const fenced = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  const candidate = fenced ?? cleaned;
+  try {
+    return JSON.parse(candidate);
+  } catch {
+    const start = candidate.indexOf("{");
+    const end = candidate.lastIndexOf("}");
+    if (start >= 0 && end > start) return JSON.parse(candidate.slice(start, end + 1));
+    throw new Error("AI provider response is not valid JSON");
+  }
+}
+
+export function buildCurationMessages(input: ExtractRaceEventInput): Array<{ role: "system" | "user"; content: string }> {
+  return [
+    {
+      role: "system",
+      content: [
+        "Voce estrutura dados de corridas de rua para uma API universal de calendario.",
+        "Retorne somente JSON valido compatível com RaceEventExtraction.",
+        "Nao invente dados: use null quando nao houver evidencia clara.",
+        "Inclua sourceText nos campos criticos, confidence de 0 a 1, fieldConfidences, warnings e unstructuredNotes.",
+        "Separe lotes/precos em lots, marque isCurrent apenas quando houver evidencia, e mantenha prices para compatibilidade.",
+      ].join(" "),
+    },
+    {
+      role: "user",
+      content: JSON.stringify(
+        {
+          today: input.today ?? new Date().toISOString().slice(0, 10),
+          raw: {
+            sourceType: input.raw.sourceType,
+            sourceExternalId: input.raw.sourceExternalId,
+            url: input.raw.url,
+            title: input.raw.title,
+            importantText: input.raw.importantText.slice(0, 20000),
+            rawSourceData: input.raw.rawSourceData,
+            extractedLinks: input.raw.extractedLinks,
+          },
+          currentEvent: input.currentEvent ?? null,
+          expectedShape: {
+            name: { value: "string|null", confidence: "number", sourceText: "string|null" },
+            date: { value: "YYYY-MM-DD|null", confidence: "number", sourceText: "string|null" },
+            city: { value: "string|null", confidence: "number", sourceText: "string|null" },
+            state: { value: "UF|null", confidence: "number", sourceText: "string|null" },
+            country: { value: "BR|null", confidence: "number", sourceText: "string|null" },
+            distances: [{ label: "5 km", distanceKm: 5, modality: "road", confidence: 0.8 }],
+            lots: [{ name: "Lote 1", price: 100, currency: "BRL", status: "open", isCurrent: true, confidence: 0.8 }],
+            currentLot: { name: "Lote atual", price: 100, currency: "BRL", status: "open", isCurrent: true, confidence: 0.8 },
+          },
+        },
+        null,
+        2,
+      ),
+    },
+  ];
 }
 
 function evidence(value: string | null | undefined, confidence: number) {
@@ -176,4 +329,18 @@ function inferEventStatus(text: string): "scheduled" | "postponed" | "cancelled"
   if (/esgotad|sold out/.test(lower)) return "sold_out";
   if (/encerrad|finalizad|finished/.test(lower)) return "finished";
   return "scheduled";
+}
+
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required when AI_PROVIDER=openai-compatible`);
+  return value;
+}
+
+function withoutUndefined(value: Record<string, string | undefined>): Record<string, string> {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as Record<string, string>;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

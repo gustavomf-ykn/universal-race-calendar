@@ -14,6 +14,16 @@ export const extractionJobStatusSchema = z.enum([
   "provider_failed",
   "manual_review",
 ]);
+export const curationStatusSchema = z.enum(["not_curated", "curated", "failed", "skipped_cached", "manual_review"]);
+export const curationJobStatusSchema = z.enum([
+  "pending",
+  "processing",
+  "success",
+  "validation_failed",
+  "provider_failed",
+  "skipped_cached",
+  "manual_review",
+]);
 export const dedupeStatusSchema = z.enum(["unique", "possible_duplicate", "duplicate", "needs_review"]);
 export const ruleCategorySchema = z.enum([
   "general",
@@ -66,9 +76,12 @@ export const racePriceExtractionSchema = z.object({
   startDate: z.string().nullable().default(null),
   endDate: z.string().nullable().default(null),
   status: priceStatusSchema.default("unknown"),
+  isCurrent: z.boolean().default(false),
   sourceText: z.string().nullable().default(null),
   confidence: z.number().min(0).max(1).default(0),
 });
+
+export const raceLotExtractionSchema = racePriceExtractionSchema;
 
 export const raceKitExtractionSchema = z.object({
   name: z.string().nullable().default(null),
@@ -121,6 +134,8 @@ export const raceEventExtractionSchema = z.object({
   modality: modalitySchema.default("unknown"),
   distances: z.array(raceDistanceExtractionSchema).default([]),
   prices: z.array(racePriceExtractionSchema).default([]),
+  lots: z.array(raceLotExtractionSchema).default([]),
+  currentLot: raceLotExtractionSchema.nullable().default(null),
   kits: z.array(raceKitExtractionSchema).default([]),
   schedule: z.array(raceScheduleItemExtractionSchema).default([]),
   rules: z.array(raceRuleExtractionSchema).default([]),
@@ -133,6 +148,8 @@ export const raceEventExtractionSchema = z.object({
   images: z.array(z.string().url()).default([]),
   eventStatus: eventStatusSchema.default("unknown"),
   confidence: z.number().min(0).max(1).default(0),
+  fieldConfidences: z.record(z.number().min(0).max(1)).default({}),
+  unstructuredNotes: z.array(z.string()).default([]),
   warnings: z.array(z.string()).default([]),
 });
 
@@ -165,6 +182,11 @@ export const canonicalRaceEventSchema = z.object({
   sourceExternalId: z.string().nullable(),
   sourceUrl: z.string().url().nullable(),
   confidence: z.number().min(0).max(1),
+  curationStatus: curationStatusSchema.optional(),
+  curatedAt: z.string().nullable().optional(),
+  curationProvider: z.string().nullable().optional(),
+  curationModel: z.string().nullable().optional(),
+  curationVersion: z.string().nullable().optional(),
   canonicalFingerprint: z.string(),
   dedupeStatus: dedupeStatusSchema,
   duplicateOfEventId: z.string().nullable(),
@@ -183,6 +205,8 @@ export type EventStatus = z.infer<typeof eventStatusSchema>;
 export type PublicationStatus = z.infer<typeof publicationStatusSchema>;
 export type Modality = z.infer<typeof modalitySchema>;
 export type ExtractionJobStatus = z.infer<typeof extractionJobStatusSchema>;
+export type CurationStatus = z.infer<typeof curationStatusSchema>;
+export type CurationJobStatus = z.infer<typeof curationJobStatusSchema>;
 export type DedupeStatus = z.infer<typeof dedupeStatusSchema>;
 export type RawSourceExtraction = z.infer<typeof rawSourceExtractionSchema>;
 export type RaceEventExtraction = z.infer<typeof raceEventExtractionSchema>;

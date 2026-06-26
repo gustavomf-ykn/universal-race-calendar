@@ -3,8 +3,14 @@ import { createAIProviderFromEnv, type AIProvider } from "@race-calendar/ai";
 import {
   completeExtractionJob,
   createExtractionJob,
+  findSuccessfulCurationJob,
+  getCurationSummary,
+  getLatestRawExtractionForEvent,
   getSource,
+  listEventsForCuration,
+  prisma,
   saveImportRun,
+  saveCurationJob,
   markSourceChecked,
   markSourceFailed,
   saveCanonicalEvent,
@@ -17,6 +23,7 @@ import {
   type PublicationStatus,
   type RaceEventExtraction,
   type RawSourceExtraction,
+  raceEventExtractionSchema,
 } from "@race-calendar/schemas";
 import {
   discoverTicketSportsEvents,
@@ -50,6 +57,11 @@ export type CurateSourceExtractionResult = {
   publishability: PublishabilityResult;
   schemaVersion: string;
   curationVersion: string;
+  providerName?: string;
+  providerModel?: string;
+  curationJobId?: string;
+  appliedChanges?: CurationDiff[];
+  curationJobStatus?: "success" | "validation_failed" | "provider_failed" | "skipped_cached" | "manual_review";
 };
 
 export type SourceCheckJobResult = {
@@ -91,6 +103,33 @@ export type ImportTicketSportsEventsOptions = DiscoverTicketSportsEventsOptions 
   force?: boolean;
   registry?: SourceAdapterRegistry;
   discoverEvents?: () => Promise<TicketSportsDiscoveredEvent[]>;
+};
+
+export type CurationDiff = {
+  field: string;
+  from: unknown;
+  to: unknown;
+  confidence: number | null;
+  warnings: string[];
+};
+
+export type RunAICurationOptions = {
+  eventId?: string;
+  limit?: number;
+  only?: "not_curated" | "published" | "pending_review" | "failed" | undefined;
+  dryRun?: boolean | undefined;
+  force?: boolean | undefined;
+  provider?: AIProvider | undefined;
+};
+
+export type AICurationRunResult = {
+  eventId: string | null;
+  curationJobId: string | null;
+  status: "success" | "validation_failed" | "provider_failed" | "skipped_cached" | "manual_review";
+  dryRun: boolean;
+  appliedChanges: CurationDiff[];
+  warnings: string[];
+  confidence: number | null;
 };
 
 export async function runSourceCheck(
@@ -138,11 +177,19 @@ export async function runSourceCheck(
       };
     }
 
-    await saveRawSourceExtraction(raw);
+    const rawRecord = await saveRawSourceExtraction(raw);
 
-    const provider = raw.sourceType === "ticketsports" ? null : createAIProviderFromEnv();
-    const result = provider ? await curateSourceExtraction(raw, provider) : await curateTicketSportsSourceExtraction(raw);
+    const aiEnabled = shouldRunAICuration();
+    const provider = aiEnabled || raw.sourceType !== "ticketsports" ? createAIProviderFromEnv() : undefined;
+    const result = aiEnabled
+      ? await curateRawExtractionWithAI(raw, { force: options.force, rawSourceExtractionId: rawRecord.id, provider })
+      : provider
+        ? await curateSourceExtraction(raw, provider)
+        : await curateTicketSportsSourceExtraction(raw);
     const saved = await saveCanonicalEvent(result.normalizedEvent);
+    if (result.curationJobId) {
+      await prisma.curationJob.update({ where: { id: result.curationJobId }, data: { eventId: saved.event.id } });
+    }
     await markSourceChecked(source.id, raw.contentHash, true);
 
     const reasons = saved.canonicalEvent.publishabilityReasons;
@@ -150,8 +197,8 @@ export async function runSourceCheck(
     const completed = await completeExtractionJob({
       jobId: job.id,
       eventId: saved.event.id,
-      provider: provider?.name ?? "deterministic",
-      model: provider?.model ?? "ticketsports-v1",
+      provider: result.providerName ?? provider?.name ?? "deterministic",
+      model: result.providerModel ?? provider?.model ?? "ticketsports-v1",
       adapter: raw.adapter,
       adapterVersion: raw.adapterVersion,
       schemaVersion: result.schemaVersion,
@@ -308,8 +355,156 @@ export async function curateSourceExtraction(
   };
 }
 
-export async function curateTicketSportsSourceExtraction(raw: RawSourceExtraction): Promise<CurateSourceExtractionResult> {
+export async function curateRawExtractionWithAI(
+  raw: RawSourceExtraction,
+  options: {
+    force?: boolean | undefined;
+    dryRun?: boolean | undefined;
+    rawSourceExtractionId?: string | null | undefined;
+    eventId?: string | null | undefined;
+    currentEvent?: unknown;
+    provider?: AIProvider | undefined;
+  } = {},
+): Promise<CurateSourceExtractionResult> {
+  const provider = options.provider ?? createAIProviderFromEnv();
+  const schemaVersion = CANONICAL_SCHEMA_VERSION;
+  const curationVersion = CURATION_PIPELINE_VERSION;
+  const dryRun = options.dryRun === true;
+  const cached =
+    !options.force && !dryRun
+      ? await findSuccessfulCurationJob({
+          provider: provider.name,
+          model: provider.model,
+          contentHash: raw.contentHash,
+          schemaVersion,
+          curationVersion,
+        })
+      : null;
+
+  if (cached?.validatedJson) {
+    const extraction = raceEventExtractionSchema.parse(cached.validatedJson);
+    const result = applyRaceEventExtraction(raw, extraction, {
+      providerName: provider.name,
+      providerModel: provider.model,
+      curationStatus: "skipped_cached",
+      currentEvent: options.currentEvent,
+    });
+    const job = await saveCurationJob({
+      eventId: options.eventId,
+      rawSourceExtractionId: options.rawSourceExtractionId,
+      provider: provider.name,
+      model: provider.model,
+      status: "skipped_cached",
+      contentHash: raw.contentHash,
+      schemaVersion,
+      curationVersion,
+      rawInput: raw,
+      rawOutput: cached.rawOutput,
+      validatedJson: extraction,
+      normalizedJson: result.normalizedEvent,
+      appliedChanges: result.appliedChanges,
+      warnings: result.normalizedEvent.warnings,
+      confidence: result.normalizedEvent.confidence,
+      isDryRun: false,
+    });
+    return { ...result, schemaVersion, curationVersion, providerName: provider.name, providerModel: provider.model, curationJobId: job.id, curationJobStatus: "skipped_cached" };
+  }
+
+  try {
+    const extraction = await provider.extractRaceEvent({ raw, currentEvent: options.currentEvent });
+    const result = applyRaceEventExtraction(raw, extraction, {
+      providerName: provider.name,
+      providerModel: provider.model,
+      curationStatus: "curated",
+      currentEvent: options.currentEvent,
+    });
+    const status = result.normalizedEvent.publicationStatus === "published" ? "success" : "manual_review";
+    const job = await saveCurationJob({
+      eventId: options.eventId,
+      rawSourceExtractionId: options.rawSourceExtractionId,
+      provider: provider.name,
+      model: provider.model,
+      status,
+      contentHash: raw.contentHash,
+      schemaVersion,
+      curationVersion,
+      rawInput: raw,
+      rawOutput: extraction,
+      validatedJson: extraction,
+      normalizedJson: result.normalizedEvent,
+      appliedChanges: result.appliedChanges,
+      warnings: result.normalizedEvent.warnings,
+      confidence: result.normalizedEvent.confidence,
+      isDryRun: dryRun,
+    });
+    return { ...result, schemaVersion, curationVersion, providerName: provider.name, providerModel: provider.model, curationJobId: job.id, curationJobStatus: status };
+  } catch (error) {
+    const status = error instanceof Error && error.name === "ZodError" ? "validation_failed" : "provider_failed";
+    const job = await saveCurationJob({
+      eventId: options.eventId,
+      rawSourceExtractionId: options.rawSourceExtractionId,
+      provider: provider.name,
+      model: provider.model,
+      status,
+      contentHash: raw.contentHash,
+      schemaVersion,
+      curationVersion,
+      rawInput: raw,
+      warnings: ["ai_curation_failed"],
+      confidence: null,
+      isDryRun: dryRun,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    const fallback = await curateTicketSportsSourceExtraction(raw, ["ai_curation_failed"]);
+    if (isAICurationRequired()) {
+      fallback.normalizedEvent.publicationStatus = "pending_review";
+      fallback.normalizedEvent.publishabilityReasons = [...new Set([...fallback.normalizedEvent.publishabilityReasons, "ai_curation_required"])];
+      fallback.normalizedEvent.curationStatus = "failed";
+    }
+    return {
+      ...fallback,
+      providerName: provider.name,
+      providerModel: provider.model,
+      curationJobId: job.id,
+      curationJobStatus: status,
+      appliedChanges: diffCanonicalEvents(options.currentEvent, fallback.normalizedEvent),
+    };
+  }
+}
+
+export function applyRaceEventExtraction(
+  raw: RawSourceExtraction,
+  extraction: RaceEventExtraction,
+  options: { providerName: string; providerModel: string; curationStatus: "curated" | "skipped_cached"; currentEvent?: unknown },
+): CurateSourceExtractionResult & { appliedChanges: CurationDiff[] } {
+  const parsed = raceEventExtractionSchema.parse(withCompatibleLots(extraction));
+  const normalizedEvent = normalizeRaceEventExtraction(parsed, raw);
+  const publishability = evaluatePublishability(normalizedEvent);
+  const finalEvent = canonicalRaceEventSchema.parse({
+    ...normalizedEvent,
+    publicationStatus: publishability.publicationStatus,
+    publishabilityReasons: publishability.reasons,
+    curationStatus: publishability.publicationStatus === "published" ? options.curationStatus : "manual_review",
+    curatedAt: new Date().toISOString(),
+    curationProvider: options.providerName,
+    curationModel: options.providerModel,
+    curationVersion: CURATION_PIPELINE_VERSION,
+  });
+  return {
+    extraction: parsed,
+    normalizedEvent: finalEvent,
+    publishability,
+    schemaVersion: CANONICAL_SCHEMA_VERSION,
+    curationVersion: CURATION_PIPELINE_VERSION,
+    providerName: options.providerName,
+    providerModel: options.providerModel,
+    appliedChanges: diffCanonicalEvents(options.currentEvent, finalEvent),
+  };
+}
+
+export async function curateTicketSportsSourceExtraction(raw: RawSourceExtraction, extraWarnings: string[] = []): Promise<CurateSourceExtractionResult> {
   const extraction = ticketSportsExtractionFromRaw(raw);
+  if (extraWarnings.length) extraction.warnings = [...new Set([...extraction.warnings, ...extraWarnings])];
   const normalizedEvent = normalizeRaceEventExtraction(extraction, raw);
   const publishability = evaluatePublishability(normalizedEvent);
   const finalEvent = {
@@ -324,6 +519,65 @@ export async function curateTicketSportsSourceExtraction(raw: RawSourceExtractio
     schemaVersion: CANONICAL_SCHEMA_VERSION,
     curationVersion: CURATION_PIPELINE_VERSION,
   };
+}
+
+export async function runAICurationForEvent(eventId: string, options: RunAICurationOptions = {}): Promise<AICurationRunResult> {
+  const event = await prisma.event.findUnique({
+    where: { id: eventId },
+    include: { distances: true, prices: true, images: true },
+  });
+  if (!event) throw new Error(`Event not found: ${eventId}`);
+  const rawRecord = await getLatestRawExtractionForEvent(eventId);
+  if (!rawRecord) throw new Error(`Raw extraction not found for event: ${eventId}`);
+  const raw = rawSourceExtractionFromRecord(rawRecord);
+  const result = await curateRawExtractionWithAI(raw, {
+    eventId,
+    rawSourceExtractionId: rawRecord.id,
+    dryRun: options.dryRun,
+    force: options.force,
+    currentEvent: event,
+    provider: options.provider,
+  });
+  if (!options.dryRun) {
+    const saved = await saveCanonicalEvent(result.normalizedEvent);
+    if (result.curationJobId) await prisma.curationJob.update({ where: { id: result.curationJobId }, data: { eventId: saved.event.id } });
+  }
+  return {
+    eventId,
+    curationJobId: result.curationJobId ?? null,
+    status: result.curationJobStatus ?? "success",
+    dryRun: options.dryRun === true,
+    appliedChanges: result.appliedChanges ?? [],
+    warnings: result.normalizedEvent.warnings,
+    confidence: result.normalizedEvent.confidence,
+  };
+}
+
+export async function runAICurationBatch(options: RunAICurationOptions = {}) {
+  const limit = positiveInt(options.limit, 10);
+  const rows = await listEventsForCuration({ only: options.only ?? "not_curated", limit });
+  const results: AICurationRunResult[] = [];
+  const failures: Array<{ eventId: string; error: string }> = [];
+  for (const event of rows) {
+    try {
+      results.push(await runAICurationForEvent(event.id, options));
+    } catch (error) {
+      failures.push({ eventId: event.id, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return {
+    status: failures.length ? "partial_success" : "success",
+    requestedLimit: limit,
+    processedCount: results.length,
+    failedCount: failures.length,
+    dryRun: options.dryRun === true,
+    results,
+    failures,
+  };
+}
+
+export async function auditCuration() {
+  return getCurationSummary();
 }
 
 export function normalizeRaceEventExtraction(extraction: RaceEventExtraction, raw: RawSourceExtraction): CanonicalRaceEvent {
@@ -341,7 +595,7 @@ export function normalizeRaceEventExtraction(extraction: RaceEventExtraction, ra
     distanceKm: distance.distanceKm,
     startTime: normalizeTime(distance.startTime),
   }));
-  const prices = extraction.prices.map((price) => ({
+  const prices = withCompatibleLots(extraction).prices.map((price) => ({
     ...price,
     price: normalizePrice(price.price),
     currency: price.currency.toUpperCase(),
@@ -450,7 +704,7 @@ function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtra
   if (!registrationUrl) warnings.push("missing_registration_url");
   const confidence = warnings.length ? 0.72 : 0.92;
 
-  return {
+  return raceEventExtractionSchema.parse({
     name: evidence(title, 0.95),
     description: evidence(raw.importantText || title, 0.75),
     date: evidence(date, date ? 0.92 : 0),
@@ -466,6 +720,8 @@ function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtra
     modality: modalityFromTicketSportsText(title, text),
     distances: distancesFromText(text),
     prices: pricesFromText(text),
+    lots: pricesFromText(text),
+    currentLot: pricesFromText(text)[0] ?? null,
     kits: [],
     schedule: [],
     rules: [],
@@ -478,8 +734,16 @@ function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtra
     images,
     eventStatus: eventStatusFromTicketSports(stringValue(record.status), text),
     confidence,
+    fieldConfidences: {
+      name: 0.95,
+      date: date ? 0.92 : 0,
+      city: location.city ? 0.9 : 0,
+      state: location.state ? 0.9 : 0,
+      registrationUrl: registrationUrl ? 0.95 : 0,
+    },
+    unstructuredNotes: [],
     warnings,
-  };
+  });
 }
 
 function evidence(value: string | null | undefined, confidence: number) {
@@ -581,6 +845,7 @@ function pricesFromText(text: string): RaceEventExtraction["prices"] {
     startDate: null,
     endDate: null,
     status: "unknown" as const,
+    isCurrent: index === 0,
     sourceText: rawPrice,
     confidence: 0.78,
   }));
@@ -647,4 +912,92 @@ function nonNegativeInt(value: unknown, fallback: number): number {
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function shouldRunAICuration(): boolean {
+  return process.env.AI_CURATION_ENABLED === "true";
+}
+
+function isAICurationRequired(): boolean {
+  return process.env.AI_CURATION_REQUIRED === "true";
+}
+
+function withCompatibleLots(extraction: RaceEventExtraction): RaceEventExtraction {
+  const parsed = raceEventExtractionSchema.parse(extraction);
+  const merged = new Map<string, RaceEventExtraction["prices"][number]>();
+  for (const price of [...parsed.prices, ...parsed.lots, ...(parsed.currentLot ? [parsed.currentLot] : [])]) {
+    const key = [price.name ?? "", price.price ?? "", price.currency, price.startDate ?? "", price.endDate ?? ""].join("|");
+    const existing = merged.get(key);
+    merged.set(key, existing ? { ...existing, isCurrent: existing.isCurrent || price.isCurrent } : price);
+  }
+  const prices = Array.from(merged.values());
+  if (parsed.currentLot && !prices.some((price) => price.isCurrent)) {
+    prices.unshift({ ...parsed.currentLot, isCurrent: true });
+  }
+  const firstPrice = prices[0];
+  if (firstPrice && !prices.some((price) => price.isCurrent)) prices[0] = { ...firstPrice, isCurrent: true };
+  return {
+    ...parsed,
+    prices,
+    lots: parsed.lots.length ? parsed.lots : prices,
+    currentLot: parsed.currentLot ?? prices.find((price) => price.isCurrent) ?? null,
+  };
+}
+
+function diffCanonicalEvents(currentEvent: unknown, next: CanonicalRaceEvent): CurationDiff[] {
+  const current = asRecord(currentEvent);
+  const fields: Array<keyof CanonicalRaceEvent> = [
+    "name",
+    "description",
+    "date",
+    "startTime",
+    "city",
+    "state",
+    "country",
+    "locationName",
+    "address",
+    "modality",
+    "eventStatus",
+    "registrationUrl",
+    "officialUrl",
+    "organizerName",
+    "confidence",
+  ];
+  return fields.flatMap((field) => {
+    const from = serializeComparable(current[field as string]);
+    const to = serializeComparable(next[field]);
+    if (JSON.stringify(from) === JSON.stringify(to)) return [];
+    return [
+      {
+        field,
+        from,
+        to,
+        confidence: next.confidence,
+        warnings: next.warnings,
+      },
+    ];
+  });
+}
+
+function serializeComparable(value: unknown): unknown {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return value ?? null;
+}
+
+function rawSourceExtractionFromRecord(record: NonNullable<Awaited<ReturnType<typeof getLatestRawExtractionForEvent>>>): RawSourceExtraction {
+  return {
+    sourceType: record.sourceType,
+    sourceId: record.sourceId,
+    sourceExternalId: record.sourceExternalId,
+    url: record.url,
+    title: record.title,
+    importantHtml: record.importantHtml,
+    importantText: record.importantText,
+    rawSourceData: asRecord(record.rawSourceData),
+    extractedLinks: Array.isArray(record.extractedLinks) ? record.extractedLinks.filter((value): value is string => typeof value === "string") : [],
+    fetchedAt: record.fetchedAt.toISOString(),
+    contentHash: record.contentHash,
+    adapter: record.adapter,
+    adapterVersion: record.adapterVersion,
+  };
 }

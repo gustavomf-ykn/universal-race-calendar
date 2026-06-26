@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
-import type { CanonicalRaceEvent, RawSourceExtraction } from "@race-calendar/schemas";
+import type { CanonicalRaceEvent, CurationJobStatus, CurationStatus, RawSourceExtraction } from "@race-calendar/schemas";
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
@@ -227,7 +227,7 @@ export async function saveCanonicalEvent(event: CanonicalRaceEvent): Promise<{
 }
 
 function eventScalarData(canonicalEvent: CanonicalRaceEvent) {
-  return {
+  return withoutUndefined({
     slug: canonicalEvent.slug,
     name: canonicalEvent.name,
     description: canonicalEvent.description,
@@ -255,12 +255,17 @@ function eventScalarData(canonicalEvent: CanonicalRaceEvent) {
     sourceExternalId: canonicalEvent.sourceExternalId,
     sourceUrl: canonicalEvent.sourceUrl,
     confidence: canonicalEvent.confidence,
+    curationStatus: canonicalEvent.curationStatus,
+    curatedAt: canonicalEvent.curatedAt ? new Date(canonicalEvent.curatedAt) : undefined,
+    curationProvider: canonicalEvent.curationProvider,
+    curationModel: canonicalEvent.curationModel,
+    curationVersion: canonicalEvent.curationVersion,
     canonicalFingerprint: canonicalEvent.canonicalFingerprint,
     dedupeStatus: canonicalEvent.dedupeStatus,
     duplicateOfEventId: canonicalEvent.duplicateOfEventId,
     warnings: json(canonicalEvent.warnings),
     publishabilityReasons: json(canonicalEvent.publishabilityReasons),
-  };
+  });
 }
 
 function eventChildrenCreateData(canonicalEvent: CanonicalRaceEvent) {
@@ -331,6 +336,7 @@ function priceCreateData(canonicalEvent: CanonicalRaceEvent) {
     startDate: price.startDate ? new Date(`${price.startDate}T00:00:00.000Z`) : null,
     endDate: price.endDate ? new Date(`${price.endDate}T00:00:00.000Z`) : null,
     status: price.status,
+    isCurrent: price.isCurrent,
     sourceText: price.sourceText,
     confidence: price.confidence,
   }));
@@ -441,6 +447,135 @@ export async function completeExtractionJob(input: {
     where: { id: input.jobId },
     data,
   });
+}
+
+export type SaveCurationJobInput = {
+  id?: string;
+  eventId?: string | null | undefined;
+  rawSourceExtractionId?: string | null | undefined;
+  provider: string;
+  model: string;
+  status: CurationJobStatus;
+  contentHash: string;
+  schemaVersion: string;
+  curationVersion: string;
+  rawInput?: unknown;
+  rawOutput?: unknown;
+  validatedJson?: unknown;
+  normalizedJson?: unknown;
+  appliedChanges?: unknown;
+  warnings?: string[];
+  confidence?: number | null;
+  isDryRun?: boolean;
+  errorMessage?: string | null;
+  finishedAt?: Date | null;
+};
+
+export async function saveCurationJob(input: SaveCurationJobInput) {
+  return prisma.curationJob.create({
+    data: withoutUndefined({
+      id: input.id ?? prefixedId("cur"),
+      eventId: input.eventId ?? null,
+      rawSourceExtractionId: input.rawSourceExtractionId ?? null,
+      provider: input.provider,
+      model: input.model,
+      status: input.status,
+      contentHash: input.contentHash,
+      schemaVersion: input.schemaVersion,
+      curationVersion: input.curationVersion,
+      rawInput: jsonOrUndefined(input.rawInput),
+      rawOutput: jsonOrUndefined(input.rawOutput),
+      validatedJson: jsonOrUndefined(input.validatedJson),
+      normalizedJson: jsonOrUndefined(input.normalizedJson),
+      appliedChanges: jsonOrUndefined(input.appliedChanges),
+      warnings: json(input.warnings ?? []),
+      confidence: input.confidence,
+      isDryRun: input.isDryRun ?? false,
+      errorMessage: input.errorMessage,
+      finishedAt: input.finishedAt ?? new Date(),
+    }),
+  });
+}
+
+export async function findSuccessfulCurationJob(input: {
+  provider: string;
+  model: string;
+  contentHash: string;
+  schemaVersion: string;
+  curationVersion: string;
+}) {
+  return prisma.curationJob.findFirst({
+    where: {
+      provider: input.provider,
+      model: input.model,
+      contentHash: input.contentHash,
+      schemaVersion: input.schemaVersion,
+      curationVersion: input.curationVersion,
+      status: "success",
+      isDryRun: false,
+    },
+    orderBy: { finishedAt: "desc" },
+  });
+}
+
+export async function updateEventCurationMetadata(input: {
+  eventId: string;
+  curationStatus: CurationStatus;
+  curatedAt?: Date | null;
+  provider?: string | null;
+  model?: string | null;
+  curationVersion?: string | null;
+}) {
+  return prisma.event.update({
+    where: { id: input.eventId },
+    data: withoutUndefined({
+      curationStatus: input.curationStatus,
+      curatedAt: input.curatedAt,
+      curationProvider: input.provider,
+      curationModel: input.model,
+      curationVersion: input.curationVersion,
+    }),
+  });
+}
+
+export async function getLatestRawExtractionForEvent(eventId: string) {
+  const event = await prisma.event.findUnique({ where: { id: eventId } });
+  if (!event?.sourceId) return null;
+  return prisma.rawSourceExtraction.findFirst({
+    where: { sourceId: event.sourceId },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+export async function listEventsForCuration(input: { only?: string; limit: number }) {
+  const where =
+    input.only === "published"
+      ? { publicationStatus: "published" as const }
+      : input.only === "pending_review"
+        ? { publicationStatus: "pending_review" as const }
+        : input.only === "failed"
+          ? { curationStatus: "failed" as const }
+          : input.only === "not_curated"
+            ? { curationStatus: "not_curated" as const }
+            : {};
+  return prisma.event.findMany({
+    where,
+    orderBy: { updatedAt: "desc" },
+    take: Math.min(Math.max(input.limit, 1), 100),
+  });
+}
+
+export async function getCurationSummary() {
+  const [eventsByStatus, jobsByStatus, latestJobs] = await Promise.all([
+    prisma.event.groupBy({ by: ["curationStatus"], _count: { _all: true } }),
+    prisma.curationJob.groupBy({ by: ["status"], _count: { _all: true } }),
+    prisma.curationJob.findMany({ orderBy: { createdAt: "desc" }, take: 10 }),
+  ]);
+  return {
+    eventsByStatus: Object.fromEntries(eventsByStatus.map((row) => [row.curationStatus, row._count._all])),
+    jobsByStatus: Object.fromEntries(jobsByStatus.map((row) => [row.status, row._count._all])),
+    latestJobs,
+  };
 }
 
 export async function markSourceChecked(sourceId: string, contentHash: string, success: boolean) {
