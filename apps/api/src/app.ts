@@ -462,7 +462,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
 async function sendEventDetail(id: string, reply: FastifyReply) {
   const event = await prisma.event.findFirst({
-    where: { id, publicationStatus: "published" },
+    where: { id, publicationStatus: "published", country: "BR" },
     include: {
       distances: true,
       prices: true,
@@ -746,8 +746,8 @@ function serializeCurationJobListItem(job: any) {
 function publicEventsWhere(query: EventListQuery) {
   const where: any = {
     publicationStatus: "published" as const,
+    country: query.country && query.country.toUpperCase() !== "BR" ? "__unsupported_country__" : "BR",
   };
-  if (query.country) where.country = query.country.toUpperCase();
   if (query.state) where.state = query.state.toUpperCase();
   if (query.city) where.city = { contains: query.city, mode: "insensitive" as const };
   if (query.sourceType) where.sourceType = query.sourceType;

@@ -188,6 +188,36 @@ export async function runSourceCheck(
       : provider
         ? await curateSourceExtraction(raw, provider)
         : await curateTicketSportsSourceExtraction(raw);
+    if (!shouldPersistCanonicalEvent(result.normalizedEvent)) {
+      await markSourceChecked(source.id, raw.contentHash, true);
+      const completed = await completeExtractionJob({
+        jobId: job.id,
+        provider: result.providerName ?? provider?.name ?? "deterministic",
+        model: result.providerModel ?? provider?.model ?? "ticketsports-v1",
+        adapter: raw.adapter,
+        adapterVersion: raw.adapterVersion,
+        schemaVersion: result.schemaVersion,
+        curationVersion: result.curationVersion,
+        inputHash: raw.contentHash,
+        status: "success",
+        rawInput: raw,
+        rawOutput: result.extraction,
+        validatedJson: result.extraction,
+        normalizedJson: result.normalizedEvent,
+        confidence: result.normalizedEvent.confidence,
+        warnings: result.normalizedEvent.warnings,
+        reasons: ["non_brazil_event"],
+      });
+      return {
+        jobId: completed.id,
+        status: completed.status as SourceCheckJobResult["status"],
+        eventId: null,
+        sourceId: source.id,
+        createdAt,
+        finishedAt: completed.finishedAt?.toISOString() ?? null,
+        reasons: ["non_brazil_event"],
+      };
+    }
     const saved = await saveCanonicalEvent(result.normalizedEvent);
     if (result.curationJobId) {
       await prisma.curationJob.update({ where: { id: result.curationJobId }, data: { eventId: saved.event.id } });
@@ -541,19 +571,22 @@ export async function runAICurationForEvent(eventId: string, options: RunAICurat
     currentEvent: event,
     provider: options.provider,
   });
-  if (!options.dryRun) {
+  if (!options.dryRun && shouldPersistCanonicalEvent(result.normalizedEvent)) {
     const saved = await saveCanonicalEvent(result.normalizedEvent);
     if (result.curationJobId) await prisma.curationJob.update({ where: { id: result.curationJobId }, data: { eventId: saved.event.id } });
   }
+  const warnings = shouldPersistCanonicalEvent(result.normalizedEvent)
+    ? result.normalizedEvent.warnings
+    : [...new Set([...result.normalizedEvent.warnings, "non_brazil_event"])];
   return {
     eventId,
     curationJobId: result.curationJobId ?? null,
     provider: result.providerName ?? null,
     model: result.providerModel ?? null,
-    status: result.curationJobStatus ?? "success",
+    status: shouldPersistCanonicalEvent(result.normalizedEvent) ? (result.curationJobStatus ?? "success") : "manual_review",
     dryRun: options.dryRun === true,
     appliedChanges: result.appliedChanges ?? [],
-    warnings: result.normalizedEvent.warnings,
+    warnings,
     confidence: result.normalizedEvent.confidence,
   };
 }
@@ -703,6 +736,10 @@ export function evaluatePublishability(normalizedEvent: Pick<
 }
 
 const criticalWarnings = new Set(["missing_date", "conflicting_date", "conflicting_location", "suspicious_city"]);
+
+export function shouldPersistCanonicalEvent(event: Pick<CanonicalRaceEvent, "country">): boolean {
+  return event.country?.toUpperCase() === "BR";
+}
 
 function hasPublishableLocation(
   event: Pick<CanonicalRaceEvent, "city" | "state" | "country" | "locationName">,

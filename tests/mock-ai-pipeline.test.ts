@@ -7,6 +7,7 @@ import {
   evaluatePublishability,
   applyRaceEventExtraction,
   normalizeRaceEventExtraction,
+  shouldPersistCanonicalEvent,
 } from "@race-calendar/curation";
 import type { RaceEventExtraction, RawSourceExtraction } from "@race-calendar/schemas";
 import { MockSourceAdapter, TicketSportsAdapter } from "@race-calendar/sources";
@@ -115,6 +116,8 @@ describe("mock AI pipeline", () => {
     expect(normalized.warnings).toContain("no_distances_found");
     expect(normalized.confidence).toBeGreaterThan(0);
     expect(evaluatePublishability(normalized).reasons).not.toContain("missing_location");
+    expect(shouldPersistCanonicalEvent(normalized)).toBe(false);
+    expect(shouldPersistCanonicalEvent({ country: "BR" })).toBe(true);
   });
 
   it("normalizes TicketSports payload deterministically without an AI provider", async () => {
