@@ -5,6 +5,7 @@ import {
   curateSourceExtraction,
   curateTicketSportsSourceExtraction,
   evaluatePublishability,
+  applyRaceEventExtraction,
   normalizeRaceEventExtraction,
 } from "@race-calendar/curation";
 import type { RaceEventExtraction, RawSourceExtraction } from "@race-calendar/schemas";
@@ -56,7 +57,7 @@ describe("mock AI pipeline", () => {
   it("does not keep missing_state warning for clear international locations", () => {
     const extraction: RaceEventExtraction = {
       name: { value: "Maratona do Porto", confidence: 0.9, sourceText: "Maratona do Porto" },
-      date: { value: "2026-11-08", confidence: 0.9, sourceText: "2026-11-08" },
+      date: { value: "2026-11-08", confidence: 0.9, sourceText: "2026-11-08 08:00" },
       city: { value: "Porto", confidence: 0.85, sourceText: "Porto, Portugal" },
       state: { value: null, confidence: 0, sourceText: null },
       country: { value: "PT", confidence: 0.85, sourceText: "Portugal" },
@@ -96,7 +97,7 @@ describe("mock AI pipeline", () => {
       url: "https://www.ticketsports.com.br/e/Maratona-do-Porto-85488",
       title: "Maratona do Porto",
       importantHtml: "",
-      importantText: "Maratona do Porto 2026. Porto, Portugal.",
+      importantText: "Maratona do Porto 2026. Porto, Portugal. Largada as 08:00.",
       rawSourceData: {},
       extractedLinks: ["https://www.ticketsports.com.br/e/Maratona-do-Porto-85488"],
       fetchedAt: "2026-06-28T00:00:00.000Z",
@@ -108,9 +109,12 @@ describe("mock AI pipeline", () => {
     const normalized = normalizeRaceEventExtraction(extraction, raw);
 
     expect(normalized.country).toBe("PT");
+    expect(normalized.startTime).toBe("08:00");
+    expect(normalized.description).toContain("Maratona do Porto 2026");
     expect(normalized.warnings).not.toContain("missing_state");
     expect(normalized.warnings).toContain("no_distances_found");
     expect(normalized.confidence).toBeGreaterThan(0);
+    expect(evaluatePublishability(normalized).reasons).not.toContain("missing_location");
   });
 
   it("normalizes TicketSports payload deterministically without an AI provider", async () => {
@@ -142,6 +146,59 @@ describe("mock AI pipeline", () => {
     expect(result.normalizedEvent.distances.map((distance) => distance.label)).toEqual(["5 km", "10 km", "21 km"]);
     expect(result.normalizedEvent.prices[0]?.price).toBe(120);
     expect(result.normalizedEvent.publicationStatus).toBe("published");
+  });
+
+  it("keeps deterministic TicketSports distances and prices when AI omits them", async () => {
+    const adapter = new TicketSportsAdapter({
+      async getJson() {
+        return ticketsportsFixture;
+      },
+      async getText() {
+        throw new Error("getText should not be called");
+      },
+    });
+    const raw = await adapter.fetchAndExtract({
+      sourceId: "src_ticketsports",
+      sourceExternalId: "123456",
+      url: "https://www.ticketsports.com.br/e/meia-maratona-florianopolis-123456",
+    });
+    const aiExtraction: RaceEventExtraction = {
+      name: { value: "Meia Maratona de Florianopolis", confidence: 0.95, sourceText: "Meia Maratona de Florianopolis" },
+      date: { value: "2026-08-16", confidence: 0.95, sourceText: "2026-08-16" },
+      city: { value: "Florianopolis", confidence: 0.9, sourceText: "Florianopolis" },
+      state: { value: "SC", confidence: 0.9, sourceText: "SC" },
+      country: { value: "BR", confidence: 0.9, sourceText: "Brasil" },
+      latitude: null,
+      longitude: null,
+      modality: "road",
+      distances: [],
+      prices: [],
+      lots: [],
+      currentLot: null,
+      kits: [],
+      schedule: [],
+      rules: [],
+      kitPickup: null,
+      images: [],
+      eventStatus: "scheduled",
+      confidence: 0.9,
+      fieldConfidences: {},
+      unstructuredNotes: [],
+      warnings: ["no_distances_found", "no_lots_found"],
+      registrationUrl: { value: raw.url, confidence: 0.8, sourceText: raw.url },
+      officialUrl: { value: raw.url, confidence: 0.7, sourceText: raw.url },
+    };
+
+    const result = applyRaceEventExtraction(raw, aiExtraction, {
+      providerName: "openai-compatible",
+      providerModel: "test-model",
+      curationStatus: "curated",
+    });
+
+    expect(result.normalizedEvent.distances.map((distance) => distance.label)).toEqual(["5 km", "10 km", "21 km"]);
+    expect(result.normalizedEvent.prices[0]?.price).toBe(120);
+    expect(result.normalizedEvent.warnings).not.toContain("no_distances_found");
+    expect(result.normalizedEvent.warnings).not.toContain("no_lots_found");
   });
 
   it("keeps suspicious TicketSports street addresses out of city and review-pends them", async () => {

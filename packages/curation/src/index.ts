@@ -479,7 +479,8 @@ export function applyRaceEventExtraction(
   extraction: RaceEventExtraction,
   options: { providerName: string; providerModel: string; curationStatus: "curated" | "skipped_cached"; currentEvent?: unknown },
 ): CurateSourceExtractionResult & { appliedChanges: CurationDiff[] } {
-  const parsed = raceEventExtractionSchema.parse(withCompatibleLots(extraction));
+  const aiParsed = raceEventExtractionSchema.parse(withCompatibleLots(extraction));
+  const parsed = raw.sourceType === "ticketsports" ? mergeRaceEventExtractionFallbacks(aiParsed, ticketSportsExtractionFromRaw(raw)) : aiParsed;
   const normalizedEvent = normalizeRaceEventExtraction(parsed, raw);
   const publishability = evaluatePublishability(normalizedEvent);
   const finalEvent = canonicalRaceEventSchema.parse({
@@ -595,6 +596,8 @@ export function normalizeRaceEventExtraction(extraction: RaceEventExtraction, ra
   const regulationUrl = absolutizeUrl(extraction.regulationUrl?.value, raw.url);
   const organizerUrl = absolutizeUrl(extraction.organizerUrl?.value, raw.url);
   const locationName = cleanText(extraction.locationName?.value) || null;
+  const description = cleanText(extraction.description?.value) || cleanText(raw.importantText).slice(0, 2000) || null;
+  const startTime = normalizeTime(extraction.startTime?.value) ?? normalizeTime(extraction.date.sourceText);
   const distances = extraction.distances.map((distance) => ({
     ...distance,
     distanceKm: distance.distanceKm,
@@ -626,9 +629,9 @@ export function normalizeRaceEventExtraction(extraction: RaceEventExtraction, ra
   return canonicalRaceEventSchema.parse({
     slug: slugify([name, city, date].filter(Boolean).join(" ")),
     name,
-    description: cleanText(extraction.description?.value) || null,
+    description,
     date,
-    startTime: normalizeTime(extraction.startTime?.value),
+    startTime,
     endTime: normalizeTime(extraction.endTime?.value),
     city,
     state,
@@ -687,7 +690,7 @@ export function evaluatePublishability(normalizedEvent: Pick<
 
   if (!cleanText(normalizedEvent.name)) reasons.push("missing_name");
   if (!normalizedEvent.date) reasons.push("missing_date");
-  if (!(normalizedEvent.city && normalizedEvent.state && normalizedEvent.country) && !normalizedEvent.locationName) {
+  if (!hasPublishableLocation(normalizedEvent)) {
     reasons.push("missing_location");
   }
   if (!normalizedEvent.registrationUrl && !normalizedEvent.officialUrl) reasons.push("missing_registration_or_official_url");
@@ -700,6 +703,14 @@ export function evaluatePublishability(normalizedEvent: Pick<
 }
 
 const criticalWarnings = new Set(["missing_date", "conflicting_date", "conflicting_location", "suspicious_city"]);
+
+function hasPublishableLocation(
+  event: Pick<CanonicalRaceEvent, "city" | "state" | "country" | "locationName">,
+): boolean {
+  if (cleanText(event.locationName)) return true;
+  if (!(cleanText(event.city) && cleanText(event.country))) return false;
+  return event.country?.toUpperCase() !== "BR" || Boolean(cleanText(event.state));
+}
 
 function normalizeCurationWarnings(
   warnings: string[],
@@ -741,6 +752,51 @@ function normalizeCurationConfidence(
     (context.registrationUrl || context.officialUrl ? 0.18 : 0);
   const warningPenalty = context.warnings.some((warning) => criticalWarnings.has(warning)) ? 0.2 : 0;
   return Math.max(0, Math.min(0.82, Number(Math.max(evidenceAverage, essentialScore + 0.1 - warningPenalty).toFixed(2))));
+}
+
+function mergeRaceEventExtractionFallbacks(primary: RaceEventExtraction, fallback: RaceEventExtraction): RaceEventExtraction {
+  const merged = raceEventExtractionSchema.parse({
+    ...primary,
+    description: mergeEvidence(primary.description, fallback.description),
+    startTime: mergeEvidence(primary.startTime, fallback.startTime),
+    endTime: mergeEvidence(primary.endTime, fallback.endTime),
+    locationName: mergeEvidence(primary.locationName, fallback.locationName),
+    address: mergeEvidence(primary.address, fallback.address),
+    registrationUrl: mergeEvidence(primary.registrationUrl, fallback.registrationUrl),
+    officialUrl: mergeEvidence(primary.officialUrl, fallback.officialUrl),
+    regulationUrl: mergeEvidence(primary.regulationUrl, fallback.regulationUrl),
+    organizerName: mergeEvidence(primary.organizerName, fallback.organizerName),
+    organizerUrl: mergeEvidence(primary.organizerUrl, fallback.organizerUrl),
+    modality: primary.modality === "unknown" ? fallback.modality : primary.modality,
+    eventStatus: primary.eventStatus === "unknown" ? fallback.eventStatus : primary.eventStatus,
+    distances: primary.distances.length ? primary.distances : fallback.distances,
+    prices: primary.prices.length ? primary.prices : fallback.prices,
+    lots: primary.lots.length ? primary.lots : fallback.lots,
+    currentLot: primary.currentLot ?? fallback.currentLot,
+    kits: primary.kits.length ? primary.kits : fallback.kits,
+    schedule: primary.schedule.length ? primary.schedule : fallback.schedule,
+    rules: primary.rules.length ? primary.rules : fallback.rules,
+    kitPickup: primary.kitPickup ?? fallback.kitPickup,
+    images: primary.images.length ? primary.images : fallback.images,
+    warnings: unique([...primary.warnings, ...fallback.warnings]),
+  });
+  const compatible = withCompatibleLots(merged);
+  return raceEventExtractionSchema.parse({
+    ...compatible,
+    warnings: compatible.warnings.filter((warning) => {
+      if (warning === "no_distances_found" && compatible.distances.length) return false;
+      if ((warning === "no_lots_found" || warning === "no_prices_found") && compatible.prices.length) return false;
+      return true;
+    }),
+  });
+}
+
+function mergeEvidence<T extends { value: string | null; confidence: number; sourceText: string | null } | undefined>(
+  primary: T,
+  fallback: T,
+): T {
+  if (primary && cleanText(primary.value)) return primary;
+  return fallback ?? primary;
 }
 
 function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtraction {
