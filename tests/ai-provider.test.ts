@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { OpenAICompatibleProvider, parseJsonObjectFromText } from "@race-calendar/ai";
+import { normalizeRaceEventExtractionPayload, OpenAICompatibleProvider, parseJsonObjectFromText } from "@race-calendar/ai";
+import { raceEventExtractionSchema } from "@race-calendar/schemas";
 import type { RawSourceExtraction } from "@race-calendar/schemas";
 
 const raw: RawSourceExtraction = {
@@ -21,6 +22,30 @@ const raw: RawSourceExtraction = {
 describe("OpenAI compatible provider", () => {
   it("extracts JSON from markdown fences", () => {
     expect(parseJsonObjectFromText('```json\n{"ok":true}\n```')).toEqual({ ok: true });
+  });
+
+  it("normalizes common AI shape drift before schema validation", () => {
+    const payload = normalizeRaceEventExtractionPayload({
+      name: "Corrida IA",
+      date: "2026-09-01",
+      city: "Sao Paulo",
+      state: "SP",
+      country: "BR",
+      registrationUrl: "https://example.test/evento",
+      images: "https://example.test/image.jpg",
+      warnings: "missing_state",
+      unstructuredNotes: "A IA encontrou dados incompletos no texto.",
+      eventStatus: "scheduled",
+      confidence: 0.72,
+      fieldConfidences: {},
+    });
+
+    const parsed = raceEventExtractionSchema.parse(payload);
+
+    expect(parsed.unstructuredNotes).toEqual(["A IA encontrou dados incompletos no texto."]);
+    expect(parsed.warnings).toEqual(["missing_state"]);
+    expect(parsed.images).toEqual(["https://example.test/image.jpg"]);
+    expect(parsed.name.value).toBe("Corrida IA");
   });
 
   it("sends a chat-completions request and validates the response", async () => {

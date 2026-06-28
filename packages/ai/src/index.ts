@@ -152,7 +152,7 @@ export class OpenAICompatibleProvider implements AIProvider {
   async extractRaceEvent(input: ExtractRaceEventInput): Promise<RaceEventExtraction> {
     const content = await this.chatCompletion(buildCurationMessages(input));
     const parsed = parseJsonObjectFromText(content);
-    return raceEventExtractionSchema.parse(parsed);
+    return raceEventExtractionSchema.parse(normalizeRaceEventExtractionPayload(parsed));
   }
 
   private async chatCompletion(messages: Array<{ role: "system" | "user"; content: string }>): Promise<string> {
@@ -223,6 +223,79 @@ export function parseJsonObjectFromText(text: string): unknown {
     if (start >= 0 && end > start) return JSON.parse(candidate.slice(start, end + 1));
     throw new Error("AI provider response is not valid JSON");
   }
+}
+
+export function normalizeRaceEventExtractionPayload(payload: unknown): unknown {
+  if (!isRecord(payload)) return payload;
+  const normalized: Record<string, unknown> = { ...payload };
+
+  for (const key of [
+    "name",
+    "description",
+    "date",
+    "startTime",
+    "endTime",
+    "city",
+    "state",
+    "country",
+    "locationName",
+    "address",
+    "registrationUrl",
+    "officialUrl",
+    "regulationUrl",
+    "organizerName",
+    "organizerUrl",
+  ]) {
+    normalized[key] = normalizeEvidenceValue(normalized[key]);
+  }
+
+  for (const key of ["distances", "prices", "lots", "kits", "schedule", "rules", "images"]) {
+    normalized[key] = normalizeArrayValue(normalized[key]);
+  }
+
+  normalized.warnings = normalizeStringArray(normalized.warnings);
+  normalized.unstructuredNotes = normalizeStringArray(normalized.unstructuredNotes);
+
+  if (isRecord(normalized.kitPickup)) {
+    normalized.kitPickup = {
+      ...normalized.kitPickup,
+      requiredDocuments: normalizeStringArray(normalized.kitPickup.requiredDocuments),
+    };
+  }
+
+  normalized.kits = normalizeArrayValue(normalized.kits).map((kit) =>
+    isRecord(kit) ? { ...kit, items: normalizeStringArray(kit.items) } : kit,
+  );
+
+  return normalized;
+}
+
+function normalizeEvidenceValue(value: unknown): unknown {
+  if (value === undefined) return undefined;
+  if (value === null) return { value: null, confidence: 0, sourceText: null };
+  if (typeof value === "string") {
+    const cleaned = cleanText(value);
+    return { value: cleaned || null, confidence: cleaned ? 0.5 : 0, sourceText: cleaned || null };
+  }
+  return value;
+}
+
+function normalizeArrayValue(value: unknown): unknown[] {
+  if (value == null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (value == null) return [];
+  const values = Array.isArray(value) ? value : [value];
+  return values
+    .map((entry) => (typeof entry === "string" ? entry : typeof entry === "number" || typeof entry === "boolean" ? String(entry) : ""))
+    .map((entry) => cleanText(entry))
+    .filter(Boolean);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
 export function buildCurationMessages(input: ExtractRaceEventInput): Array<{ role: "system" | "user"; content: string }> {
