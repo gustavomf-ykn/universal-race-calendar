@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { MockAIProvider } from "@race-calendar/ai";
-import { curateSourceExtraction, curateTicketSportsSourceExtraction, evaluatePublishability } from "@race-calendar/curation";
+import {
+  curateSourceExtraction,
+  curateTicketSportsSourceExtraction,
+  evaluatePublishability,
+  normalizeRaceEventExtraction,
+} from "@race-calendar/curation";
+import type { RaceEventExtraction, RawSourceExtraction } from "@race-calendar/schemas";
 import { MockSourceAdapter, TicketSportsAdapter } from "@race-calendar/sources";
 
 const ticketsportsFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports-simple.json", "utf-8")) as Record<
@@ -45,6 +51,66 @@ describe("mock AI pipeline", () => {
     expect(publishability.publicationStatus).toBe("pending_review");
     expect(publishability.reasons).toContain("missing_date");
     expect(publishability.reasons).toContain("low_confidence");
+  });
+
+  it("does not keep missing_state warning for clear international locations", () => {
+    const extraction: RaceEventExtraction = {
+      name: { value: "Maratona do Porto", confidence: 0.9, sourceText: "Maratona do Porto" },
+      date: { value: "2026-11-08", confidence: 0.9, sourceText: "2026-11-08" },
+      city: { value: "Porto", confidence: 0.85, sourceText: "Porto, Portugal" },
+      state: { value: null, confidence: 0, sourceText: null },
+      country: { value: "PT", confidence: 0.85, sourceText: "Portugal" },
+      locationName: { value: "Porto", confidence: 0.75, sourceText: "Porto" },
+      registrationUrl: {
+        value: "https://www.ticketsports.com.br/e/Maratona-do-Porto-85488",
+        confidence: 0.9,
+        sourceText: "https://www.ticketsports.com.br/e/Maratona-do-Porto-85488",
+      },
+      officialUrl: {
+        value: "https://www.ticketsports.com.br/e/Maratona-do-Porto-85488",
+        confidence: 0.7,
+        sourceText: "TicketSports",
+      },
+      latitude: null,
+      longitude: null,
+      modality: "road",
+      distances: [],
+      prices: [],
+      lots: [],
+      currentLot: null,
+      kits: [],
+      schedule: [],
+      rules: [],
+      kitPickup: null,
+      images: [],
+      eventStatus: "scheduled",
+      confidence: 0,
+      fieldConfidences: {},
+      unstructuredNotes: [],
+      warnings: ["missing_state", "no_distances_found", "no_lots_found"],
+    };
+    const raw: RawSourceExtraction = {
+      sourceType: "ticketsports",
+      sourceId: "src_porto",
+      sourceExternalId: "85488",
+      url: "https://www.ticketsports.com.br/e/Maratona-do-Porto-85488",
+      title: "Maratona do Porto",
+      importantHtml: "",
+      importantText: "Maratona do Porto 2026. Porto, Portugal.",
+      rawSourceData: {},
+      extractedLinks: ["https://www.ticketsports.com.br/e/Maratona-do-Porto-85488"],
+      fetchedAt: "2026-06-28T00:00:00.000Z",
+      contentHash: "hash_porto",
+      adapter: "ticketsports",
+      adapterVersion: "1.0.0",
+    };
+
+    const normalized = normalizeRaceEventExtraction(extraction, raw);
+
+    expect(normalized.country).toBe("PT");
+    expect(normalized.warnings).not.toContain("missing_state");
+    expect(normalized.warnings).toContain("no_distances_found");
+    expect(normalized.confidence).toBeGreaterThan(0);
   });
 
   it("normalizes TicketSports payload deterministically without an AI provider", async () => {

@@ -125,6 +125,8 @@ export type RunAICurationOptions = {
 export type AICurationRunResult = {
   eventId: string | null;
   curationJobId: string | null;
+  provider: string | null;
+  model: string | null;
   status: "success" | "validation_failed" | "provider_failed" | "skipped_cached" | "manual_review";
   dryRun: boolean;
   appliedChanges: CurationDiff[];
@@ -545,6 +547,8 @@ export async function runAICurationForEvent(eventId: string, options: RunAICurat
   return {
     eventId,
     curationJobId: result.curationJobId ?? null,
+    provider: result.providerName ?? null,
+    model: result.providerModel ?? null,
     status: result.curationJobStatus ?? "success",
     dryRun: options.dryRun === true,
     appliedChanges: result.appliedChanges ?? [],
@@ -590,6 +594,7 @@ export function normalizeRaceEventExtraction(extraction: RaceEventExtraction, ra
   const officialUrl = absolutizeUrl(extraction.officialUrl?.value, raw.url) ?? raw.url;
   const regulationUrl = absolutizeUrl(extraction.regulationUrl?.value, raw.url);
   const organizerUrl = absolutizeUrl(extraction.organizerUrl?.value, raw.url);
+  const locationName = cleanText(extraction.locationName?.value) || null;
   const distances = extraction.distances.map((distance) => ({
     ...distance,
     distanceKm: distance.distanceKm,
@@ -606,6 +611,16 @@ export function normalizeRaceEventExtraction(extraction: RaceEventExtraction, ra
     const absolute = absolutizeUrl(url, raw.url);
     return absolute ? [absolute] : [];
   });
+  const warnings = normalizeCurationWarnings(extraction.warnings, { city, state, country, locationName });
+  const confidence = normalizeCurationConfidence(extraction, {
+    name,
+    date,
+    city,
+    country,
+    registrationUrl,
+    officialUrl,
+    warnings,
+  });
   const canonicalFingerprint = generateEventFingerprint({ name, date, city, state, country });
 
   return canonicalRaceEventSchema.parse({
@@ -618,7 +633,7 @@ export function normalizeRaceEventExtraction(extraction: RaceEventExtraction, ra
     city,
     state,
     country,
-    locationName: cleanText(extraction.locationName?.value) || null,
+    locationName,
     address: cleanText(extraction.address?.value) || null,
     latitude: extraction.latitude,
     longitude: extraction.longitude,
@@ -635,11 +650,11 @@ export function normalizeRaceEventExtraction(extraction: RaceEventExtraction, ra
     sourceType: raw.sourceType,
     sourceExternalId: raw.sourceExternalId,
     sourceUrl: raw.url,
-    confidence: extraction.confidence,
+    confidence,
     canonicalFingerprint,
     dedupeStatus: "unique",
     duplicateOfEventId: null,
-    warnings: extraction.warnings,
+    warnings,
     publishabilityReasons: [],
     distances,
     prices,
@@ -685,6 +700,48 @@ export function evaluatePublishability(normalizedEvent: Pick<
 }
 
 const criticalWarnings = new Set(["missing_date", "conflicting_date", "conflicting_location", "suspicious_city"]);
+
+function normalizeCurationWarnings(
+  warnings: string[],
+  location: { city: string | null; state: string | null; country: string | null; locationName: string | null },
+): string[] {
+  const country = location.country?.toUpperCase() ?? null;
+  return unique(warnings).filter((warning) => {
+    if (warning === "missing_state" && country && country !== "BR" && (location.city || location.locationName)) return false;
+    return true;
+  });
+}
+
+function normalizeCurationConfidence(
+  extraction: RaceEventExtraction,
+  context: {
+    name: string | null;
+    date: string | null;
+    city: string | null;
+    country: string | null;
+    registrationUrl: string | null;
+    officialUrl: string | null;
+    warnings: string[];
+  },
+): number {
+  if (extraction.confidence > 0) return extraction.confidence;
+  const evidenceScores = [
+    extraction.name.confidence,
+    extraction.date.confidence,
+    extraction.city.confidence,
+    extraction.country.confidence,
+    extraction.registrationUrl?.confidence,
+    extraction.officialUrl?.confidence,
+  ].filter((value): value is number => typeof value === "number" && value > 0);
+  const evidenceAverage = evidenceScores.length ? evidenceScores.reduce((sum, value) => sum + value, 0) / evidenceScores.length : 0;
+  const essentialScore =
+    (context.name ? 0.18 : 0) +
+    (context.date ? 0.18 : 0) +
+    (context.city || context.country ? 0.18 : 0) +
+    (context.registrationUrl || context.officialUrl ? 0.18 : 0);
+  const warningPenalty = context.warnings.some((warning) => criticalWarnings.has(warning)) ? 0.2 : 0;
+  return Math.max(0, Math.min(0.82, Number(Math.max(evidenceAverage, essentialScore + 0.1 - warningPenalty).toFixed(2))));
+}
 
 function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtraction {
   const record = asRecord(raw.rawSourceData);
