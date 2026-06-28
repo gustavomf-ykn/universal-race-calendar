@@ -33,9 +33,10 @@ describe("OpenAI compatible provider", () => {
       country: "BR",
       registrationUrl: "https://example.test/evento",
       images: "https://example.test/image.jpg",
+      modality: { value: "road", confidence: 0.8, sourceText: "corrida" },
+      eventStatus: { value: "scheduled", confidence: 0.8, sourceText: "aberto" },
       warnings: "missing_state",
       unstructuredNotes: "A IA encontrou dados incompletos no texto.",
-      eventStatus: "scheduled",
       confidence: 0.72,
       fieldConfidences: {},
     });
@@ -45,6 +46,8 @@ describe("OpenAI compatible provider", () => {
     expect(parsed.unstructuredNotes).toEqual(["A IA encontrou dados incompletos no texto."]);
     expect(parsed.warnings).toEqual(["missing_state"]);
     expect(parsed.images).toEqual(["https://example.test/image.jpg"]);
+    expect(parsed.modality).toBe("road");
+    expect(parsed.eventStatus).toBe("scheduled");
     expect(parsed.name.value).toBe("Corrida IA");
   });
 

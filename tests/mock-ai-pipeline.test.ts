@@ -151,6 +151,58 @@ describe("mock AI pipeline", () => {
     expect(result.normalizedEvent.publicationStatus).toBe("published");
   });
 
+  it("extracts rich TicketSports details from structured payloads", async () => {
+    const raw: RawSourceExtraction = {
+      sourceType: "ticketsports",
+      sourceId: "src_sertanejo",
+      sourceExternalId: "87054",
+      url: "https://www.ticketsports.com.br/e/SERTANEJO+RUN+SP+2026-87054",
+      title: "SERTANEJO RUN SP 2026",
+      importantHtml: "",
+      importantText:
+        "SERTANEJO RUN SP 2026 2026-11-29 08:00 Parque EcolÃ³gico do TietÃª, SÃ£o Paulo, SP, Brasil 1Âº LOTE: InscriÃ§Ãµes a partir de R$ 84,90 PERCURSOS 5,3 km 10,6 km RETIRADA DE KIT NO DIA DO EVENTO entre 06h e 07h da manhÃ£ taxa de R$ 15,00",
+      rawSourceData: {
+        uri: "https://www.ticketsports.com.br/e/SERTANEJO+RUN+SP+2026-87054",
+        title: "SERTANEJO RUN SP 2026",
+        address:
+          "Parque EcolÃ³gico do tietÃª: Parque EcolÃ³gico do TietÃª, Via Parque, 8055 - Vila Santo Henrique, SÃ£o Paulo - SP, 03719-000, 8055 , SÃ£o Paulo, SP, Brasil",
+        realDate: "2026-11-29 08:00",
+        status: "Aberto",
+        organizer: "MARUNATA SPORTS",
+        headerImageSource: "https://cdn.ticketsports.com.br/ticketagora/images/header.png",
+        logoImageSource: "https://cdn.ticketsports.com.br/ticketagora/images/logo.png",
+        regulationDocument: "https://storagefileta.blob.core.windows.net/ticketagora/arquivos/evento/87054/regulamento.pdf",
+        eventContents: [
+          {
+            description:
+              '<a href="https://storagefileta.blob.core.windows.net/ticketagora/arquivos/evento/87054/retirada.pdf">Retirada de Kit por Terceiros.pdf</a>',
+          },
+        ],
+      },
+      extractedLinks: ["https://www.ticketsports.com.br/e/SERTANEJO+RUN+SP+2026-87054"],
+      fetchedAt: "2026-06-28T10:45:56.491Z",
+      contentHash: "577e3ebba9e9b2cbac3fe54028b89b539e561b06daa3436179dc6c3c6264d862",
+      adapter: "ticketsports",
+      adapterVersion: "1.0.0",
+    };
+
+    const result = await curateTicketSportsSourceExtraction(raw);
+
+    expect(result.normalizedEvent.name).toBe("SERTANEJO RUN SP 2026");
+    expect(result.normalizedEvent.description).toContain("Parque Ecológico");
+    expect(result.normalizedEvent.city).toBe("São Paulo");
+    expect(result.normalizedEvent.state).toBe("SP");
+    expect(result.normalizedEvent.mainImageUrl).toBe("https://cdn.ticketsports.com.br/ticketagora/images/header.png");
+    expect(result.normalizedEvent.images).toHaveLength(2);
+    expect(result.normalizedEvent.distances.map((distance) => distance.label)).toEqual(["5.3 km", "10.6 km"]);
+    expect(result.normalizedEvent.prices).toHaveLength(1);
+    expect(result.normalizedEvent.prices[0]?.price).toBe(84.9);
+    expect(result.normalizedEvent.kitPickup?.startTime).toBe("06:00");
+    expect(result.normalizedEvent.kitPickup?.endTime).toBe("07:00");
+    expect(result.normalizedEvent.regulationUrl).toContain("regulamento.pdf");
+    expect(result.normalizedEvent.rules.map((rule) => rule.category)).toContain("general");
+  });
+
   it("keeps deterministic TicketSports distances and prices when AI omits them", async () => {
     const adapter = new TicketSportsAdapter({
       async getJson() {

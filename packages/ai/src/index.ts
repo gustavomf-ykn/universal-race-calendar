@@ -255,6 +255,8 @@ export function normalizeRaceEventExtractionPayload(payload: unknown): unknown {
 
   normalized.warnings = normalizeStringArray(normalized.warnings);
   normalized.unstructuredNotes = normalizeStringArray(normalized.unstructuredNotes);
+  normalized.modality = normalizeEnumValue(normalized.modality);
+  normalized.eventStatus = normalizeEnumValue(normalized.eventStatus);
 
   if (isRecord(normalized.kitPickup)) {
     normalized.kitPickup = {
@@ -266,6 +268,18 @@ export function normalizeRaceEventExtractionPayload(payload: unknown): unknown {
   normalized.kits = normalizeArrayValue(normalized.kits).map((kit) =>
     isRecord(kit) ? { ...kit, items: normalizeStringArray(kit.items) } : kit,
   );
+  normalized.distances = normalizeArrayValue(normalized.distances).map((distance) =>
+    isRecord(distance) ? { ...distance, modality: normalizeEnumValue(distance.modality) } : distance,
+  );
+  normalized.prices = normalizeArrayValue(normalized.prices).map((price) =>
+    isRecord(price) ? { ...price, status: normalizeEnumValue(price.status) } : price,
+  );
+  normalized.lots = normalizeArrayValue(normalized.lots).map((lot) =>
+    isRecord(lot) ? { ...lot, status: normalizeEnumValue(lot.status) } : lot,
+  );
+  if (isRecord(normalized.currentLot)) {
+    normalized.currentLot = { ...normalized.currentLot, status: normalizeEnumValue(normalized.currentLot.status) };
+  }
 
   return normalized;
 }
@@ -292,6 +306,10 @@ function normalizeStringArray(value: unknown): string[] {
     .map((entry) => (typeof entry === "string" ? entry : typeof entry === "number" || typeof entry === "boolean" ? String(entry) : ""))
     .map((entry) => cleanText(entry))
     .filter(Boolean);
+}
+
+function normalizeEnumValue(value: unknown): unknown {
+  return isRecord(value) && "value" in value ? value.value : value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

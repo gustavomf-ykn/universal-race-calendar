@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { createAIProviderFromEnv, type AIProvider } from "@race-calendar/ai";
 import {
@@ -838,14 +839,18 @@ function mergeEvidence<T extends { value: string | null; confidence: number; sou
 
 function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtraction {
   const record = asRecord(raw.rawSourceData);
-  const address = cleanText(stringValue(record.address));
+  const importantText = repairMojibake(raw.importantText);
+  const address = cleanText(repairMojibake(stringValue(record.address)));
   const location = parseTicketSportsLocation(address);
-  const title = cleanText(stringValue(record.title) ?? raw.title ?? "Evento TicketSports");
+  const title = cleanText(repairMojibake(stringValue(record.title) ?? raw.title ?? "Evento TicketSports"));
   const realDate = stringValue(record.realDate);
   const date = realDate ?? stringValue(record.date);
   const registrationUrl = stringValue(record.uri) ?? raw.url;
   const images = unique([stringValue(record.headerImageSource), stringValue(record.logoImageSource)].filter(isStringUrl));
-  const text = cleanText([title, date, address, stringValue(record.organizer), stringValue(record.status), raw.importantText].filter(Boolean).join(" "));
+  const text = cleanText([title, date, address, repairMojibake(stringValue(record.organizer)), stringValue(record.status), importantText].filter(Boolean).join(" "));
+  const prices = pricesFromText(text);
+  const kitPickup = kitPickupFromText(text, { date, locationName: location.locationName, address });
+  const rules = rulesFromTicketSports(record, text);
   const warnings: string[] = [];
   if (!normalizeDate(date)) warnings.push("missing_date");
   if (!location.city) warnings.push("missing_city");
@@ -856,7 +861,7 @@ function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtra
 
   return raceEventExtractionSchema.parse({
     name: evidence(title, 0.95),
-    description: evidence(raw.importantText || title, 0.75),
+    description: evidence(importantText || title, 0.75),
     date: evidence(date, date ? 0.92 : 0),
     startTime: evidence(realDate ? normalizeTime(realDate) : normalizeTime(text), realDate ? 0.82 : 0.55),
     endTime: evidence(null, 0),
@@ -869,17 +874,17 @@ function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtra
     longitude: numberOrNull(record.longitude),
     modality: modalityFromTicketSportsText(title, text),
     distances: distancesFromText(text),
-    prices: pricesFromText(text),
-    lots: pricesFromText(text),
-    currentLot: pricesFromText(text)[0] ?? null,
+    prices,
+    lots: prices,
+    currentLot: prices[0] ?? null,
     kits: [],
     schedule: [],
-    rules: [],
-    kitPickup: null,
+    rules,
+    kitPickup,
     registrationUrl: evidence(registrationUrl, registrationUrl ? 0.95 : 0),
     officialUrl: evidence(raw.url, 0.85),
-    regulationUrl: evidence(findRegulationUrl(raw.extractedLinks), 0.6),
-    organizerName: evidence(stringValue(record.organizer), stringValue(record.organizer) ? 0.9 : 0),
+    regulationUrl: evidence(findRegulationUrl([...raw.extractedLinks, ...linksFromTicketSportsRecord(record)]), 0.75),
+    organizerName: evidence(repairMojibake(stringValue(record.organizer)), stringValue(record.organizer) ? 0.9 : 0),
     organizerUrl: evidence(null, 0),
     images,
     eventStatus: eventStatusFromTicketSports(stringValue(record.status), text),
@@ -898,10 +903,20 @@ function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtra
 
 function evidence(value: string | null | undefined, confidence: number) {
   return {
-    value: cleanText(value) || null,
+    value: cleanText(repairMojibake(value)) || null,
     confidence,
-    sourceText: cleanText(value) || null,
+    sourceText: cleanText(repairMojibake(value)) || null,
   };
+}
+
+function repairMojibake(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  if (!/[ÃÂâ€]/.test(value)) return value;
+  try {
+    return Buffer.from(value, "latin1").toString("utf8");
+  } catch {
+    return value;
+  }
 }
 
 function parseTicketSportsLocation(address: string): {
@@ -988,17 +1003,87 @@ function looksLikeVenueOrStreet(value: string | null): boolean {
 }
 
 function pricesFromText(text: string): RaceEventExtraction["prices"] {
-  return unique(text.match(/R\$\s*\d+(?:\.\d{3})*(?:[.,]\d{2})?/gi) ?? []).map((rawPrice, index) => ({
-    name: index === 0 ? "Inscricao" : `Lote ${index + 1}`,
-    price: normalizePrice(rawPrice),
-    currency: "BRL",
-    startDate: null,
-    endDate: null,
-    status: "unknown" as const,
-    isCurrent: index === 0,
-    sourceText: rawPrice,
-    confidence: 0.78,
-  }));
+  const prices: RaceEventExtraction["prices"] = [];
+  const matches = Array.from(text.matchAll(/R\$\s*\d+(?:\.\d{3})*(?:[.,]\d{2})?/gi));
+  for (const match of matches) {
+    const rawPrice = match[0];
+    const index = match.index ?? 0;
+    const context = cleanText(text.slice(Math.max(0, index - 120), Math.min(text.length, index + 120)));
+    const normalizedContext = stripDiacritics(context.toLowerCase());
+    if (!/(inscric|lote|a partir|valor|vagas)/.test(normalizedContext)) continue;
+    if (/(retirada de kit|entrega de kit|domicilio|taxa)/.test(normalizedContext) && !/(inscric|lote)/.test(normalizedContext)) continue;
+    const lotName = context.match(/(?:\b\d{1,2}[ºo]?\s*lote|lote\s*\d{1,2})/i)?.[0] ?? (prices.length === 0 ? "Inscricao" : `Lote ${prices.length + 1}`);
+    if (prices.some((price) => price.price === normalizePrice(rawPrice))) continue;
+    prices.push({
+      name: cleanText(lotName),
+      price: normalizePrice(rawPrice),
+      currency: "BRL",
+      startDate: null,
+      endDate: null,
+      status: /vagas limitadas|aberto|garanta|inscric/i.test(context) ? "open" : "unknown",
+      isCurrent: prices.length === 0,
+      sourceText: context || rawPrice,
+      confidence: 0.84,
+    });
+  }
+  return prices;
+}
+
+function kitPickupFromText(
+  text: string,
+  event: { date: string | null | undefined; locationName: string | null; address: string | null },
+): RaceEventExtraction["kitPickup"] {
+  const normalized = stripDiacritics(text.toLowerCase());
+  const pickupIndex = normalized.indexOf("retirada de kit");
+  if (pickupIndex < 0) return null;
+  const section = cleanText(text.slice(pickupIndex, Math.min(text.length, pickupIndex + 900)));
+  const timeRange = section.match(/entre\s+(\d{1,2})h(?:\d{2})?\s+e\s+(\d{1,2})h(?:\d{2})?/i);
+  const dayOfEvent = /dia do evento|dia da prova/i.test(section);
+  return {
+    location: dayOfEvent ? event.locationName : null,
+    address: dayOfEvent ? event.address : null,
+    date: dayOfEvent ? normalizeDate(event.date) : null,
+    startTime: timeRange?.[1] ? `${timeRange[1].padStart(2, "0")}:00` : null,
+    endTime: timeRange?.[2] ? `${timeRange[2].padStart(2, "0")}:00` : null,
+    requiredDocuments: /terceir/i.test(section) ? ["Formulario para retirada de kit por terceiros"] : [],
+    sourceText: section,
+    confidence: 0.72,
+  };
+}
+
+function rulesFromTicketSports(record: Record<string, unknown>, text: string): RaceEventExtraction["rules"] {
+  const rules: RaceEventExtraction["rules"] = [];
+  const regulationUrl = stringValue(record.regulationDocument);
+  if (regulationUrl) {
+    rules.push({
+      category: "general",
+      text: `Regulamento disponivel em ${regulationUrl}`,
+      sourceText: regulationUrl,
+      confidence: 0.9,
+    });
+  }
+  const pcd = text.match(/PCD[^.]{0,180}/i)?.[0];
+  if (pcd) rules.push({ category: "pcd", text: cleanText(pcd), sourceText: pcd, confidence: 0.75 });
+  const awards = text.match(/premia[cç][aã]o[^.]{0,220}/i)?.[0];
+  if (awards) rules.push({ category: "awards", text: cleanText(awards), sourceText: awards, confidence: 0.72 });
+  return rules;
+}
+
+function linksFromTicketSportsRecord(record: Record<string, unknown>): string[] {
+  const links = [
+    stringValue(record.uri),
+    stringValue(record.regulationDocument),
+    ...asRecordArray(record.eventContents).flatMap((content) => extractLinksFromHtml(stringValue(content.description) ?? "")),
+  ];
+  return unique(links.filter(isStringUrl));
+}
+
+function extractLinksFromHtml(html: string): string[] {
+  return Array.from(html.matchAll(/href=["']([^"']+)["']/gi)).flatMap((match) => (match[1] ? [match[1]] : []));
+}
+
+function stripDiacritics(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
 function eventStatusFromTicketSports(status: string | null, text: string): RaceEventExtraction["eventStatus"] {
@@ -1030,6 +1115,10 @@ function findRegulationUrl(urls: string[]): string | null {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function asRecordArray(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? value.map(asRecord).filter((record) => Object.keys(record).length > 0) : [];
 }
 
 function stringValue(value: unknown): string | null {
