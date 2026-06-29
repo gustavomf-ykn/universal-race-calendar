@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { generateEventFingerprint, normalizeDate, normalizeDistanceKm, normalizePrice, slugify } from "@race-calendar/utils";
+import {
+  atLeastSemver,
+  generateEventFingerprint,
+  normalizeDate,
+  normalizeDistanceKm,
+  normalizePrice,
+  slugify,
+} from "@race-calendar/utils";
 
 describe("utils", () => {
   it("generates slugs", () => {
@@ -28,5 +35,11 @@ describe("utils", () => {
         country: "BR",
       }),
     ).toBe("meia-maratona-florianopolis|2026-08-16|florianopolis|sc|br");
+  });
+
+  it("keeps curation versions from being downgraded by stale envs", () => {
+    expect(atLeastSemver("1.0.0", "1.1.0")).toBe("1.1.0");
+    expect(atLeastSemver("1.2.0", "1.1.0")).toBe("1.2.0");
+    expect(atLeastSemver(undefined, "1.1.0")).toBe("1.1.0");
   });
 });

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 export const ADAPTER_VERSION_TICKETSPORTS = process.env.ADAPTER_VERSION_TICKETSPORTS ?? "1.0.0";
 export const CANONICAL_SCHEMA_VERSION = process.env.CANONICAL_SCHEMA_VERSION ?? "1.0.0";
-export const CURATION_PIPELINE_VERSION = process.env.CURATION_PIPELINE_VERSION ?? "1.1.0";
+export const CURATION_PIPELINE_VERSION = atLeastSemver(process.env.CURATION_PIPELINE_VERSION, "1.1.0");
 
 export function cleanText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
@@ -29,6 +29,26 @@ export function slugify(value: string): string {
 
 export function hashContent(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+export function atLeastSemver(value: string | null | undefined, minimum: string): string {
+  const parsedValue = parseSemver(value);
+  const parsedMinimum = parseSemver(minimum);
+  if (!parsedMinimum) return value ?? minimum;
+  if (!parsedValue) return minimum;
+  for (let index = 0; index < parsedMinimum.length; index += 1) {
+    const current = parsedValue[index] ?? 0;
+    const floor = parsedMinimum[index] ?? 0;
+    if (current > floor) return value!;
+    if (current < floor) return minimum;
+  }
+  return value!;
+}
+
+function parseSemver(value: string | null | undefined): [number, number, number] | null {
+  const match = cleanText(value).match(/^(\d+)\.(\d+)\.(\d+)$/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
 export function normalizeDate(value: string | null | undefined, fallbackYear = new Date().getFullYear()): string | null {
