@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeRaceEventExtractionPayload, OpenAICompatibleProvider, parseJsonObjectFromText } from "@race-calendar/ai";
+import { createAIProviderFromEnv, normalizeRaceEventExtractionPayload, OpenAICompatibleProvider, parseJsonObjectFromText } from "@race-calendar/ai";
 import { raceEventExtractionSchema } from "@race-calendar/schemas";
 import type { RawSourceExtraction } from "@race-calendar/schemas";
 
@@ -90,7 +90,79 @@ describe("OpenAI compatible provider", () => {
     const extraction = await provider.extractRaceEvent({ raw, today: "2026-06-26" });
 
     expect(calls).toHaveLength(1);
+    expect(JSON.parse((calls[0] as { init: RequestInit }).init.body as string).response_format).toEqual({ type: "json_object" });
     expect(extraction.name.value).toBe("Corrida IA");
     expect(extraction.currentLot?.isCurrent).toBe(true);
+  });
+
+  it("falls back without response_format when the provider rejects JSON mode", async () => {
+    const calls: unknown[] = [];
+    const provider = new OpenAICompatibleProvider({
+      baseUrl: "https://ai.example.test/v1",
+      apiKey: "test-key",
+      model: "test-model",
+      fetchImpl: async (url, init) => {
+        calls.push({ url, init });
+        const body = JSON.parse(init?.body as string) as { response_format?: unknown };
+        if (body.response_format) {
+          return new Response("unsupported response_format json_object", { status: 400 });
+        }
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    name: { value: "Corrida IA", confidence: 0.9, sourceText: "Corrida IA" },
+                    date: { value: "2026-09-01", confidence: 0.9, sourceText: "01/09/2026" },
+                    city: { value: "Sao Paulo", confidence: 0.8, sourceText: "Sao Paulo, SP" },
+                    state: { value: "SP", confidence: 0.8, sourceText: "Sao Paulo, SP" },
+                    country: { value: "BR", confidence: 0.8, sourceText: "Brasil" },
+                    registrationUrl: { value: "https://example.test/evento", confidence: 0.9, sourceText: "https://example.test/evento" },
+                    eventStatus: "scheduled",
+                    confidence: 0.9,
+                    fieldConfidences: { name: 0.9 },
+                    warnings: [],
+                  }),
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    const extraction = await provider.extractRaceEvent({ raw, today: "2026-06-26" });
+    const secondBody = JSON.parse((calls[1] as { init: RequestInit }).init.body as string);
+
+    expect(calls).toHaveLength(2);
+    expect(secondBody.response_format).toBeUndefined();
+    expect(extraction.name.value).toBe("Corrida IA");
+  });
+
+  it("selects NVIDIA NIM from environment defaults", () => {
+    const previousProvider = process.env.AI_PROVIDER;
+    const previousKey = process.env.AI_API_KEY;
+    const previousModel = process.env.AI_MODEL;
+    const previousBaseUrl = process.env.AI_BASE_URL;
+    process.env.AI_PROVIDER = "nvidia-nim";
+    process.env.AI_API_KEY = "test-key";
+    delete process.env.AI_MODEL;
+    delete process.env.AI_BASE_URL;
+
+    const provider = createAIProviderFromEnv();
+
+    expect(provider.name).toBe("nvidia-nim");
+    expect(provider.model).toBe("nvidia/llama-3.3-nemotron-super-49b-v1.5");
+
+    if (previousProvider == null) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
+    if (previousKey == null) delete process.env.AI_API_KEY;
+    else process.env.AI_API_KEY = previousKey;
+    if (previousModel == null) delete process.env.AI_MODEL;
+    else process.env.AI_MODEL = previousModel;
+    if (previousBaseUrl == null) delete process.env.AI_BASE_URL;
+    else process.env.AI_BASE_URL = previousBaseUrl;
   });
 });

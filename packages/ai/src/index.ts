@@ -21,6 +21,7 @@ export type OpenAICompatibleProviderOptions = {
   maxRetries?: number;
   fetchImpl?: typeof fetch;
   name?: string;
+  useJsonResponseFormat?: boolean;
 };
 
 export function createAIProviderFromEnv(): AIProvider {
@@ -35,6 +36,17 @@ export function createAIProviderFromEnv(): AIProvider {
       timeoutMs: Number(process.env.AI_TIMEOUT_MS ?? 30000),
       maxRetries: Number(process.env.AI_MAX_RETRIES ?? 2),
       name: "openai-compatible",
+    });
+  }
+  if (provider === "nvidia-nim") {
+    return new OpenAICompatibleProvider({
+      baseUrl: process.env.AI_BASE_URL ?? "https://integrate.api.nvidia.com/v1",
+      apiKey: requiredEnv("AI_API_KEY"),
+      model: process.env.AI_MODEL ?? "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+      timeoutMs: Number(process.env.AI_TIMEOUT_MS ?? 45000),
+      maxRetries: Number(process.env.AI_MAX_RETRIES ?? 2),
+      name: "nvidia-nim",
+      useJsonResponseFormat: true,
     });
   }
   if (provider === "ollama") return new OllamaProvider(model);
@@ -138,6 +150,7 @@ export class OpenAICompatibleProvider implements AIProvider {
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly useJsonResponseFormat: boolean;
 
   constructor(options: OpenAICompatibleProviderOptions) {
     this.name = options.name ?? "openai-compatible";
@@ -147,6 +160,7 @@ export class OpenAICompatibleProvider implements AIProvider {
     this.timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : 30000;
     this.maxRetries = Number.isFinite(options.maxRetries) && options.maxRetries != null && options.maxRetries >= 0 ? options.maxRetries : 2;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.useJsonResponseFormat = options.useJsonResponseFormat ?? true;
   }
 
   async extractRaceEvent(input: ExtractRaceEventInput): Promise<RaceEventExtraction> {
@@ -167,15 +181,29 @@ export class OpenAICompatibleProvider implements AIProvider {
             "content-type": "application/json",
             authorization: this.apiKey ? `Bearer ${this.apiKey}` : undefined,
           }),
-          body: JSON.stringify({
-            model: this.model,
-            messages,
-            temperature: 0,
-            response_format: { type: "json_object" },
-          }),
+          body: JSON.stringify(
+            withoutUndefinedValue({
+              model: this.model,
+              messages,
+              temperature: 0,
+              response_format: this.useJsonResponseFormat ? { type: "json_object" } : undefined,
+            }),
+          ),
           signal: controller.signal,
         });
         const text = await response.text();
+        if (!response.ok && this.useJsonResponseFormat && isJsonModeRejected(response.status, text)) {
+          return new OpenAICompatibleProvider({
+            baseUrl: this.baseUrl,
+            apiKey: this.apiKey,
+            model: this.model,
+            timeoutMs: this.timeoutMs,
+            maxRetries: this.maxRetries,
+            fetchImpl: this.fetchImpl,
+            name: this.name,
+            useJsonResponseFormat: false,
+          }).chatCompletion(messages);
+        }
         if (!response.ok) throw new Error(`AI provider returned ${response.status}: ${text.slice(0, 500)}`);
         const payload = JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }> };
         const content = payload.choices?.[0]?.message?.content;
@@ -330,6 +358,11 @@ export function buildCurationMessages(input: ExtractRaceEventInput): Array<{ rol
         "Nao use confidence 0 quando houver evidencia nos campos principais; se nome, data, cidade/pais e URL estiverem claros, a confidence geral deve ser pelo menos 0.75.",
         "Use warnings apenas para problemas reais de qualidade; nao marque missing_state para eventos internacionais sem estado.",
         "Separe lotes/precos em lots, marque isCurrent apenas quando houver evidencia, e mantenha prices para compatibilidade.",
+        "Nunca use taxa de retirada de kit, entrega, frete, estacionamento, doacao, multa ou taxa administrativa como preco de inscricao.",
+        "Precos devem ter sourceText contendo evidencia de inscricao, lote, valor da inscricao ou a partir de. Se houver duvida, omita o preco.",
+        "Distancias devem vir de percurso, prova, distancia ou modalidade. Nao use raio de entrega, endereco, data, idade ou horario como distancia.",
+        "Kits devem listar apenas itens explicitamente citados, como camiseta, medalha, chip, numero de peito, sacochila ou brindes.",
+        "Cidade deve ser municipio/localidade, nunca avenida, rua, shopping, estadio, parque, ginasio, igreja, estacionamento ou endereco.",
       ].join(" "),
     },
     {
@@ -434,6 +467,14 @@ function requiredEnv(name: string): string {
 
 function withoutUndefined(value: Record<string, string | undefined>): Record<string, string> {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as Record<string, string>;
+}
+
+function withoutUndefinedValue<T extends Record<string, unknown>>(value: T): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
+}
+
+function isJsonModeRejected(status: number, text: string): boolean {
+  return status >= 400 && status < 500 && /response_format|json_object|json mode|unsupported/i.test(text);
 }
 
 function wait(ms: number): Promise<void> {

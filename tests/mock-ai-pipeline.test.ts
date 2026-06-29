@@ -179,7 +179,7 @@ describe("mock AI pipeline", () => {
     expect(result.normalizedEvent.curationStatus).toBe("curated");
     expect(result.normalizedEvent.curationProvider).toBe("deterministic");
     expect(result.normalizedEvent.curationModel).toBe("ticketsports-v1");
-    expect(result.normalizedEvent.curationVersion).toBe("1.1.0");
+    expect(result.normalizedEvent.curationVersion).toBe("1.2.0");
     expect(result.normalizedEvent.curatedAt).toBeTruthy();
     expect(result.normalizedEvent.registrationUrl).toContain("ticketsports.com.br");
     expect(result.normalizedEvent.distances.map((distance) => distance.distanceKm)).toContain(21);

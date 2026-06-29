@@ -38,8 +38,8 @@ describe("utils", () => {
   });
 
   it("keeps curation versions from being downgraded by stale envs", () => {
-    expect(atLeastSemver("1.0.0", "1.1.0")).toBe("1.1.0");
-    expect(atLeastSemver("1.2.0", "1.1.0")).toBe("1.2.0");
-    expect(atLeastSemver(undefined, "1.1.0")).toBe("1.1.0");
+    expect(atLeastSemver("1.0.0", "1.2.0")).toBe("1.2.0");
+    expect(atLeastSemver("1.3.0", "1.2.0")).toBe("1.3.0");
+    expect(atLeastSemver(undefined, "1.2.0")).toBe("1.2.0");
   });
 });

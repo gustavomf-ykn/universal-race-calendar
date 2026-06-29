@@ -127,6 +127,19 @@ TICKETSPORTS_IMPORT_DELAY_MS=300
 TICKETSPORTS_IMPORT_QUICK_FILTER=corrida-de-rua
 ```
 
+Para curadoria real com NVIDIA NIM, troque as variaveis da IA no Render:
+
+```bash
+AI_PROVIDER=nvidia-nim
+AI_BASE_URL=https://integrate.api.nvidia.com/v1
+AI_API_KEY=...
+AI_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1.5
+AI_CURATION_ENABLED=true
+AI_CURATION_REQUIRED=false
+```
+
+Se o plano gratuito nao liberar o modelo Nemotron Super, use `meta/llama-3.3-70b-instruct`.
+
 Depois do deploy, configure estes secrets no GitHub:
 
 ```bash
@@ -139,6 +152,8 @@ Para importar corridas no ambiente persistente, rode o workflow **Production Imp
 ```bash
 curl "https://sua-api.onrender.com/v1/events?sourceType=ticketsports&limit=100"
 ```
+
+Para vitrines publicas, prefira os campos `display.*` de cada evento. Eles escondem preco, lote, distancia, kit ou localizacao quando a API nao tem evidencia confiavel.
 
 O workflow **Production Import** executa a importacao em lotes para evitar uma unica requisicao longa. O artifact `production-import-results` contem o resumo agregado e os JSONs de cada lote. Use o input `force=true` quando quiser reaplicar mudancas de parser/curadoria em eventos cujo conteudo bruto nao mudou.
 
@@ -182,6 +197,15 @@ AI_PROVIDER=openai-compatible
 AI_BASE_URL=https://seu-provider.example/v1
 AI_API_KEY=...
 AI_MODEL=...
+```
+
+Para NVIDIA NIM:
+
+```bash
+AI_CURATION_ENABLED=true
+AI_PROVIDER=nvidia-nim
+AI_API_KEY=...
+AI_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1.5
 ```
 
 Use `AI_CURATION_REQUIRED=true` apenas quando eventos sem curadoria IA/cache valido devem ficar em `pending_review`.

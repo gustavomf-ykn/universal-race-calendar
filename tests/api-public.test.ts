@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildApp } from "../apps/api/src/app.js";
+import { buildApp, serializePublicEvent } from "../apps/api/src/app.js";
 
 describe("API public and guarded routes without database", () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
@@ -23,7 +23,7 @@ describe("API public and guarded routes without database", () => {
     expect(version.json()).toMatchObject({
       status: "ok",
       canonicalSchemaVersion: "1.0.0",
-      curationPipelineVersion: "1.1.0",
+      curationPipelineVersion: "1.2.0",
       ticketSportsAdapterVersion: "1.0.0",
     });
 
@@ -63,5 +63,34 @@ describe("API public and guarded routes without database", () => {
     });
     expect(invalidSource.statusCode).toBe(400);
     expect(invalidSource.json()).toEqual({ error: "invalid_url" });
+  });
+
+  it("builds public display data only from safe event fields", () => {
+    const publicEvent = serializePublicEvent({
+      name: "Evento Seguro",
+      city: "Avenida Salvador de Sa, 2",
+      state: "RJ",
+      mainImageUrl: "https://example.test/capa.jpg",
+      registrationUrl: "https://example.test/inscricao",
+      distances: [
+        { id: "dist_1", label: "5 km", distanceKm: 5, modality: "road", confidence: 0.82, sourceText: "Percurso 5 km" },
+        { id: "dist_2", label: "30 km", distanceKm: 30, modality: "road", confidence: 0.82, sourceText: "raio de entrega ate 30 km" },
+      ],
+      prices: [
+        { id: "price_1", name: "Taxa", price: 10, currency: "BRL", confidence: 0.9, sourceText: "taxa retirada de kit R$ 10", isCurrent: true },
+        { id: "price_2", name: "Inscricao", price: 120, currency: "BRL", confidence: 0.9, sourceText: "Inscricoes a partir de R$ 120", isCurrent: false },
+      ],
+      kits: [{ id: "kit_1", name: "Kit", items: ["Camiseta"], confidence: 0.7 }],
+      kitPickups: [{ id: "pickup_1", confidence: 0.8, startTime: "06:00", endTime: "07:00" }],
+      schedule: [],
+      rules: [],
+      images: [],
+    });
+
+    expect(publicEvent.display.coverImageUrl).toBe("https://example.test/capa.jpg");
+    expect(publicEvent.display.locationLabel).toBe("RJ");
+    expect(publicEvent.display.distances).toEqual(["5 km"]);
+    expect(publicEvent.display.currentPrice).toBe(120);
+    expect(publicEvent.display.kitSummary).toBe("Camiseta");
   });
 });

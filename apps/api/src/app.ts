@@ -100,7 +100,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
     return {
       data: rows.map((event) => {
-        const currentLot = currentPriceLot(event.prices);
+        const publicEvent = serializePublicEvent(event);
         return {
           id: event.id,
           slug: event.slug,
@@ -113,23 +113,24 @@ export async function buildApp(options: BuildAppOptions = {}) {
           locationName: event.locationName,
           modality: event.modality,
           eventStatus: event.eventStatus,
-          distances: event.distances.map((distance) => distance.label),
-          distanceDetails: event.distances,
-          lowestPrice: lowestPrice(event.prices),
-          prices: event.prices.map(serializePublicPrice),
-          priceLots: event.prices.map(serializePublicPrice),
-          currentLot: currentLot ? serializePublicPrice(currentLot) : null,
-          currentPrice: currentLot?.price ?? null,
-          currentLotName: currentLot?.name ?? null,
-          currency: currentLot?.currency ?? event.prices[0]?.currency ?? null,
+          distances: publicEvent.distances.map((distance) => distance.label),
+          distanceDetails: publicEvent.distances,
+          lowestPrice: lowestPrice(publicEvent.prices),
+          prices: publicEvent.prices.map(serializePublicPrice),
+          priceLots: publicEvent.prices.map(serializePublicPrice),
+          currentLot: publicEvent.currentLot ? serializePublicPrice(publicEvent.currentLot) : null,
+          currentPrice: publicEvent.currentLot?.price ?? null,
+          currentLotName: publicEvent.currentLot?.name ?? null,
+          currency: publicEvent.currentLot?.currency ?? publicEvent.prices[0]?.currency ?? null,
           registrationUrl: event.registrationUrl,
           officialUrl: event.officialUrl,
           mainImageUrl: event.mainImageUrl,
           images: event.images.map((image) => image.url),
-          kits: event.kits.map(serializePublicKit),
-          kitPickup: event.kitPickups[0] ? serializePublicKitPickup(event.kitPickups[0]) : null,
-          schedule: event.schedule.map(serializePublicScheduleItem),
-          rules: event.rules.map(serializePublicRule),
+          kits: publicEvent.kits.map(serializePublicKit),
+          kitPickup: publicEvent.kitPickup ? serializePublicKitPickup(publicEvent.kitPickup) : null,
+          schedule: publicEvent.schedule.map(serializePublicScheduleItem),
+          rules: publicEvent.rules.map(serializePublicRule),
+          display: publicEvent.display,
           sourceType: event.sourceType,
           lastCuratedAt: event.curatedAt?.toISOString() ?? null,
         };
@@ -501,6 +502,7 @@ async function sendEventDetail(id: string, reply: FastifyReply) {
     },
   });
   if (!event) return reply.code(404).send({ error: "event_not_found" });
+  const publicEvent = serializePublicEvent(event);
   return {
     id: event.id,
     slug: event.slug,
@@ -524,17 +526,18 @@ async function sendEventDetail(id: string, reply: FastifyReply) {
     organizerName: event.organizerName,
     organizerUrl: event.organizerUrl,
     mainImageUrl: event.mainImageUrl,
-    distances: event.distances,
-    prices: event.prices,
-    kits: event.kits,
-    kitPickup: event.kitPickups[0] ?? null,
-    schedule: event.schedule,
-    rules: event.rules,
+    distances: publicEvent.distances,
+    prices: publicEvent.prices.map(serializePublicPrice),
+    kits: publicEvent.kits.map(serializePublicKit),
+    kitPickup: publicEvent.kitPickup ? serializePublicKitPickup(publicEvent.kitPickup) : null,
+    schedule: publicEvent.schedule.map(serializePublicScheduleItem),
+    rules: publicEvent.rules.map(serializePublicRule),
     images: event.images.map((image) => image.url),
-    currentLot: currentPriceLot(event.prices),
-    currentPrice: currentPriceLot(event.prices)?.price ?? null,
-    currentLotName: currentPriceLot(event.prices)?.name ?? null,
-    currency: currentPriceLot(event.prices)?.currency ?? event.prices[0]?.currency ?? null,
+    currentLot: publicEvent.currentLot ? serializePublicPrice(publicEvent.currentLot) : null,
+    currentPrice: publicEvent.currentLot?.price ?? null,
+    currentLotName: publicEvent.currentLot?.name ?? null,
+    currency: publicEvent.currentLot?.currency ?? publicEvent.prices[0]?.currency ?? null,
+    display: publicEvent.display,
     source: event.source
       ? {
           id: event.source.id,
@@ -904,6 +907,7 @@ function numeric(value: string | undefined): number | null {
 }
 
 function isoDate(value: string | undefined): string | null {
+  if (value === "today") return dateToIsoDate(new Date());
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return Number.isNaN(parsed.getTime()) ? null : value;
@@ -962,6 +966,172 @@ function serializeImportRun(run: Awaited<ReturnType<typeof getLatestImportRun>>)
     createdAt: run.createdAt.toISOString(),
   };
 }
+
+export function serializePublicEvent(event: any) {
+  const distances = sanitizePublicDistances(event.distances ?? []);
+  const prices = sanitizePublicPrices(event.prices ?? []);
+  const kits = sanitizePublicKits(event.kits ?? []);
+  const kitPickup = sanitizePublicKitPickup(event.kitPickups?.[0] ?? event.kitPickup ?? null);
+  const schedule = (event.schedule ?? []).filter((item: any) => Number(item.confidence ?? 0) >= 0.5);
+  const rules = (event.rules ?? []).filter((rule: any) => Number(rule.confidence ?? 0) >= 0.5);
+  const currentLot = currentPriceLot(prices);
+  const coverImageUrl = event.mainImageUrl ?? event.images?.[0]?.url ?? event.images?.[0] ?? null;
+  const locationLabel = publicLocationLabel(event);
+  const registrationUrl = event.registrationUrl ?? event.officialUrl ?? null;
+  const kitSummary = publicKitSummary(kits, kitPickup);
+
+  return {
+    distances,
+    prices,
+    kits,
+    kitPickup,
+    schedule,
+    rules,
+    currentLot,
+    display: {
+      coverImageUrl,
+      locationLabel,
+      distances: distances.map((distance: any) => distance.label).filter(Boolean),
+      currentPrice: currentLot?.price ?? null,
+      currentLotName: currentLot?.name ?? null,
+      currency: currentLot?.currency ?? prices[0]?.currency ?? null,
+      kitSummary,
+      registrationUrl,
+      badges: publicBadges({ distances, currentLot, kits, kitPickup }),
+    },
+  };
+}
+
+function sanitizePublicDistances(distances: any[]): any[] {
+  return distances
+    .filter((distance) => {
+      const distanceKm = Number(distance.distanceKm);
+      if (!Number.isFinite(distanceKm) || distanceKm <= 0 || distanceKm > 100) return false;
+      if (Number(distance.confidence ?? 0) < 0.65) return false;
+      const evidence = cleanForPublicPolicy(distance.sourceText ?? distance.label);
+      if (!evidence) return false;
+      if (/(raio|entrega|domicilio|frete|endereco|idade|anos|horario|retirada)/i.test(evidence)) return false;
+      return true;
+    })
+    .map(serializePublicDistance)
+    .sort((a, b) => (a.distanceKm ?? 0) - (b.distanceKm ?? 0));
+}
+
+function sanitizePublicPrices(prices: any[]): any[] {
+  const seen = new Set<string>();
+  const sanitized = prices.flatMap((price) => {
+    const value = Number(price.price);
+    if (!Number.isFinite(value) || value < 20 || value > 1000) return [];
+    if (Number(price.confidence ?? 0) < 0.65) return [];
+    const evidence = cleanForPublicPolicy(price.sourceText);
+    if (!evidence) return [];
+    const hasRegistrationEvidence = /(inscric|lote|valor|preco|a partir|vagas|participacao)/i.test(evidence);
+    if (!hasRegistrationEvidence) return [];
+    if (/(retirada de kit|entrega de kit|domicilio|frete|estacionamento|doacao|multa)/i.test(evidence) && !/(inscric|lote)/i.test(evidence)) {
+      return [];
+    }
+    const key = `${price.name ?? ""}|${value}|${price.currency ?? "BRL"}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{ ...price, isCurrent: false }];
+  });
+  if (sanitized.length && !sanitized.some((price) => price.isCurrent)) sanitized[0] = { ...sanitized[0], isCurrent: true };
+  return sanitized;
+}
+
+function sanitizePublicKits(kits: any[]): any[] {
+  return kits.filter((kit) => Number(kit.confidence ?? 0) >= 0.55 && Array.isArray(kit.items) && kit.items.length > 0);
+}
+
+function sanitizePublicKitPickup(kitPickup: any | null): any | null {
+  if (!kitPickup || Number(kitPickup.confidence ?? 0) < 0.55) return null;
+  if (!(kitPickup.location || kitPickup.address || kitPickup.date || kitPickup.startTime || kitPickup.endTime)) return null;
+  return kitPickup;
+}
+
+function serializePublicDistance(distance: any) {
+  return {
+    id: distance.id,
+    label: distance.label,
+    distanceKm: distance.distanceKm,
+    modality: distance.modality,
+    startTime: distance.startTime,
+    elevationGain: distance.elevationGain,
+    confidence: distance.confidence,
+  };
+}
+
+function publicLocationLabel(event: any): string | null {
+  const state = isBrazilianState(event.state) ? String(event.state).toUpperCase() : null;
+  const city = isSafePublicCity(event.city) ? String(event.city).trim() : null;
+  if (city && state) return `${city}, ${state}`;
+  return state;
+}
+
+function publicKitSummary(kits: any[], kitPickup: any | null): string | null {
+  const items = kits.flatMap((kit) => (Array.isArray(kit.items) ? kit.items : [])).filter(Boolean);
+  if (items.length) return items.slice(0, 3).join(", ");
+  if (kitPickup) return "Retirada de kit informada";
+  return null;
+}
+
+function publicBadges(input: { distances: any[]; currentLot: any | null; kits: any[]; kitPickup: any | null }): string[] {
+  const badges: string[] = [];
+  if (input.distances.length) badges.push(...input.distances.slice(0, 3).map((distance) => distance.label).filter(Boolean));
+  if (input.currentLot?.price) badges.push("Inscricoes abertas");
+  if (input.kits.length || input.kitPickup) badges.push("Kit informado");
+  return badges;
+}
+
+function isSafePublicCity(value: unknown): boolean {
+  const text = cleanForPublicPolicy(value);
+  if (!text || text.length < 2) return false;
+  if (/^\d/.test(text)) return false;
+  return !/^(av|avenida|rua|rodovia|estrada|praca|parque|shopping|estadio|ginasio|centro|arena|complexo|campus|represa|lagoa|orla|posto|igreja|estacionamento|km)\b/i.test(text);
+}
+
+function isBrazilianState(value: unknown): boolean {
+  return typeof value === "string" && brazilianStates.has(value.toUpperCase());
+}
+
+function cleanForPublicPolicy(value: unknown): string {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const brazilianStates = new Set([
+  "AC",
+  "AL",
+  "AP",
+  "AM",
+  "BA",
+  "CE",
+  "DF",
+  "ES",
+  "GO",
+  "MA",
+  "MT",
+  "MS",
+  "MG",
+  "PA",
+  "PB",
+  "PR",
+  "PE",
+  "PI",
+  "RJ",
+  "RN",
+  "RS",
+  "RO",
+  "RR",
+  "SC",
+  "SP",
+  "SE",
+  "TO",
+]);
 
 function lowestPrice(prices: Array<{ price: number | null }>): number | null {
   return (

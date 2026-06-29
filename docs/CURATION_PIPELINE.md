@@ -6,7 +6,7 @@ O pipeline recebe `RawSourceExtraction` e produz `CanonicalRaceEvent`.
 2. Se existir cache por `contentHash + schemaVersion + curationVersion + provider + model`, o resultado validado e reutilizado e um `CurationJob` novo fica como `skipped_cached`.
 3. Com `AI_CURATION_ENABLED=false`, TicketSports continua usando normalizacao deterministica.
 4. `MockAIProvider` permanece obrigatorio para desenvolvimento, testes, CI e GitHub Actions sem chave externa.
-5. Provider real usa `AI_PROVIDER=openai-compatible` e endpoint `/chat/completions`.
+5. Provider real usa `AI_PROVIDER=nvidia-nim` ou `AI_PROVIDER=openai-compatible` e endpoint `/chat/completions`.
 6. Zod valida o JSON.
 7. Normalizacao converte datas, horarios, precos, lotes, distancias e URLs.
 8. `evaluatePublishability` decide `publicationStatus`.
@@ -32,13 +32,15 @@ Warnings criticos iniciais incluem data/local conflitante e cidade suspeita. Na 
 
 Distancias extraidas de texto sao canonizadas por quilometragem. Variantes como `5K`, `5 km` e `5 Km` viram uma unica distancia `5 km`.
 
+A API publica monta um objeto `display` conservador. Precos, lotes, distancias, kits e localizacao so entram em `display` quando ha evidencia e confianca suficiente; dados duvidosos seguem disponiveis apenas em endpoints internos/admin para auditoria.
+
 ## Versoes
 
 Valores iniciais:
 
 - `ADAPTER_VERSION_TICKETSPORTS=1.0.0`
 - `CANONICAL_SCHEMA_VERSION=1.0.0`
-- `CURATION_PIPELINE_VERSION=1.1.0`
+- `CURATION_PIPELINE_VERSION=1.2.0`
 
 ## Dry-run e batch
 
