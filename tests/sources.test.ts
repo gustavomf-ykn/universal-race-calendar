@@ -76,4 +76,33 @@ describe("source adapters", () => {
       country: "BR",
     });
   });
+
+  it("skips explicitly non-Brazil TicketSports events during discovery", async () => {
+    const discovered = await discoverTicketSportsEvents({
+      quantity: 1000,
+      quickFilter: "corrida-de-rua",
+      client: {
+        async getJson() {
+          return [
+            ...ticketsportsListFixture,
+            {
+              organizer: "SUB4.RUN",
+              date: "08/11/2026",
+              address: "Porto, Portugal",
+              uri: "https://www.ticketsports.com.br/e/Maratona+do+Porto-85488",
+              eventId: 85488,
+              title: "Maratona do Porto",
+              status: "Aberto",
+            },
+          ];
+        },
+        async getText() {
+          throw new Error("getText should not be called for list payloads");
+        },
+      },
+    });
+
+    expect(discovered.map((event) => event.externalId)).toEqual(["74641"]);
+    expect(discovered.every((event) => event.country === "BR")).toBe(true);
+  });
 });

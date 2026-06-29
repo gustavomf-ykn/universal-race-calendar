@@ -120,6 +120,38 @@ describe("mock AI pipeline", () => {
     expect(shouldPersistCanonicalEvent({ country: "BR" })).toBe(true);
   });
 
+  it("recognizes explicit non-Brazil TicketSports locations and blocks persistence", async () => {
+    const raw: RawSourceExtraction = {
+      sourceType: "ticketsports",
+      sourceId: "src_porto",
+      sourceExternalId: "85488",
+      url: "https://www.ticketsports.com.br/e/Maratona+do+Porto-85488",
+      title: "Maratona do Porto",
+      importantHtml: "",
+      importantText: "Maratona do Porto 2026. Porto, Portugal. Largada as 08:00.",
+      rawSourceData: {
+        uri: "https://www.ticketsports.com.br/e/Maratona+do+Porto-85488",
+        title: "Maratona do Porto",
+        address: "Porto, Portugal",
+        realDate: "2026-11-08 08:00",
+        status: "Aberto",
+        organizer: "SUB4.RUN",
+      },
+      extractedLinks: ["https://www.ticketsports.com.br/e/Maratona+do+Porto-85488"],
+      fetchedAt: "2026-06-28T00:00:00.000Z",
+      contentHash: "hash_porto_deterministic",
+      adapter: "ticketsports",
+      adapterVersion: "1.0.0",
+    };
+
+    const result = await curateTicketSportsSourceExtraction(raw);
+
+    expect(result.normalizedEvent.country).toBe("PT");
+    expect(result.normalizedEvent.city).toBe("Porto");
+    expect(result.normalizedEvent.warnings).not.toContain("missing_state");
+    expect(shouldPersistCanonicalEvent(result.normalizedEvent)).toBe(false);
+  });
+
   it("normalizes TicketSports payload deterministically without an AI provider", async () => {
     const adapter = new TicketSportsAdapter({
       async getJson() {

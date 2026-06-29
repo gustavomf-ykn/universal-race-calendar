@@ -185,6 +185,7 @@ export async function discoverTicketSportsEvents(
     const title = cleanText(stringValue(record.title));
     if (!eventId || !url || !title) return [];
     const location = parseTicketSportsLocation(stringValue(record.address));
+    if (location.country !== "BR") return [];
     return [
       {
         sourceType: "ticketsports",
@@ -253,16 +254,49 @@ function parseTicketSportsLocation(value: string | null): { city: string | null;
   const text = cleanText(value);
   if (!text) return { city: null, state: null, country: "BR" };
   const state = text.match(/,\s*([A-Z]{2})(?:,|\b)/)?.[1]?.toUpperCase() ?? null;
-  const country = /,\s*(Brasil|BR)\b/i.test(text) ? "BR" : "BR";
+  const country = countryFromText(text) ?? "BR";
   if (!state) return { city: cityBeforeColon(text), state: null, country };
   const beforeState = text.split(new RegExp(`,\\s*${state}\\b`, "i"))[0] ?? "";
   const city = cityBeforeColon(beforeState) ?? cleanText(beforeState.split(",").at(-1));
   return { city: city || null, state, country };
 }
 
+function countryFromText(value: string): string | null {
+  const text = stripDiacritics(cleanText(value).toLowerCase());
+  if (!text) return null;
+  if (/(^|[\s,;:])(brasil|brazil|br)(?=$|[\s,;:.])/.test(text)) return "BR";
+  const countries: Array<[RegExp, string]> = [
+    [/(^|[\s,;:])portugal(?=$|[\s,;:.])/, "PT"],
+    [/(^|[\s,;:])argentina(?=$|[\s,;:.])/, "AR"],
+    [/(^|[\s,;:])chile(?=$|[\s,;:.])/, "CL"],
+    [/(^|[\s,;:])(uruguai|uruguay)(?=$|[\s,;:.])/, "UY"],
+    [/(^|[\s,;:])(paraguai|paraguay)(?=$|[\s,;:.])/, "PY"],
+    [/(^|[\s,;:])bolivia(?=$|[\s,;:.])/, "BO"],
+    [/(^|[\s,;:])peru(?=$|[\s,;:.])/, "PE"],
+    [/(^|[\s,;:])colombia(?=$|[\s,;:.])/, "CO"],
+    [/(^|[\s,;:])(mexico|méxico)(?=$|[\s,;:.])/, "MX"],
+    [/(^|[\s,;:])(estados unidos|eua|usa|united states)(?=$|[\s,;:.])/, "US"],
+    [/(^|[\s,;:])(espanha|spain)(?=$|[\s,;:.])/, "ES"],
+  ];
+  return countries.find(([pattern]) => pattern.test(text))?.[1] ?? null;
+}
+
+function stripDiacritics(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
 function cityBeforeColon(value: string): string | null {
-  const left = value.split(":")[0];
+  const left = stripCountrySuffix(value.split(":")[0] ?? "");
   return cleanText(left) || null;
+}
+
+function stripCountrySuffix(value: string): string {
+  return cleanText(
+    value.replace(
+      /,\s*(Brasil|Brazil|BR|Portugal|Argentina|Chile|Uruguai|Uruguay|Paraguai|Paraguay|Bolivia|Peru|Colombia|Mexico|México|Estados Unidos|EUA|USA|United States|Espanha|Spain)\b\.?$/i,
+      "",
+    ),
+  );
 }
 
 function registrationUrlFromTicketSportsPayload(payload: Record<string, unknown>, fallbackUrl: string): string {

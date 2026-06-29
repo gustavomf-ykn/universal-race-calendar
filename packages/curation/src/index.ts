@@ -288,7 +288,8 @@ export async function importTicketSportsEvents(options: ImportTicketSportsEvents
   const discoverOptions: DiscoverTicketSportsEventsOptions = { quantity: quantity + offset, quickFilter };
   if (options.client) discoverOptions.client = options.client;
   const allDiscovered = options.discoverEvents ? await options.discoverEvents() : await discoverTicketSportsEvents(discoverOptions);
-  const discovered = allDiscovered.slice(offset, offset + quantity);
+  const brazilianDiscovered = allDiscovered.filter((event) => event.country.toUpperCase() === "BR");
+  const discovered = brazilianDiscovered.slice(offset, offset + quantity);
   const failures: TicketSportsImportResult["failures"] = [];
   let processedCount = 0;
   let publishedEvents = 0;
@@ -337,7 +338,7 @@ export async function importTicketSportsEvents(options: ImportTicketSportsEvents
     quickFilter,
     requestedQuantity: quantity,
     offset,
-    discoveredCount: allDiscovered.length,
+    discoveredCount: brazilianDiscovered.length,
     processedCount,
     publishedEvents,
     manualReviewEvents,
@@ -929,8 +930,8 @@ function parseTicketSportsLocation(address: string): {
   const text = cleanText(address);
   if (!text) return { city: null, state: null, country: "BR", locationName: null, suspiciousCity: false };
   const state = text.match(/,\s*([A-Z]{2})(?:,|\b)/)?.[1]?.toUpperCase() ?? null;
-  const country = /,\s*(Brasil|BR)\b/i.test(text) ? "BR" : "BR";
-  const locationName = cleanText(text.split(":")[0]) || null;
+  const country = countryFromTicketSportsText(text) ?? "BR";
+  const locationName = stripCountrySuffix(text.split(":")[0] ?? "") || null;
   if (!state) {
     const city = looksLikeVenueOrStreet(locationName) ? null : locationName;
     return { city, state: null, country, locationName, suspiciousCity: Boolean(locationName && !city) };
@@ -945,6 +946,35 @@ function parseTicketSportsLocation(address: string): {
   ].filter((candidate): candidate is string => Boolean(candidate));
   const city = candidates.find((candidate) => !looksLikeVenueOrStreet(candidate)) ?? null;
   return { city, state, country, locationName, suspiciousCity: !city };
+}
+
+function countryFromTicketSportsText(value: string): string | null {
+  const text = stripDiacritics(cleanText(value).toLowerCase());
+  if (!text) return null;
+  if (/(^|[\s,;:])(brasil|brazil|br)(?=$|[\s,;:.])/.test(text)) return "BR";
+  const countries: Array<[RegExp, string]> = [
+    [/(^|[\s,;:])portugal(?=$|[\s,;:.])/, "PT"],
+    [/(^|[\s,;:])argentina(?=$|[\s,;:.])/, "AR"],
+    [/(^|[\s,;:])chile(?=$|[\s,;:.])/, "CL"],
+    [/(^|[\s,;:])(uruguai|uruguay)(?=$|[\s,;:.])/, "UY"],
+    [/(^|[\s,;:])(paraguai|paraguay)(?=$|[\s,;:.])/, "PY"],
+    [/(^|[\s,;:])bolivia(?=$|[\s,;:.])/, "BO"],
+    [/(^|[\s,;:])peru(?=$|[\s,;:.])/, "PE"],
+    [/(^|[\s,;:])colombia(?=$|[\s,;:.])/, "CO"],
+    [/(^|[\s,;:])mexico(?=$|[\s,;:.])/, "MX"],
+    [/(^|[\s,;:])(estados unidos|eua|usa|united states)(?=$|[\s,;:.])/, "US"],
+    [/(^|[\s,;:])(espanha|spain)(?=$|[\s,;:.])/, "ES"],
+  ];
+  return countries.find(([pattern]) => pattern.test(text))?.[1] ?? null;
+}
+
+function stripCountrySuffix(value: string): string | null {
+  return cleanText(
+    value.replace(
+      /,\s*(Portugal|Argentina|Chile|Uruguai|Uruguay|Paraguai|Paraguay|Bolivia|Peru|Colombia|Mexico|México|Estados Unidos|EUA|USA|United States|Espanha|Spain)\b\.?$/i,
+      "",
+    ),
+  );
 }
 
 function distancesFromText(text: string): RaceEventExtraction["distances"] {
