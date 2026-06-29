@@ -255,34 +255,42 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
   });
 
   it("exposes the internal TicketSports import endpoint as a synchronous job", async () => {
+    let receivedMaxDurationMs: number | undefined;
     const fakeApp = await buildApp({
-      importTicketSportsEvents: async () => ({
-        jobId: "import_test",
-        status: "success",
-        source: "ticketsports",
-        quickFilter: "corrida-de-rua",
-        requestedQuantity: 1,
-        offset: 0,
-        discoveredCount: 1,
-        processedCount: 1,
-        publishedEvents: 1,
-        manualReviewEvents: 0,
-        unchangedEvents: 0,
-        failedCount: 0,
-        failures: [],
-        startedAt: new Date("2026-06-23T00:00:00.000Z").toISOString(),
-        finishedAt: new Date("2026-06-23T00:00:01.000Z").toISOString(),
-      }),
+      importTicketSportsEvents: async (options) => {
+        receivedMaxDurationMs = options?.maxDurationMs;
+        return {
+          jobId: "import_test",
+          status: "success",
+          source: "ticketsports",
+          quickFilter: "corrida-de-rua",
+          requestedQuantity: 1,
+          offset: 0,
+          nextOffset: 1,
+          maxDurationMs: 120000,
+          discoveredCount: 1,
+          processedCount: 1,
+          publishedEvents: 1,
+          manualReviewEvents: 0,
+          unchangedEvents: 0,
+          failedCount: 0,
+          failures: [],
+          startedAt: new Date("2026-06-23T00:00:00.000Z").toISOString(),
+          finishedAt: new Date("2026-06-23T00:00:01.000Z").toISOString(),
+        };
+      },
     });
     const response = await fakeApp.inject({
       method: "POST",
       url: "/v1/imports/ticketsports/run",
       headers: { "x-api-key": "test-internal-key" },
-      payload: { quantity: 1, delayMs: 0 },
+      payload: { quantity: 1, delayMs: 0, maxDurationMs: 120000 },
     });
     expect(response.statusCode).toBe(200);
-    expect(response.json<{ jobId: string; publishedEvents: number }>().jobId).toBe("import_test");
-    expect(response.json<{ publishedEvents: number }>().publishedEvents).toBe(1);
+    expect(response.json<{ jobId: string; publishedEvents: number; nextOffset: number }>().jobId).toBe("import_test");
+    expect(response.json<{ publishedEvents: number; nextOffset: number }>().publishedEvents).toBe(1);
+    expect(response.json<{ nextOffset: number }>().nextOffset).toBe(1);
+    expect(receivedMaxDurationMs).toBe(120000);
     await fakeApp.close();
   });
 

@@ -46,8 +46,11 @@ Parametros opcionais do corpo:
 - `offset`
 - `concurrency`
 - `delayMs`
+- `maxDurationMs`
 - `quickFilter`
 - `force`
+
+A resposta inclui `nextOffset`. Em importacoes longas, use esse valor para retomar o proximo lote sem pular eventos. Quando `maxDurationMs` e atingido antes de finalizar o lote, o status retorna `time_limit_reached`.
 
 `GET /v1/imports/ticketsports/latest` retorna o ultimo resumo persistido da importacao TicketSports, incluindo duracao e contadores.
 
@@ -64,4 +67,4 @@ Em producao, `POST /v1/imports/ticketsports/run` deve ser chamado pelo workflow 
 
 O banco deve ser persistente. Reimportacoes da TicketSports atualizam eventos existentes por `sourceType + sourceExternalId`, criam nova `EventVersion` e evitam duplicar a API publica.
 
-O workflow de producao chama o endpoint em lotes configuraveis por `chunk_size`, evitando uma unica requisicao longa. Use `force=true` quando uma mudanca de parser/curadoria precisar reprocessar eventos cujo HTML bruto nao mudou.
+O workflow de producao chama o endpoint em lotes configuraveis por `chunk_size` e `max_duration_ms`, evitando uma unica requisicao longa. Use `force=true` quando uma mudanca de parser/curadoria precisar reprocessar eventos cujo HTML bruto nao mudou.

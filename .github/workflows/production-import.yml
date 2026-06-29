@@ -19,6 +19,10 @@ on:
         description: "Delay between detail requests in milliseconds"
         required: true
         default: "100"
+      max_duration_ms:
+        description: "Maximum processing time per API request"
+        required: true
+        default: "240000"
       force:
         description: "Reprocess even when source content hash is unchanged"
         required: true
@@ -36,6 +40,7 @@ jobs:
       IMPORT_CONCURRENCY: ${{ inputs.concurrency || '3' }}
       IMPORT_CHUNK_SIZE: ${{ inputs.chunk_size || '25' }}
       IMPORT_DELAY_MS: ${{ inputs.delay_ms || '100' }}
+      IMPORT_MAX_DURATION_MS: ${{ inputs.max_duration_ms || '240000' }}
       IMPORT_FORCE: ${{ inputs.force || 'false' }}
     steps:
       - name: Check required secrets
@@ -62,9 +67,10 @@ jobs:
               --argjson offset "$offset" \
               --argjson concurrency "$IMPORT_CONCURRENCY" \
               --argjson delayMs "$IMPORT_DELAY_MS" \
+              --argjson maxDurationMs "$IMPORT_MAX_DURATION_MS" \
               --argjson force "$IMPORT_FORCE" \
-              '{quantity: $quantity, offset: $offset, concurrency: $concurrency, delayMs: $delayMs, force: $force}' > "$request_file"
-            echo "Processing chunk #$run_index: offset=$offset quantity=$chunk_quantity concurrency=$IMPORT_CONCURRENCY delayMs=$IMPORT_DELAY_MS force=$IMPORT_FORCE"
+              '{quantity: $quantity, offset: $offset, concurrency: $concurrency, delayMs: $delayMs, maxDurationMs: $maxDurationMs, force: $force}' > "$request_file"
+            echo "Processing chunk #$run_index: offset=$offset quantity=$chunk_quantity concurrency=$IMPORT_CONCURRENCY delayMs=$IMPORT_DELAY_MS maxDurationMs=$IMPORT_MAX_DURATION_MS force=$IMPORT_FORCE"
             curl -fsS \
               --max-time 300 \
               --retry 2 \
@@ -80,20 +86,27 @@ jobs:
             published="$(jq -r '.publishedEvents' "$result_file")"
             review="$(jq -r '.manualReviewEvents' "$result_file")"
             unchanged="$(jq -r '.unchangedEvents' "$result_file")"
-            echo "Chunk #$run_index result: processed=$processed published=$published manualReview=$review unchanged=$unchanged failed=$failed"
+            status="$(jq -r '.status' "$result_file")"
+            next_offset="$(jq -r '.nextOffset // empty' "$result_file")"
+            echo "Chunk #$run_index result: status=$status processed=$processed published=$published manualReview=$review unchanged=$unchanged failed=$failed nextOffset=${next_offset:-null}"
             if [ "$processed" = "0" ]; then
               break
             fi
-            offset=$((offset + chunk_quantity))
+            if [ -n "$next_offset" ] && [ "$next_offset" -gt "$offset" ]; then
+              offset="$next_offset"
+            else
+              offset=$((offset + processed))
+            fi
             run_index=$((run_index + 1))
           done
           jq -s '{
-            status: (if any(.status == "partial_success") then "partial_success" else "success" end),
+            status: (if any(.status == "partial_success") then "partial_success" elif any(.status == "time_limit_reached") then "time_limit_reached" else "success" end),
             source: "ticketsports",
             requestedQuantity: (map(.requestedQuantity) | add // 0),
             chunkCount: length,
             discoveredCount: (map(.discoveredCount) | max // 0),
             processedCount: (map(.processedCount) | add // 0),
+            nextOffset: (.[-1].nextOffset // null),
             publishedEvents: (map(.publishedEvents) | add // 0),
             manualReviewEvents: (map(.manualReviewEvents) | add // 0),
             unchangedEvents: (map(.unchangedEvents) | add // 0),

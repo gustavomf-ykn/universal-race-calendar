@@ -81,11 +81,13 @@ export type RunSourceCheckOptions = {
 
 export type TicketSportsImportResult = {
   jobId: string;
-  status: "success" | "partial_success";
+  status: "success" | "partial_success" | "time_limit_reached";
   source: "ticketsports";
   quickFilter: string;
   requestedQuantity: number;
   offset: number;
+  nextOffset: number;
+  maxDurationMs: number | null;
   discoveredCount: number;
   processedCount: number;
   publishedEvents: number;
@@ -102,6 +104,7 @@ export type ImportTicketSportsEventsOptions = DiscoverTicketSportsEventsOptions 
   delayMs?: number;
   offset?: number;
   force?: boolean;
+  maxDurationMs?: number;
   registry?: SourceAdapterRegistry;
   discoverEvents?: () => Promise<TicketSportsDiscoveredEvent[]>;
 };
@@ -284,6 +287,10 @@ export async function importTicketSportsEvents(options: ImportTicketSportsEvents
   const offset = nonNegativeInt(options.offset, Number(process.env.TICKETSPORTS_IMPORT_OFFSET ?? 0));
   const concurrency = Math.max(1, Math.min(positiveInt(options.concurrency, Number(process.env.TICKETSPORTS_IMPORT_CONCURRENCY ?? 3)), 10));
   const delayMs = nonNegativeInt(options.delayMs, Number(process.env.TICKETSPORTS_IMPORT_DELAY_MS ?? 300));
+  const maxDurationMs =
+    options.maxDurationMs == null
+      ? null
+      : Math.max(1_000, Math.min(nonNegativeInt(options.maxDurationMs, 0), 30 * 60 * 1_000));
   const registry = options.registry ?? new SourceAdapterRegistry();
   const discoverOptions: DiscoverTicketSportsEventsOptions = { quantity: quantity + offset, quickFilter };
   if (options.client) discoverOptions.client = options.client;
@@ -299,6 +306,7 @@ export async function importTicketSportsEvents(options: ImportTicketSportsEvents
 
   async function worker() {
     for (;;) {
+      if (maxDurationMs != null && Date.now() - startedAt.getTime() >= maxDurationMs) return;
       const item = discovered[cursor];
       cursor += 1;
       if (!item) return;
@@ -331,13 +339,17 @@ export async function importTicketSportsEvents(options: ImportTicketSportsEvents
   }
 
   await Promise.all(Array.from({ length: Math.min(concurrency, discovered.length) }, () => worker()));
+  const nextOffset = offset + processedCount;
+  const reachedTimeLimit = maxDurationMs != null && processedCount < discovered.length && Date.now() - startedAt.getTime() >= maxDurationMs;
   const result: TicketSportsImportResult = {
     jobId: `import_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
-    status: failures.length ? "partial_success" : "success",
+    status: reachedTimeLimit ? "time_limit_reached" : failures.length ? "partial_success" : "success",
     source: "ticketsports",
     quickFilter,
     requestedQuantity: quantity,
     offset,
+    nextOffset,
+    maxDurationMs,
     discoveredCount: brazilianDiscovered.length,
     processedCount,
     publishedEvents,

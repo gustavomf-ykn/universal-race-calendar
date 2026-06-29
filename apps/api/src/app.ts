@@ -230,12 +230,14 @@ export async function buildApp(options: BuildAppOptions = {}) {
     const delayMs = optionalNonNegativeInt(body.delayMs);
     const offset = optionalNonNegativeInt(body.offset);
     const force = optionalBoolean(body.force);
+    const maxDurationMs = optionalPositiveInt(body.maxDurationMs);
     if (quantity != null) importOptions.quantity = quantity;
     if (quickFilter != null) importOptions.quickFilter = quickFilter;
     if (concurrency != null) importOptions.concurrency = concurrency;
     if (delayMs != null) importOptions.delayMs = delayMs;
     if (offset != null) importOptions.offset = offset;
     if (force != null) importOptions.force = force;
+    if (maxDurationMs != null) importOptions.maxDurationMs = maxDurationMs;
     const result = await runTicketSportsImport(importOptions);
     return reply.code(result.status === "success" ? 200 : 207).send(result);
   });
