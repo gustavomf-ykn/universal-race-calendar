@@ -19,6 +19,7 @@ import {
   publicationStatusSchema,
   sourceKindSchema,
 } from "@race-calendar/schemas";
+import { ADAPTER_VERSION_TICKETSPORTS, CANONICAL_SCHEMA_VERSION, CURATION_PIPELINE_VERSION } from "@race-calendar/utils";
 
 export type BuildAppOptions = {
   importTicketSportsEvents?: (options?: ImportTicketSportsEventsOptions) => ReturnType<typeof importTicketSportsEvents>;
@@ -64,6 +65,12 @@ export async function buildApp(options: BuildAppOptions = {}) {
   await app.register(swaggerUi, { routePrefix: "/docs" });
 
   app.get("/health", async () => ({ status: "ok" }));
+  app.get("/v1/version", async () => ({
+    status: "ok",
+    canonicalSchemaVersion: CANONICAL_SCHEMA_VERSION,
+    curationPipelineVersion: CURATION_PIPELINE_VERSION,
+    ticketSportsAdapterVersion: ADAPTER_VERSION_TICKETSPORTS,
+  }));
   app.get("/v1/openapi.json", async () => app.swagger());
 
   app.get("/v1/events", async (request) => {

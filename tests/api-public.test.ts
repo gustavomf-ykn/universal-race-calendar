@@ -18,6 +18,15 @@ describe("API public and guarded routes without database", () => {
     expect(health.statusCode).toBe(200);
     expect(health.json()).toEqual({ status: "ok" });
 
+    const version = await app.inject({ method: "GET", url: "/v1/version" });
+    expect(version.statusCode).toBe(200);
+    expect(version.json()).toMatchObject({
+      status: "ok",
+      canonicalSchemaVersion: "1.0.0",
+      curationPipelineVersion: "1.1.0",
+      ticketSportsAdapterVersion: "1.0.0",
+    });
+
     const openapi = await app.inject({ method: "GET", url: "/v1/openapi.json" });
     expect(openapi.statusCode).toBe(200);
     const body = openapi.json<{ openapi: string; info: { title: string } }>();
