@@ -76,7 +76,15 @@ export async function buildApp(options: BuildAppOptions = {}) {
       prisma.event.count({ where }),
       prisma.event.findMany({
         where,
-        include: { distances: true, prices: true },
+        include: {
+          distances: true,
+          prices: true,
+          kits: true,
+          kitPickups: true,
+          schedule: true,
+          rules: true,
+          images: { orderBy: { sortOrder: "asc" } },
+        },
         orderBy,
         skip: (page - 1) * limit,
         take: limit,
@@ -99,13 +107,22 @@ export async function buildApp(options: BuildAppOptions = {}) {
           modality: event.modality,
           eventStatus: event.eventStatus,
           distances: event.distances.map((distance) => distance.label),
+          distanceDetails: event.distances,
           lowestPrice: lowestPrice(event.prices),
+          prices: event.prices.map(serializePublicPrice),
+          priceLots: event.prices.map(serializePublicPrice),
+          currentLot: currentLot ? serializePublicPrice(currentLot) : null,
           currentPrice: currentLot?.price ?? null,
           currentLotName: currentLot?.name ?? null,
           currency: currentLot?.currency ?? event.prices[0]?.currency ?? null,
           registrationUrl: event.registrationUrl,
           officialUrl: event.officialUrl,
           mainImageUrl: event.mainImageUrl,
+          images: event.images.map((image) => image.url),
+          kits: event.kits.map(serializePublicKit),
+          kitPickup: event.kitPickups[0] ? serializePublicKitPickup(event.kitPickups[0]) : null,
+          schedule: event.schedule.map(serializePublicScheduleItem),
+          rules: event.rules.map(serializePublicRule),
           sourceType: event.sourceType,
           lastCuratedAt: event.curatedAt?.toISOString() ?? null,
         };
@@ -520,6 +537,63 @@ async function sendEventDetail(id: string, reply: FastifyReply) {
     confidence: event.confidence,
     lastCuratedAt: event.curatedAt?.toISOString() ?? null,
     lastUpdatedAt: event.updatedAt.toISOString(),
+  };
+}
+
+function serializePublicPrice(price: any) {
+  return {
+    id: price.id,
+    name: price.name,
+    price: price.price,
+    currency: price.currency,
+    startDate: dateToIsoDate(price.startDate),
+    endDate: dateToIsoDate(price.endDate),
+    status: price.status,
+    isCurrent: price.isCurrent,
+    confidence: price.confidence,
+  };
+}
+
+function serializePublicKit(kit: any) {
+  return {
+    id: kit.id,
+    name: kit.name,
+    items: Array.isArray(kit.items) ? kit.items : [],
+    price: kit.price,
+    confidence: kit.confidence,
+  };
+}
+
+function serializePublicKitPickup(kitPickup: any) {
+  return {
+    id: kitPickup.id,
+    location: kitPickup.location,
+    address: kitPickup.address,
+    date: dateToIsoDate(kitPickup.date),
+    startTime: kitPickup.startTime,
+    endTime: kitPickup.endTime,
+    requiredDocuments: Array.isArray(kitPickup.requiredDocuments) ? kitPickup.requiredDocuments : [],
+    confidence: kitPickup.confidence,
+  };
+}
+
+function serializePublicScheduleItem(item: any) {
+  return {
+    id: item.id,
+    date: dateToIsoDate(item.date),
+    time: item.time,
+    activity: item.activity,
+    location: item.location,
+    confidence: item.confidence,
+  };
+}
+
+function serializePublicRule(rule: any) {
+  return {
+    id: rule.id,
+    category: rule.category,
+    text: rule.text,
+    confidence: rule.confidence,
   };
 }
 

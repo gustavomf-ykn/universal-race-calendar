@@ -180,10 +180,28 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
 
     const publicList = await app.inject({ method: "GET", url: "/v1/events?sourceType=ticketsports&limit=100" });
     expect(publicList.statusCode).toBe(200);
-    const body = publicList.json<{ data: Array<{ name: string; sourceType?: string; registrationUrl: string }> }>();
+    const body = publicList.json<{
+      data: Array<{
+        name: string;
+        sourceType?: string;
+        registrationUrl: string;
+        mainImageUrl: string | null;
+        images: string[];
+        prices: Array<{ price: number | null; isCurrent: boolean }>;
+        priceLots: Array<{ price: number | null; isCurrent: boolean }>;
+        currentLot: { price: number | null } | null;
+        schedule: Array<{ activity: string; time: string | null }>;
+      }>;
+    }>();
     expect(body.data).toHaveLength(1);
     expect(body.data[0]?.name).toBe("Meia Maratona de Florianopolis");
     expect(body.data[0]?.registrationUrl).toContain("ticketsports.com.br");
+    expect(body.data[0]?.mainImageUrl).toContain("evento.jpg");
+    expect(body.data[0]?.images).toContain("https://www.ticketsports.com.br/images/evento.jpg");
+    expect(body.data[0]?.prices[0]?.price).toBe(120);
+    expect(body.data[0]?.priceLots[0]?.price).toBe(120);
+    expect(body.data[0]?.currentLot?.price).toBe(120);
+    expect(body.data[0]?.schedule.map((item) => item.activity)).toContain("Largada");
 
     const secondImport = await importTicketSportsEvents({
       quickFilter: "corrida-de-rua",
