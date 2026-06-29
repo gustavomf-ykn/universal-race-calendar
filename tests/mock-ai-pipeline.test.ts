@@ -199,6 +199,7 @@ describe("mock AI pipeline", () => {
         address:
           "Parque EcolÃ³gico do tietÃª: Parque EcolÃ³gico do TietÃª, Via Parque, 8055 - Vila Santo Henrique, SÃ£o Paulo - SP, 03719-000, 8055 , SÃ£o Paulo, SP, Brasil",
         realDate: "2026-11-29 08:00",
+        signUpDeadLine: "31/10/2026",
         status: "Aberto",
         organizer: "MARUNATA SPORTS",
         headerImageSource: "https://cdn.ticketsports.com.br/ticketagora/images/header.png",
@@ -217,6 +218,7 @@ describe("mock AI pipeline", () => {
       adapter: "ticketsports",
       adapterVersion: "1.0.0",
     };
+    raw.importantText = `${raw.importantText} O QUE TE ESPERA Corrida em trilhas e natureza Show sertanejo ao vivo 1 cerveja por atleta Medalha para todos os concluintes MODALIDADES 5 km Publico Geral 10 km Publico Geral PCD 5 km e 10 km DIFERENCIAIS Premiacao geral e por faixa etaria Idosos 60+ e PCDs possuem 50% OFF Formulario para retirada de kit por terceiros`;
 
     const result = await curateTicketSportsSourceExtraction(raw);
 
@@ -229,10 +231,20 @@ describe("mock AI pipeline", () => {
     expect(result.normalizedEvent.distances.map((distance) => distance.label)).toEqual(["5.3 km", "10.6 km"]);
     expect(result.normalizedEvent.prices).toHaveLength(1);
     expect(result.normalizedEvent.prices[0]?.price).toBe(84.9);
+    expect(result.normalizedEvent.prices[0]?.endDate).toBe("2026-10-31");
+    expect(result.normalizedEvent.prices.some((price) => price.price === 15)).toBe(false);
+    expect(result.normalizedEvent.kits[0]?.items).toEqual(["Medalha para concluintes", "Cerveja ao final da prova"]);
+    expect(result.normalizedEvent.schedule.map((item) => item.activity)).toEqual([
+      "Largada",
+      "Retirada de kit no dia do evento",
+    ]);
     expect(result.normalizedEvent.kitPickup?.startTime).toBe("06:00");
     expect(result.normalizedEvent.kitPickup?.endTime).toBe("07:00");
     expect(result.normalizedEvent.regulationUrl).toContain("regulamento.pdf");
     expect(result.normalizedEvent.rules.map((rule) => rule.category)).toContain("general");
+    expect(result.normalizedEvent.rules.map((rule) => rule.category)).toEqual(
+      expect.arrayContaining(["age", "pcd", "kit_pickup", "documents", "route", "awards"]),
+    );
   });
 
   it("keeps deterministic TicketSports distances and prices when AI omits them", async () => {

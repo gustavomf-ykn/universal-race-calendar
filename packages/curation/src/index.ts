@@ -849,9 +849,10 @@ function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtra
   const registrationUrl = stringValue(record.uri) ?? raw.url;
   const images = unique([stringValue(record.headerImageSource), stringValue(record.logoImageSource)].filter(isStringUrl));
   const text = cleanText([title, date, address, repairMojibake(stringValue(record.organizer)), stringValue(record.status), importantText].filter(Boolean).join(" "));
-  const prices = pricesFromText(text);
+  const prices = pricesFromText(text, { endDate: stringValue(record.signUpDeadLine) });
   const kitPickup = kitPickupFromText(text, { date, locationName: location.locationName, address });
-  const rules = rulesFromTicketSports(record, text);
+  const schedule = scheduleFromText(text, { date, startTime: realDate, locationName: location.locationName, address, kitPickup });
+  const rules = enhancedRulesFromTicketSports(record, text);
   const warnings: string[] = [];
   if (!normalizeDate(date)) warnings.push("missing_date");
   if (!location.city) warnings.push("missing_city");
@@ -878,8 +879,8 @@ function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtra
     prices,
     lots: prices,
     currentLot: prices[0] ?? null,
-    kits: [],
-    schedule: [],
+    kits: kitsFromTicketSportsText(text),
+    schedule,
     rules,
     kitPickup,
     registrationUrl: evidence(registrationUrl, registrationUrl ? 0.95 : 0),
@@ -979,7 +980,13 @@ function stripCountrySuffix(value: string): string | null {
 
 function distancesFromText(text: string): RaceEventExtraction["distances"] {
   const byDistanceKm = new Map<number, RaceEventExtraction["distances"][number]>();
-  for (const label of unique(text.match(/\b(?:[1-9]\d?(?:[,.]\d+)?)\s*(?:km|k)\b/gi) ?? [])) {
+  const sections = preferredDistanceSections(text);
+  const searchText = sections.length ? sections.join(" ") : text;
+  for (const match of Array.from(searchText.matchAll(/\b(?:[1-9]\d?(?:[,.]\d+)?)\s*(?:km|k)\b/gi))) {
+    const label = match[0];
+    const index = match.index ?? 0;
+    const context = cleanText(searchText.slice(Math.max(0, index - 80), Math.min(searchText.length, index + 100)));
+    if (!sections.length && nonRouteDistanceContext(context)) continue;
     const distanceKm = normalizeDistanceKm(label);
     if (distanceKm == null || distanceKm > 100) continue;
     const key = Number(distanceKm.toFixed(3));
@@ -995,6 +1002,50 @@ function distancesFromText(text: string): RaceEventExtraction["distances"] {
     });
   }
   return Array.from(byDistanceKm.values()).sort((a, b) => (a.distanceKm ?? 0) - (b.distanceKm ?? 0));
+}
+
+function preferredDistanceSections(text: string): string[] {
+  const percursos = textSection(text, /(?:^|\s)PERCURSOS?\b/i, [
+    /\bO QUE TE ESPERA\b/i,
+    /\bMODALIDADES?\b/i,
+    /\bDIFERENCIAIS\b/i,
+    /\bRETIRADA DE KIT\b/i,
+    /\bINFORMA/i,
+  ]);
+  if (percursos) return [percursos];
+
+  const distances = textSection(text, /(?:^|\s)(DISTANCIAS?|PROVAS?)\b/i, [
+    /\bO QUE TE ESPERA\b/i,
+    /\bMODALIDADES?\b/i,
+    /\bDIFERENCIAIS\b/i,
+    /\bRETIRADA DE KIT\b/i,
+    /\bINFORMA/i,
+  ]);
+  if (distances) return [distances];
+
+  const modalities = textSection(text, /(?:^|\s)MODALIDADES?\b/i, [
+    /\bDIFERENCIAIS\b/i,
+    /\bRETIRADA DE KIT\b/i,
+    /\bINFORMA/i,
+  ]);
+  return modalities ? [modalities] : [];
+}
+
+function textSection(text: string, startPattern: RegExp, endPatterns: RegExp[], maxLength = 900): string | null {
+  const start = startPattern.exec(text);
+  if (start?.index == null) return null;
+  const startIndex = start.index + start[0].length;
+  const tail = text.slice(startIndex, startIndex + maxLength);
+  const endIndexes = endPatterns.flatMap((pattern) => {
+    const match = pattern.exec(tail);
+    return match?.index != null ? [match.index] : [];
+  });
+  const endIndex = endIndexes.length ? Math.min(...endIndexes) : tail.length;
+  return cleanText(tail.slice(0, endIndex)) || null;
+}
+
+function nonRouteDistanceContext(context: string): boolean {
+  return /raio|domicilio|entrega|distancia maxima|ate\s+\d/i.test(stripDiacritics(context.toLowerCase()));
 }
 
 function formatDistanceLabel(distanceKm: number): string {
@@ -1032,7 +1083,7 @@ function looksLikeVenueOrStreet(value: string | null): boolean {
   return venuePrefixes.some((prefix) => text.startsWith(prefix));
 }
 
-function pricesFromText(text: string): RaceEventExtraction["prices"] {
+function pricesFromText(text: string, options: { endDate?: string | null } = {}): RaceEventExtraction["prices"] {
   const prices: RaceEventExtraction["prices"] = [];
   const matches = Array.from(text.matchAll(/R\$\s*\d+(?:\.\d{3})*(?:[.,]\d{2})?/gi));
   for (const match of matches) {
@@ -1049,7 +1100,7 @@ function pricesFromText(text: string): RaceEventExtraction["prices"] {
       price: normalizePrice(rawPrice),
       currency: "BRL",
       startDate: null,
-      endDate: null,
+      endDate: normalizeDate(options.endDate),
       status: /vagas limitadas|aberto|garanta|inscric/i.test(context) ? "open" : "unknown",
       isCurrent: prices.length === 0,
       sourceText: context || rawPrice,
@@ -1057,6 +1108,31 @@ function pricesFromText(text: string): RaceEventExtraction["prices"] {
     });
   }
   return prices;
+}
+
+function kitsFromTicketSportsText(text: string): RaceEventExtraction["kits"] {
+  const section =
+    textSection(text, /\bO QUE TE ESPERA\b/i, [/\bMODALIDADES?\b/i, /\bDIFERENCIAIS\b/i, /\bRETIRADA DE KIT\b/i], 900) ??
+    textSection(text, /\bKIT\b/i, [/\bRETIRADA\b/i, /\bREGULAMENTO\b/i, /\bINFORMA/i], 700) ??
+    text;
+  const normalized = stripDiacritics(section.toLowerCase());
+  const items = unique([
+    normalized.includes("medalha") ? "Medalha para concluintes" : null,
+    normalized.includes("camiseta") ? "Camiseta" : null,
+    normalized.includes("numero de peito") ? "Numero de peito" : null,
+    normalized.includes("chip") ? "Chip de cronometragem" : null,
+    normalized.includes("cerveja") ? "Cerveja ao final da prova" : null,
+  ].filter((item): item is string => Boolean(item)));
+  if (!items.length) return [];
+  return [
+    {
+      name: "Kit/beneficios do atleta",
+      items,
+      price: null,
+      sourceText: section,
+      confidence: 0.68,
+    },
+  ];
 }
 
 function kitPickupFromText(
@@ -1081,6 +1157,42 @@ function kitPickupFromText(
   };
 }
 
+function scheduleFromText(
+  text: string,
+  event: {
+    date: string | null | undefined;
+    startTime: string | null | undefined;
+    locationName: string | null;
+    address: string | null;
+    kitPickup: RaceEventExtraction["kitPickup"];
+  },
+): RaceEventExtraction["schedule"] {
+  const schedule: RaceEventExtraction["schedule"] = [];
+  const eventDate = normalizeDate(event.date);
+  const startTime = normalizeTime(event.startTime) ?? normalizeTime(text.match(/largada(?:\s+a partir)?\s+d(?:as|e)\s+(\d{1,2}h(?:\d{2})?)/i)?.[1]);
+  if (eventDate || startTime) {
+    schedule.push({
+      date: eventDate,
+      time: startTime,
+      activity: "Largada",
+      location: event.locationName ?? event.address,
+      sourceText: cleanText(text.match(/largada[^.]{0,80}/i)?.[0]) || event.startTime || null,
+      confidence: startTime ? 0.82 : 0.62,
+    });
+  }
+  if (event.kitPickup?.date || event.kitPickup?.startTime) {
+    schedule.push({
+      date: event.kitPickup.date,
+      time: event.kitPickup.startTime,
+      activity: "Retirada de kit no dia do evento",
+      location: event.kitPickup.location,
+      sourceText: event.kitPickup.sourceText,
+      confidence: event.kitPickup.confidence,
+    });
+  }
+  return schedule;
+}
+
 function rulesFromTicketSports(record: Record<string, unknown>, text: string): RaceEventExtraction["rules"] {
   const rules: RaceEventExtraction["rules"] = [];
   const regulationUrl = stringValue(record.regulationDocument);
@@ -1096,6 +1208,30 @@ function rulesFromTicketSports(record: Record<string, unknown>, text: string): R
   if (pcd) rules.push({ category: "pcd", text: cleanText(pcd), sourceText: pcd, confidence: 0.75 });
   const awards = text.match(/premia[cç][aã]o[^.]{0,220}/i)?.[0];
   if (awards) rules.push({ category: "awards", text: cleanText(awards), sourceText: awards, confidence: 0.72 });
+  return rules;
+}
+
+function enhancedRulesFromTicketSports(record: Record<string, unknown>, text: string): RaceEventExtraction["rules"] {
+  const rules = rulesFromTicketSports(record, text);
+  const normalizedText = stripDiacritics(text.toLowerCase());
+  const addRule = (category: RaceEventExtraction["rules"][number]["category"], value: string | null | undefined, confidence: number) => {
+    const cleaned = cleanText(value);
+    if (!cleaned) return;
+    if (rules.some((rule) => rule.category === category && rule.text === cleaned)) return;
+    rules.push({ category, text: cleaned, sourceText: cleaned, confidence });
+  };
+
+  addRule("age", text.match(/idosos?\s*60\+?[^.]{0,120}(?:off|desconto)/i)?.[0], 0.78);
+  addRule("kit_pickup", text.match(/retirada de kit no dia do evento[^.]{0,360}/i)?.[0], 0.82);
+  addRule("documents", text.match(/formul[aá]rio para retirada de kit por terceiros[^.]{0,180}/i)?.[0], 0.78);
+  addRule(
+    "route",
+    normalizedText.includes("percurso em meio a natureza") || normalizedText.includes("corrida em trilhas")
+      ? text.match(/(?:Corrida em trilhas|Percurso em meio)[^.]{0,160}/i)?.[0]
+      : null,
+    0.72,
+  );
+  addRule("awards", text.match(/premia(?:c|ç)(?:a|ã)o[^.]{0,220}/i)?.[0], 0.72);
   return rules;
 }
 
