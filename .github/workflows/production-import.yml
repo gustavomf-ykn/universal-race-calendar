@@ -14,11 +14,11 @@ on:
       chunk_size:
         description: "Events processed per API request"
         required: true
-        default: "100"
+        default: "25"
       delay_ms:
         description: "Delay between detail requests in milliseconds"
         required: true
-        default: "300"
+        default: "100"
       force:
         description: "Reprocess even when source content hash is unchanged"
         required: true
@@ -34,8 +34,8 @@ jobs:
       PRODUCTION_INTERNAL_API_KEY: ${{ secrets.PRODUCTION_INTERNAL_API_KEY }}
       IMPORT_QUANTITY: ${{ inputs.quantity || '1000' }}
       IMPORT_CONCURRENCY: ${{ inputs.concurrency || '3' }}
-      IMPORT_CHUNK_SIZE: ${{ inputs.chunk_size || '100' }}
-      IMPORT_DELAY_MS: ${{ inputs.delay_ms || '300' }}
+      IMPORT_CHUNK_SIZE: ${{ inputs.chunk_size || '25' }}
+      IMPORT_DELAY_MS: ${{ inputs.delay_ms || '100' }}
       IMPORT_FORCE: ${{ inputs.force || 'false' }}
     steps:
       - name: Check required secrets
@@ -44,6 +44,7 @@ jobs:
           test -n "$PRODUCTION_INTERNAL_API_KEY"
       - name: Run TicketSports import
         run: |
+          set -euo pipefail
           mkdir -p artifacts
           offset=0
           run_index=1
@@ -63,13 +64,23 @@ jobs:
               --argjson delayMs "$IMPORT_DELAY_MS" \
               --argjson force "$IMPORT_FORCE" \
               '{quantity: $quantity, offset: $offset, concurrency: $concurrency, delayMs: $delayMs, force: $force}' > "$request_file"
+            echo "Processing chunk #$run_index: offset=$offset quantity=$chunk_quantity concurrency=$IMPORT_CONCURRENCY delayMs=$IMPORT_DELAY_MS force=$IMPORT_FORCE"
             curl -fsS \
+              --max-time 300 \
+              --retry 2 \
+              --retry-delay 5 \
+              --retry-all-errors \
               -X POST "$PRODUCTION_API_BASE_URL/v1/imports/ticketsports/run" \
               -H "Content-Type: application/json" \
               -H "X-API-Key: $PRODUCTION_INTERNAL_API_KEY" \
               --data @"$request_file" \
               -o "$result_file"
             processed="$(jq -r '.processedCount' "$result_file")"
+            failed="$(jq -r '.failedCount' "$result_file")"
+            published="$(jq -r '.publishedEvents' "$result_file")"
+            review="$(jq -r '.manualReviewEvents' "$result_file")"
+            unchanged="$(jq -r '.unchangedEvents' "$result_file")"
+            echo "Chunk #$run_index result: processed=$processed published=$published manualReview=$review unchanged=$unchanged failed=$failed"
             if [ "$processed" = "0" ]; then
               break
             fi
