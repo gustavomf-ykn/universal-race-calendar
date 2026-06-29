@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 export const ADAPTER_VERSION_TICKETSPORTS = process.env.ADAPTER_VERSION_TICKETSPORTS ?? "1.0.0";
 export const CANONICAL_SCHEMA_VERSION = process.env.CANONICAL_SCHEMA_VERSION ?? "1.0.0";
-export const CURATION_PIPELINE_VERSION = process.env.CURATION_PIPELINE_VERSION ?? "1.0.0";
+export const CURATION_PIPELINE_VERSION = process.env.CURATION_PIPELINE_VERSION ?? "1.1.0";
 
 export function cleanText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();

@@ -154,7 +154,7 @@ export async function runSourceCheck(
       sourceExternalId: source.externalId,
       metadata: (source.metadata as Record<string, unknown> | null) ?? {},
     });
-    if (!options.force && source.lastHash === raw.contentHash) {
+    if (!options.force && source.lastHash === raw.contentHash && (await hasCurrentCurationForRaw(raw))) {
       await markSourceChecked(source.id, raw.contentHash, true);
       const completed = await completeExtractionJob({
         jobId: job.id,
@@ -375,17 +375,24 @@ export async function curateSourceExtraction(
   const extraction = await provider.extractRaceEvent({ raw });
   const normalizedEvent = normalizeRaceEventExtraction(extraction, raw);
   const publishability = evaluatePublishability(normalizedEvent);
-  const finalEvent = {
+  const finalEvent = canonicalRaceEventSchema.parse({
     ...normalizedEvent,
     publicationStatus: publishability.publicationStatus,
     publishabilityReasons: publishability.reasons,
-  };
+    curationStatus: publishability.publicationStatus === "published" ? "curated" : "manual_review",
+    curatedAt: new Date().toISOString(),
+    curationProvider: provider.name,
+    curationModel: provider.model,
+    curationVersion: CURATION_PIPELINE_VERSION,
+  });
   return {
     extraction,
-    normalizedEvent: canonicalRaceEventSchema.parse(finalEvent),
+    normalizedEvent: finalEvent,
     publishability,
     schemaVersion: CANONICAL_SCHEMA_VERSION,
     curationVersion: CURATION_PIPELINE_VERSION,
+    providerName: provider.name,
+    providerModel: provider.model,
   };
 }
 
@@ -542,14 +549,19 @@ export async function curateTicketSportsSourceExtraction(raw: RawSourceExtractio
   if (extraWarnings.length) extraction.warnings = [...new Set([...extraction.warnings, ...extraWarnings])];
   const normalizedEvent = normalizeRaceEventExtraction(extraction, raw);
   const publishability = evaluatePublishability(normalizedEvent);
-  const finalEvent = {
+  const finalEvent = canonicalRaceEventSchema.parse({
     ...normalizedEvent,
     publicationStatus: publishability.publicationStatus,
     publishabilityReasons: publishability.reasons,
-  };
+    curationStatus: publishability.publicationStatus === "published" ? "curated" : "manual_review",
+    curatedAt: new Date().toISOString(),
+    curationProvider: "deterministic",
+    curationModel: "ticketsports-v1",
+    curationVersion: CURATION_PIPELINE_VERSION,
+  });
   return {
     extraction,
-    normalizedEvent: canonicalRaceEventSchema.parse(finalEvent),
+    normalizedEvent: finalEvent,
     publishability,
     schemaVersion: CANONICAL_SCHEMA_VERSION,
     curationVersion: CURATION_PIPELINE_VERSION,
@@ -741,6 +753,27 @@ const criticalWarnings = new Set(["missing_date", "conflicting_date", "conflicti
 
 export function shouldPersistCanonicalEvent(event: Pick<CanonicalRaceEvent, "country">): boolean {
   return event.country?.toUpperCase() === "BR";
+}
+
+async function hasCurrentCurationForRaw(raw: RawSourceExtraction): Promise<boolean> {
+  if (!raw.sourceType || !raw.sourceExternalId) return false;
+  const existing = await prisma.event.findFirst({
+    where: {
+      sourceType: raw.sourceType,
+      sourceExternalId: raw.sourceExternalId,
+    },
+    select: {
+      curatedAt: true,
+      curationStatus: true,
+      curationVersion: true,
+    },
+  });
+  return Boolean(
+    existing?.curatedAt &&
+      existing.curationVersion === CURATION_PIPELINE_VERSION &&
+      existing.curationStatus &&
+      existing.curationStatus !== "not_curated",
+  );
 }
 
 function hasPublishableLocation(
