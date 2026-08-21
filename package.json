@@ -15,7 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "pnpm --filter @race-calendar/database db:generate",
-    "db:migrate": "pnpm --filter @race-calendar/database db:migrate",
+    "db:migrate": "pnpm --filter @race-calendar/database db:recover && pnpm --filter @race-calendar/database db:migrate",
     "db:seed": "pnpm --filter @race-calendar/database db:seed"
   },
   "devDependencies": {
