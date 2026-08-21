@@ -34,7 +34,7 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     await prisma.$disconnect();
   });
 
-  it("creates sources, checks them as jobs, exposes published events, skips unchanged content, and flags duplicates", async () => {
+  it("creates sources, exposes published events, skips unchanged content, and links exact duplicates", async () => {
     const health = await app.inject({ method: "GET", url: "/health" });
     expect(health.statusCode).toBe(200);
 
@@ -124,10 +124,12 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
       url: `/v1/sources/${duplicateSource.id}/check`,
       headers: { "x-api-key": "test-internal-key" },
     });
-    expect(duplicateCheck.statusCode).toBe(202);
-    const duplicateJob = duplicateCheck.json<{ status: string; reasons: string[] }>();
-    expect(duplicateJob.status).toBe("manual_review");
-    expect(duplicateJob.reasons).toContain("possible_duplicate");
+    expect(duplicateCheck.statusCode).toBe(200);
+    const duplicateJob = duplicateCheck.json<{ status: string; eventId: string; reasons: string[] }>();
+    expect(duplicateJob.status).toBe("success");
+    expect(duplicateJob.eventId).toBe(eventId);
+    expect(duplicateJob.reasons).not.toContain("possible_duplicate");
+    expect(await prisma.event.count()).toBe(1);
   });
 
   it("imports TicketSports street races and exposes them through the public API", async () => {
