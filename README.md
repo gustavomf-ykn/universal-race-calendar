@@ -2,7 +2,7 @@
 
 API universal para transformar paginas de eventos de corrida de rua/trail em dados canonicos, confiaveis e simples de consumir por sites, apps e calendarios.
 
-O MVP suporta TicketSports como primeira fonte real e `MockAIProvider` como provider padrao para desenvolvimento, testes e CI sem chave externa.
+O catalogo usa duas fontes reais: TicketSports como fonte prioritaria e CorridasBR como fonte independente para provas ausentes. A IA continua opcional; parsers deterministicos sustentam importacao, deduplicacao e publicacao.
 
 ## Stack
 
@@ -85,6 +85,8 @@ pnpm dev:api
 pnpm --filter @race-calendar/worker check-source <sourceId>
 pnpm --filter @race-calendar/worker curate:ai --limit=10 --dry-run
 pnpm --filter @race-calendar/worker audit:curation
+pnpm --filter @race-calendar/worker import-ticketsports --quantity=25
+pnpm --filter @race-calendar/worker import-corridasbr --states=SP,RJ --quantity=25
 ```
 
 ## Deploy de produto
@@ -93,7 +95,7 @@ O caminho simples para teste com site real e dados persistentes e:
 
 - Neon Postgres para o banco.
 - Render Web Service para a API.
-- GitHub Actions para importacao recorrente da TicketSports.
+- GitHub Actions para importacao recorrente TicketSports -> CorridasBR.
 
 No Neon, configure duas connection strings:
 
@@ -125,6 +127,10 @@ TICKETSPORTS_IMPORT_QUANTITY=1000
 TICKETSPORTS_IMPORT_CONCURRENCY=3
 TICKETSPORTS_IMPORT_DELAY_MS=300
 TICKETSPORTS_IMPORT_QUICK_FILTER=corrida-de-rua
+CORRIDASBR_IMPORT_QUANTITY=5000
+CORRIDASBR_IMPORT_CONCURRENCY=2
+CORRIDASBR_IMPORT_DELAY_MS=500
+OFFICIAL_PAGE_ENRICHMENT_ENABLED=true
 ```
 
 Para curadoria real com NVIDIA NIM, troque as variaveis da IA no Render:
@@ -147,15 +153,18 @@ PRODUCTION_API_BASE_URL=https://sua-api.onrender.com
 PRODUCTION_INTERNAL_API_KEY=mesmo-valor-do-INTERNAL_API_KEY
 ```
 
-Para importar corridas no ambiente persistente, rode o workflow **Production Import** na aba Actions. Para consumir no site teste:
+Para importar o catalogo completo, rode **Catalog Import** na aba Actions. TicketSports sempre e processada primeiro; CorridasBR cria provas ausentes ou e vinculada como fonte complementar. Para consumir na vitrine:
 
 ```bash
-curl "https://sua-api.onrender.com/v1/events?sourceType=ticketsports&limit=100"
+curl "https://sua-api.onrender.com/v1/events?from=today&limit=100"
+curl "https://sua-api.onrender.com/v1/events?sourceType=corridasbr&from=today&limit=100"
 ```
 
-Para vitrines publicas, prefira os campos `display.*` de cada evento. Eles escondem preco, lote, distancia, kit ou localizacao quando a API nao tem evidencia confiavel.
+Para vitrines publicas, prefira `display.*`, especialmente `display.primaryAction`. A resposta tambem inclui `sources`; preco, lote, distancia e kit sem evidencia ficam ausentes.
 
-O workflow **Production Import** executa a importacao em lotes para evitar uma unica requisicao longa. O artifact `production-import-results` contem o resumo agregado e os JSONs de cada lote. Use o input `force=true` quando quiser reaplicar mudancas de parser/curadoria em eventos cujo conteudo bruto nao mudou.
+O Blueprint [`render.yaml`](render.yaml) cria `universal-race-calendar-v2` no plano gratuito. Nesse plano a migration roda no build, porque o pre-deploy command do Render e pago. Valide primeiro com uma branch/backup Neon, atualize os secrets do GitHub e as URLs da vitrine/admin, e mantenha o servico anterior por 48 horas.
+
+O workflow **Catalog Import** executa a importacao em lotes para evitar uma unica requisicao longa. O artifact `catalog-import-results` contem o resumo agregado e os JSONs de cada lote. Use o input `force=true` quando quiser reaplicar mudancas de parser/curadoria em eventos cujo conteudo bruto nao mudou.
 
 ## Site teste
 
@@ -179,11 +188,26 @@ Endpoints internos para acompanhar qualidade e importacao:
 curl -H "X-API-Key: dev-internal-key" "http://localhost:3000/v1/audit/events?publicationStatus=pending_review"
 curl -H "X-API-Key: dev-internal-key" "http://localhost:3000/v1/imports/ticketsports/latest"
 curl -H "X-API-Key: dev-internal-key" "http://localhost:3000/v1/audit/curation-summary"
+curl -H "X-API-Key: dev-internal-key" "http://localhost:3000/v1/admin/catalog-summary"
 ```
+
+## Simulacao de catalogo
+
+```bash
+curl -X POST http://localhost:3000/v1/admin/import-runs \
+  -H "X-API-Key: dev-internal-key" -H "Content-Type: application/json" \
+  -d '{"mode":"simulate","sources":["ticketsports","corridasbr"],"states":["SP"],"from":"today","candidateLimit":100,"enrichOfficialPages":true}'
+
+curl -X POST -H "X-API-Key: dev-internal-key" \
+  -H "Content-Type: application/json" -d '{"limit":25}' \
+  http://localhost:3000/v1/admin/import-runs/{runId}/process
+```
+
+Detalhes de proveniencia, deduplicacao e operacao estao em [`docs/MULTI_SOURCE_CATALOG.md`](docs/MULTI_SOURCE_CATALOG.md).
 
 ## Curadoria IA
 
-Por padrao a producao continua segura com `AI_CURATION_ENABLED=false`, usando o parser deterministico da TicketSports. Para testar a camada nova sem alterar eventos:
+Por padrao a producao continua segura com `AI_CURATION_ENABLED=false`, usando os parsers deterministicos da TicketSports, CorridasBR e paginas oficiais. Para testar a camada nova sem alterar eventos:
 
 ```bash
 AI_PROVIDER=mock pnpm --filter @race-calendar/worker curate:ai --limit=10 --dry-run

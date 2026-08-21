@@ -7,4 +7,6 @@ coverage/
 .cache/
 data/
 packages/database/generated/
+race-calendar-connect/
+race-operations-hub/
 !.gitkeep

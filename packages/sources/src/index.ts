@@ -1,3 +1,4 @@
+import * as cheerio from "cheerio";
 import { rawSourceExtractionSchema, type RawSourceExtraction } from "@race-calendar/schemas";
 import {
   contentHashFromParts,
@@ -6,7 +7,14 @@ import {
   sanitizeImportantHtml,
   ScraperHttpClient,
 } from "@race-calendar/scraper";
-import { ADAPTER_VERSION_TICKETSPORTS, cleanText } from "@race-calendar/utils";
+import {
+  ADAPTER_VERSION_CORRIDASBR,
+  ADAPTER_VERSION_OFFICIAL_PAGE,
+  ADAPTER_VERSION_TICKETSPORTS,
+  cleanText,
+  normalizeDate,
+  unique,
+} from "@race-calendar/utils";
 
 export type SourceFetchInput = {
   sourceId: string;
@@ -46,6 +54,25 @@ export type DiscoverTicketSportsEventsOptions = {
   client?: SourceHttpClient;
 };
 
+export type CorridasBRDiscoveredEvent = {
+  sourceType: "corridasbr";
+  adapter: "corridasbr";
+  externalId: string;
+  name: string;
+  url: string;
+  country: "BR";
+  state: string;
+  city: string | null;
+  date: string | null;
+  metadata: Record<string, unknown>;
+};
+
+export type DiscoverCorridasBREventsOptions = {
+  states?: string[];
+  client?: SourceHttpClient;
+  concurrency?: number;
+};
+
 type SourceAdapterRegistryOptions = {
   adapters?: SourceAdapter[];
 };
@@ -54,11 +81,139 @@ export class SourceAdapterRegistry {
   readonly adapters: SourceAdapter[];
 
   constructor(options: SourceAdapterRegistryOptions = {}) {
-    this.adapters = options.adapters ?? [new TicketSportsAdapter(), new MockSourceAdapter()];
+    this.adapters = options.adapters ?? [
+      new TicketSportsAdapter(),
+      new CorridasBRAdapter(),
+      new MockSourceAdapter(),
+      new OfficialEventPageAdapter(),
+    ];
   }
 
   findForUrl(url: string): SourceAdapter | null {
     return this.adapters.find((adapter) => adapter.canHandle(url)) ?? null;
+  }
+}
+
+export class OfficialEventPageAdapter implements SourceAdapter {
+  sourceType = "official";
+  adapter = "official-page";
+  adapterVersion = ADAPTER_VERSION_OFFICIAL_PAGE;
+
+  constructor(private readonly client: SourceHttpClient = new ScraperHttpClient()) {}
+
+  canHandle(url: string): boolean {
+    try {
+      const parsed = new URL(url);
+      return (
+        ["http:", "https:"].includes(parsed.protocol) &&
+        !parsed.hostname.includes("ticketsports.com.br") &&
+        !parsed.hostname.includes("corridasbr.com.br")
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  async fetchAndExtract(input: SourceFetchInput): Promise<RawSourceExtraction> {
+    const page = await fetchOfficialEventPage(input.url, this.client);
+    return rawSourceExtractionSchema.parse({
+      sourceType: this.sourceType,
+      sourceId: input.sourceId,
+      sourceExternalId: input.sourceExternalId ?? null,
+      url: input.url,
+      title: page.title,
+      importantHtml: sanitizeImportantHtml(page.importantHtml),
+      importantText: page.importantText,
+      rawSourceData: page.structured,
+      extractedLinks: page.links,
+      fetchedAt: new Date().toISOString(),
+      contentHash: contentHashFromParts([page.title, page.importantText, JSON.stringify(page.structured)]),
+      adapter: this.adapter,
+      adapterVersion: this.adapterVersion,
+    });
+  }
+}
+
+export class CorridasBRAdapter implements SourceAdapter {
+  sourceType = "corridasbr";
+  adapter = "corridasbr";
+  adapterVersion = ADAPTER_VERSION_CORRIDASBR;
+
+  constructor(private readonly client: SourceHttpClient = new ScraperHttpClient()) {}
+
+  canHandle(url: string): boolean {
+    try {
+      return new URL(url).hostname.includes("corridasbr.com.br");
+    } catch {
+      return false;
+    }
+  }
+
+  async fetchAndExtract(input: SourceFetchInput): Promise<RawSourceExtraction> {
+    const html = await this.client.getText(input.url, { headers: corridasBRHeaders(), delayMs: 300 });
+    if (isCorridasBRSecurityChallenge(html)) {
+      throw new Error(`CorridasBR security challenge blocked event detail ${input.sourceExternalId ?? input.url}`);
+    }
+    const parsed = parseCorridasBRDetail(html, input.url);
+    const shouldEnrich = input.metadata?.enrichOfficialPages !== false && process.env.OFFICIAL_PAGE_ENRICHMENT_ENABLED !== "false";
+    const officialPage =
+      shouldEnrich && parsed.officialUrl && isAllowedOfficialTarget(parsed.officialUrl)
+        ? await fetchOfficialEventPage(parsed.officialUrl, this.client).catch(() => null)
+        : null;
+    const importantHtml = sanitizeImportantHtml(
+      [
+        `<article><h1>${escapeHtml(parsed.name ?? "Corrida")}</h1>`,
+        `<p>${escapeHtml([parsed.date, parsed.city, parsed.state].filter(Boolean).join(" - "))}</p>`,
+        `<p>${escapeHtml(parsed.locationName ?? "")}</p>`,
+        `<p>${escapeHtml(parsed.distanceText ?? "")}</p>`,
+        `<p>${escapeHtml(parsed.organizerName ?? "")}</p></article>`,
+        officialPage?.importantHtml ?? "",
+      ].join("\n"),
+    );
+    const importantText = cleanText(
+      [
+        parsed.name,
+        parsed.date,
+        parsed.city,
+        parsed.state,
+        parsed.locationName,
+        parsed.distanceText,
+        parsed.organizerName,
+        officialPage?.importantText,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+    const links = unique([parsed.officialUrl, ...(officialPage?.links ?? [])].filter(isStringUrl));
+
+    return rawSourceExtractionSchema.parse({
+      sourceType: this.sourceType,
+      sourceId: input.sourceId,
+      sourceExternalId: input.sourceExternalId ?? corridasBRIdFromUrl(input.url),
+      url: input.url,
+      title: parsed.name,
+      importantHtml,
+      importantText,
+      rawSourceData: {
+        corridasbr: parsed,
+        officialPage: officialPage?.structured ?? null,
+      },
+      extractedLinks: links,
+      fetchedAt: new Date().toISOString(),
+      contentHash: contentHashFromParts([
+        parsed.name,
+        parsed.date,
+        parsed.city,
+        parsed.state,
+        parsed.locationName,
+        parsed.distanceText,
+        parsed.organizerName,
+        parsed.officialUrl,
+        JSON.stringify(officialPage?.structured ?? null),
+      ]),
+      adapter: this.adapter,
+      adapterVersion: this.adapterVersion,
+    });
   }
 }
 
@@ -206,6 +361,202 @@ export async function discoverTicketSportsEvents(
   });
 }
 
+export async function discoverCorridasBREvents(
+  options: DiscoverCorridasBREventsOptions = {},
+): Promise<CorridasBRDiscoveredEvent[]> {
+  const requestedStates = options.states?.length ? options.states : corridasBRStates;
+  const states = unique(requestedStates.map((state) => cleanText(state).toUpperCase())).filter((state) =>
+    corridasBRStates.includes(state),
+  );
+  const client = options.client ?? new ScraperHttpClient();
+  const concurrency = Math.max(
+    1,
+    Math.min(options.concurrency ?? Number(process.env.CORRIDASBR_IMPORT_CONCURRENCY ?? 2), 5),
+  );
+  const discovered = await mapWithConcurrency(states, concurrency, async (state) => {
+    const calendarUrl = corridasBRCalendarUrl(state);
+    const html = await client.getText(calendarUrl, { headers: corridasBRHeaders(), delayMs: 150 });
+    if (isCorridasBRSecurityChallenge(html)) {
+      throw new Error(`CorridasBR security challenge blocked calendar discovery for ${state}`);
+    }
+    return parseCorridasBRCalendar(html, state, calendarUrl);
+  });
+  const byExternalId = new Map<string, CorridasBRDiscoveredEvent>();
+  for (const event of discovered.flat()) byExternalId.set(event.externalId, event);
+  return [...byExternalId.values()];
+}
+
+export function isCorridasBRSecurityChallenge(html: string): boolean {
+  const text = stripDiacritics(htmlToImportantText(html).toLowerCase());
+  return (
+    text.includes("verificacao de seguranca") ||
+    text.includes("tentativas de acessos suspeitos") ||
+    text.includes("responda ao desafio")
+  );
+}
+
+export function corridasBRCalendarUrl(state: string): string {
+  return `https://www.corridasbr.com.br/${state.toUpperCase()}/calendario.asp`;
+}
+
+export function parseCorridasBRCalendar(
+  html: string,
+  state: string,
+  calendarUrl = corridasBRCalendarUrl(state),
+): CorridasBRDiscoveredEvent[] {
+  const $ = cheerio.load(html);
+  const events: CorridasBRDiscoveredEvent[] = [];
+  $('a[href*="mostracorrida.asp?escolha="]').each((_, anchor) => {
+    const href = $(anchor).attr("href");
+    const name = cleanText($(anchor).text());
+    if (!href || !name) return;
+    const url = new URL(href, calendarUrl).href;
+    const externalId = corridasBRIdFromUrl(url);
+    if (!externalId) return;
+    const row = $(anchor).closest("tr");
+    const surroundingRows = row.add(row.prev()).add(row.prev().prev());
+    const city =
+      cleanText(
+        surroundingRows
+          .find('a[href*="por_cidade.asp"]')
+          .toArray()
+          .map((item) => $(item).text())
+          .find(Boolean),
+      ) || null;
+    const rowText = cleanText(surroundingRows.text());
+    const dateText = rowText.match(/(?<!\d)\d{1,2}\/\d{1,2}\/\d{2,4}(?!\d)/)?.[0] ?? null;
+    events.push({
+      sourceType: "corridasbr",
+      adapter: "corridasbr",
+      externalId,
+      name,
+      url,
+      country: "BR",
+      state: state.toUpperCase(),
+      city,
+      date: normalizeDate(dateText),
+      metadata: {
+        calendarUrl,
+        state: state.toUpperCase(),
+        city,
+        date: normalizeDate(dateText),
+        rowText,
+        discoveredAt: new Date().toISOString(),
+      },
+    });
+  });
+  return events;
+}
+
+export function parseCorridasBRDetail(html: string, url: string) {
+  const $ = cheerio.load(html);
+  const fields = new Map<string, string>();
+  $("tr").each((_, row) => {
+    const cells = $(row).children("td");
+    if (cells.length < 2) return;
+    const label = normalizeLabel($(cells[0]).text());
+    const value = cleanText($(cells[1]).clone().find("script,button").remove().end().text());
+    if (label && value && !fields.has(label)) fields.set(label, value);
+  });
+  const state = stateFromCorridasBRUrl(url);
+  const name = cleanText($(".tipo7 strong").first().text()) || cleanText($("title").first().text()) || null;
+  const officialRedirect = html.match(
+    /function\s+paraonde\s*\(\)\s*\{\s*window\.open\(['"]([^'"]+)['"]\)/i,
+  )?.[1];
+  const officialUrl = officialRedirect ? officialTargetFromCorridasBRRedirect(officialRedirect) : null;
+  return {
+    name,
+    date: normalizeDate(fieldByLabels(fields, ["data"])),
+    city: fieldByLabels(fields, ["cidade"]),
+    state,
+    country: "BR",
+    locationName: fieldByLabels(fields, ["largada", "local", "local de largada"]),
+    distanceText: fieldByLabels(fields, ["distancia s", "distancias", "distancia"]),
+    organizerName: fieldByLabels(fields, ["organizador", "organizacao"]),
+    officialUrl,
+    sourceUrl: url,
+  };
+}
+
+type OfficialPageResult = {
+  title: string | null;
+  importantHtml: string;
+  importantText: string;
+  links: string[];
+  structured: Record<string, unknown>;
+};
+
+async function fetchOfficialEventPage(url: string, client: SourceHttpClient): Promise<OfficialPageResult> {
+  if (!isAllowedOfficialTarget(url)) throw new Error(`Official page host is not allowed: ${url}`);
+  const cached = officialPageCache.get(url);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const hostname = new URL(url).hostname.toLowerCase();
+  const previous = officialDomainQueues.get(hostname) ?? Promise.resolve();
+  let release = () => {};
+  const turn = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queued = previous.then(() => turn);
+  officialDomainQueues.set(hostname, queued);
+  await previous;
+  try {
+    const result = await fetchOfficialEventPageUncached(url, client);
+    officialPageCache.set(url, { expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000, value: result });
+    return result;
+  } finally {
+    release();
+    if (officialDomainQueues.get(hostname) === queued) officialDomainQueues.delete(hostname);
+  }
+}
+
+async function fetchOfficialEventPageUncached(url: string, client: SourceHttpClient): Promise<OfficialPageResult> {
+  const html = await client.getText(url, { delayMs: 250 });
+  const $ = cheerio.load(html);
+  const jsonLdEvents = $("script[type='application/ld+json']")
+    .toArray()
+    .flatMap((script) => jsonLdEventRecords($(script).text()));
+  const event = jsonLdEvents[0] ?? {};
+  const title =
+    cleanText(stringValue(event.name)) ||
+    cleanText($("meta[property='og:title']").attr("content")) ||
+    cleanText($("h1").first().text()) ||
+    cleanText($("title").first().text()) ||
+    null;
+  const description =
+    cleanText(stringValue(event.description)) ||
+    cleanText($("meta[property='og:description']").attr("content")) ||
+    cleanText($("meta[name='description']").attr("content")) ||
+    null;
+  const images = unique(
+    [
+      ...imageUrlsFromJsonLd(event.image),
+      $("meta[property='og:image']").attr("content"),
+      $("meta[property='og:image:secure_url']").attr("content"),
+      $("meta[name='twitter:image']").attr("content"),
+    ].flatMap((value) => absoluteHttpUrl(value, url)),
+  ).filter((imageUrl) => !looksLikeNonEventImage(imageUrl));
+  const links = unique(
+    [url, ...extractLinks(html, url), ...absoluteHttpUrl(stringValue(event.url), url)].filter(isStringUrl),
+  ).slice(0, 100);
+  const importantHtml = `<article><h1>${escapeHtml(title ?? "Evento")}</h1><p>${escapeHtml(description ?? "")}</p></article>`;
+  return {
+    title,
+    importantHtml,
+    importantText: cleanText([title, description, htmlToImportantText(importantHtml)].filter(Boolean).join("\n")),
+    links,
+    structured: {
+      url,
+      title,
+      description,
+      images,
+      jsonLdEvent: event,
+    },
+  };
+}
+
+const officialPageCache = new Map<string, { expiresAt: number; value: OfficialPageResult }>();
+const officialDomainQueues = new Map<string, Promise<void>>();
+
 export function ticketSportsDetailUrl(eventId: string): string {
   const params = new URLSearchParams({ eventId, athleteId: "0", clientTypeId: "1" });
   return `https://www.ticketsports.com.br/api/events/detail?${params.toString()}`;
@@ -342,6 +693,186 @@ function uniqueUrls(urls: string[]): string[] {
     }
   }))];
 }
+
+function corridasBRHeaders(): Record<string, string> {
+  return {
+    Accept: "text/html,application/xhtml+xml",
+    Referer: "https://www.corridasbr.com.br/",
+  };
+}
+
+function corridasBRIdFromUrl(url: string): string | null {
+  try {
+    return new URL(url).searchParams.get("escolha");
+  } catch {
+    return url.match(/[?&]escolha=(\d+)/i)?.[1] ?? null;
+  }
+}
+
+function stateFromCorridasBRUrl(url: string): string | null {
+  try {
+    const state = new URL(url).pathname.split("/").filter(Boolean)[0]?.toUpperCase() ?? null;
+    return state && corridasBRStates.includes(state) ? state : null;
+  } catch {
+    return null;
+  }
+}
+
+function officialTargetFromCorridasBRRedirect(value: string): string | null {
+  const decoded = value.replace(/&amp;/g, "&");
+  try {
+    const parsed = new URL(decoded, "https://www.corridasbr.com.br");
+    const target = parsed.hostname.includes("corridasbr.com.br") ? parsed.searchParams.get("c") : parsed.href;
+    if (!target) return null;
+    const normalized = decodeURIComponent(target);
+    return absoluteHttpUrl(normalized, parsed.href)[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeLabel(value: string): string {
+  return cleanText(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function fieldByLabels(fields: Map<string, string>, labels: string[]): string | null {
+  for (const label of labels) {
+    const value = fields.get(label);
+    if (value) return cleanText(value) || null;
+  }
+  return null;
+}
+
+function jsonLdEventRecords(text: string): Record<string, unknown>[] {
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    const records = flattenJsonLd(parsed);
+    return records.filter((record) => {
+      const type = record["@type"];
+      return type === "Event" || (Array.isArray(type) && type.includes("Event"));
+    });
+  } catch {
+    return [];
+  }
+}
+
+function flattenJsonLd(value: unknown): Record<string, unknown>[] {
+  if (Array.isArray(value)) return value.flatMap(flattenJsonLd);
+  const record = asRecord(value);
+  if (!Object.keys(record).length) return [];
+  return [record, ...flattenJsonLd(record["@graph"]), ...flattenJsonLd(record.itemListElement)];
+}
+
+function imageUrlsFromJsonLd(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value.flatMap(imageUrlsFromJsonLd);
+  if (typeof value === "string") return [value];
+  const record = asRecord(value);
+  return [record.url, record.contentUrl].filter(Boolean);
+}
+
+function absoluteHttpUrl(value: unknown, baseUrl: string): string[] {
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed = new URL(value, baseUrl);
+    return ["http:", "https:"].includes(parsed.protocol) ? [parsed.href] : [];
+  } catch {
+    return [];
+  }
+}
+
+function isStringUrl(value: string | null | undefined): value is string {
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function looksLikeNonEventImage(url: string): boolean {
+  return /(?:^|[/_-])(logo|favicon|icon|avatar|pixel|tracking|banner-ad|publicidade)(?:[/_-]|\.)/i.test(url);
+}
+
+function isAllowedOfficialTarget(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol)) return false;
+    const host = parsed.hostname.toLowerCase();
+    if (
+      host === "localhost" ||
+      host.endsWith(".local") ||
+      host === "0.0.0.0" ||
+      host === "127.0.0.1" ||
+      host === "::1" ||
+      /^(10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)
+    ) {
+      return false;
+    }
+    return (
+      !host.includes("corridasbr.com.br") &&
+      !host.includes("facebook.com") &&
+      !host.includes("instagram.com") &&
+      host !== "wa.me"
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let cursor = 0;
+  async function worker() {
+    for (;;) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= values.length) return;
+      results[index] = await mapper(values[index]!);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, () => worker()));
+  return results;
+}
+
+const corridasBRStates = [
+  "AC",
+  "AL",
+  "AM",
+  "AP",
+  "BA",
+  "CE",
+  "DF",
+  "ES",
+  "GO",
+  "MA",
+  "MG",
+  "MS",
+  "MT",
+  "PA",
+  "PB",
+  "PE",
+  "PI",
+  "PR",
+  "RJ",
+  "RN",
+  "RO",
+  "RR",
+  "RS",
+  "SC",
+  "SE",
+  "SP",
+  "TO",
+];
 
 function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

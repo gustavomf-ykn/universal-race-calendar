@@ -1,4 +1,11 @@
-import { auditCuration, importTicketSportsEvents, runAICurationBatch, runAICurationForEvent, runSourceCheck } from "@race-calendar/curation";
+import {
+  auditCuration,
+  importCorridasBREvents,
+  importTicketSportsEvents,
+  runAICurationBatch,
+  runAICurationForEvent,
+  runSourceCheck,
+} from "@race-calendar/curation";
 import { getSource, listSources, prisma } from "@race-calendar/database";
 
 async function main(argv = process.argv.slice(2)) {
@@ -19,7 +26,29 @@ async function main(argv = process.argv.slice(2)) {
   }
 
   if (command === "import-ticketsports") {
-    const result = await importTicketSportsEvents();
+    const options = parseOptions(argv.slice(1));
+    const result = await importTicketSportsEvents({
+      quantity: positiveInt(options.quantity, Number(process.env.TICKETSPORTS_IMPORT_QUANTITY ?? 2000)),
+      offset: nonNegativeInt(options.offset, 0),
+      concurrency: positiveInt(options.concurrency, Number(process.env.TICKETSPORTS_IMPORT_CONCURRENCY ?? 3)),
+      delayMs: nonNegativeInt(options["delay-ms"], Number(process.env.TICKETSPORTS_IMPORT_DELAY_MS ?? 300)),
+      force: options.force === "true",
+    });
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (command === "import-corridasbr") {
+    const options = parseOptions(argv.slice(1));
+    const states = options.states?.split(",").map((state) => state.trim().toUpperCase()).filter(Boolean);
+    const result = await importCorridasBREvents({
+      ...(states?.length ? { states } : {}),
+      quantity: positiveInt(options.quantity, Number(process.env.CORRIDASBR_IMPORT_QUANTITY ?? 5000)),
+      offset: nonNegativeInt(options.offset, 0),
+      concurrency: positiveInt(options.concurrency, Number(process.env.CORRIDASBR_IMPORT_CONCURRENCY ?? 2)),
+      delayMs: nonNegativeInt(options["delay-ms"], Number(process.env.CORRIDASBR_IMPORT_DELAY_MS ?? 500)),
+      force: options.force === "true",
+    });
     console.log(JSON.stringify(result, null, 2));
     return;
   }
@@ -107,7 +136,8 @@ async function main(argv = process.argv.slice(2)) {
   console.log("  check-source <sourceId>");
   console.log("  curate:ai [--event-id=<id>] [--limit=10] [--dry-run] [--force] [--only=not_curated|published|pending_review|failed]");
   console.log("  export-events [--sourceType=ticketsports] [--limit=100]");
-  console.log("  import-ticketsports");
+  console.log("  import-ticketsports [--quantity=2000] [--offset=0] [--concurrency=3] [--delay-ms=300] [--force]");
+  console.log("  import-corridasbr [--states=SP,RJ] [--quantity=5000] [--offset=0] [--concurrency=2] [--delay-ms=500] [--force]");
   console.log("  audit:curation");
   console.log("  list-sources");
 }
@@ -147,6 +177,11 @@ function parseOptions(args: string[]): Record<string, string> {
 function positiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function nonNegativeInt(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function curationOnlyValue(value: string | undefined): "not_curated" | "published" | "pending_review" | "failed" | undefined {

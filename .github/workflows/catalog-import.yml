@@ -1,0 +1,117 @@
+name: Catalog Import
+
+on:
+  workflow_dispatch:
+    inputs:
+      states:
+        description: "Optional CorridasBR states (comma-separated)"
+        required: false
+        default: ""
+      candidate_limit:
+        description: "Maximum candidates per source"
+        required: true
+        default: "5000"
+      force:
+        description: "Reprocess unchanged sources"
+        required: true
+        default: "false"
+  schedule:
+    - cron: "17 8 * * *"
+    - cron: "37 6 * * 0"
+
+concurrency:
+  group: production-catalog-import
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      API_BASE_URL: ${{ secrets.PRODUCTION_API_BASE_URL }}
+      API_KEY: ${{ secrets.PRODUCTION_INTERNAL_API_KEY }}
+      STATES: ${{ inputs.states || '' }}
+      CANDIDATE_LIMIT: ${{ inputs.candidate_limit || '5000' }}
+      FORCE: ${{ github.event.schedule == '37 6 * * 0' && 'true' || inputs.force || 'false' }}
+    steps:
+      - name: Check configuration
+        run: |
+          test -n "$API_BASE_URL"
+          test -n "$API_KEY"
+          mkdir -p artifacts
+
+      - name: Import TicketSports then CorridasBR
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_source() {
+            local source="$1"
+            local create_file="artifacts/${source}-create.json"
+            local states_json='[]'
+            if [ "$source" = "corridasbr" ] && [ -n "$STATES" ]; then
+              states_json="$(printf '%s' "$STATES" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; "") | ascii_upcase) | map(select(length > 0))')"
+            fi
+
+            jq -n \
+              --arg source "$source" \
+              --argjson states "$states_json" \
+              --argjson candidateLimit "$CANDIDATE_LIMIT" \
+              --argjson force "$FORCE" \
+              '{mode:"apply", sources:[$source], states:$states, from:"today", candidateLimit:$candidateLimit, force:$force, enrichOfficialPages:true}' \
+              > "artifacts/${source}-request.json"
+
+            curl -fsS --max-time 300 --retry 2 --retry-all-errors \
+              -X POST "$API_BASE_URL/v1/admin/import-runs" \
+              -H "Content-Type: application/json" \
+              -H "X-API-Key: $API_KEY" \
+              --data @"artifacts/${source}-request.json" \
+              -o "$create_file"
+
+            local run_id
+            run_id="$(jq -r '.id' "$create_file")"
+            local has_more=true
+            local chunk=1
+            while [ "$has_more" = "true" ]; do
+              curl -fsS --max-time 900 --retry 2 --retry-all-errors \
+                -X POST "$API_BASE_URL/v1/admin/import-runs/$run_id/process" \
+                -H "Content-Type: application/json" \
+                -H "X-API-Key: $API_KEY" \
+                --data '{"limit":25}' \
+                -o "artifacts/${source}-chunk-${chunk}.json"
+              has_more="$(jq -r '.hasMore' "artifacts/${source}-chunk-${chunk}.json")"
+              echo "$source chunk $chunk: $(jq -c '{status,processedCount,failedCount,cursor,candidateCount,hasMore}' "artifacts/${source}-chunk-${chunk}.json")"
+              chunk=$((chunk + 1))
+            done
+
+            curl -fsS \
+              -H "X-API-Key: $API_KEY" \
+              "$API_BASE_URL/v1/admin/import-runs/$run_id" \
+              -o "artifacts/${source}-result.json"
+          }
+
+          run_source ticketsports
+          run_source corridasbr
+
+      - name: Validate catalog
+        run: |
+          curl -fsS "$API_BASE_URL/v1/events?from=today&limit=25" -o artifacts/sample-events.json
+          jq -e '.data | type == "array" and length > 0' artifacts/sample-events.json
+          curl -fsS -H "X-API-Key: $API_KEY" "$API_BASE_URL/v1/admin/catalog-summary" -o artifacts/catalog-summary.json
+          jq -e '.total >= 0 and .coverage.location.percentage >= 0' artifacts/catalog-summary.json
+
+      - name: Write summary
+        run: |
+          echo "## Multi-source catalog import" >> "$GITHUB_STEP_SUMMARY"
+          echo "TicketSports was processed before CorridasBR. Force: $FORCE" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          jq -s '{ticketsports:.[0], corridasbr:.[1], catalog:.[2]}' \
+            artifacts/ticketsports-result.json artifacts/corridasbr-result.json artifacts/catalog-summary.json \
+            >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: catalog-import-results
+          path: artifacts/*.json
+          retention-days: 14

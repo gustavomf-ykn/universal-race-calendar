@@ -16,7 +16,8 @@
   "dependencies": {
     "@race-calendar/schemas": "workspace:*",
     "@race-calendar/scraper": "workspace:*",
-    "@race-calendar/utils": "workspace:*"
+    "@race-calendar/utils": "workspace:*",
+    "cheerio": "1.0.0-rc.12"
   },
   "devDependencies": {
     "typescript": "^5.7.2"

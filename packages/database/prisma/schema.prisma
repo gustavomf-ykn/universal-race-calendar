@@ -102,6 +102,7 @@ model Source {
   events          Event[]
   rawExtractions  RawSourceExtraction[]
   extractionJobs  ExtractionJob[]
+  eventReferences EventSourceReference[]
 
   @@unique([adapter, externalId])
 }
@@ -146,8 +147,41 @@ model ImportRun {
   startedAt          DateTime
   finishedAt         DateTime
   createdAt          DateTime @default(now())
+  mode               String   @default("apply")
+  cursor             Int      @default(0)
+  candidateLimit     Int?
+  options            Json     @default("{}")
+  candidates         ImportCandidate[]
 
   @@index([source, createdAt])
+}
+
+model ImportCandidate {
+  id                 String    @id @default(cuid())
+  importRunId        String
+  importRun          ImportRun @relation(fields: [importRunId], references: [id], onDelete: Cascade)
+  sourceType         String
+  sourceExternalId   String
+  sourceUrl          String
+  name               String
+  date               DateTime?
+  city               String?
+  state              String?
+  status             String    @default("pending")
+  action             String    @default("create")
+  matchEventId       String?
+  matchScore         Float?
+  proposedEvent      Json?
+  displayPreview     Json?
+  provenance         Json      @default("{}")
+  warnings           Json      @default("[]")
+  errorMessage       String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([importRunId, sourceType, sourceExternalId])
+  @@index([importRunId, status])
+  @@index([sourceType, sourceExternalId])
 }
 
 model Event {
@@ -203,12 +237,34 @@ model Event {
   versions            EventVersion[]
   extractionJobs      ExtractionJob[]
   curationJobs        CurationJob[]
+  sourceReferences    EventSourceReference[]
 
   @@index([publicationStatus])
   @@index([date])
   @@index([city, state, country])
   @@index([canonicalFingerprint])
   @@unique([sourceType, sourceExternalId])
+}
+
+model EventSourceReference {
+  id               String   @id @default(cuid())
+  eventId          String
+  event            Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  sourceId         String
+  source            Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  sourceType       String
+  sourceExternalId String
+  url              String
+  role             String   @default("supplemental")
+  priority         Int      @default(50)
+  contentHash      String?
+  lastSeenAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([sourceType, sourceExternalId])
+  @@unique([eventId, sourceId])
+  @@index([eventId, priority])
 }
 
 model EventDistance {

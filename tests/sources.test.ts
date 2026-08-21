@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { discoverTicketSportsEvents, MockSourceAdapter, TicketSportsAdapter, ticketSportsListUrl } from "@race-calendar/sources";
+import {
+  CorridasBRAdapter,
+  discoverCorridasBREvents,
+  discoverTicketSportsEvents,
+  isCorridasBRSecurityChallenge,
+  MockSourceAdapter,
+  OfficialEventPageAdapter,
+  parseCorridasBRCalendar,
+  parseCorridasBRDetail,
+  TicketSportsAdapter,
+  ticketSportsListUrl,
+} from "@race-calendar/sources";
 import { rawSourceExtractionSchema } from "@race-calendar/schemas";
 
 const ticketsportsFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports-simple.json", "utf-8")) as Record<
@@ -8,6 +19,9 @@ const ticketsportsFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports
   unknown
 >;
 const ticketsportsListFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports-list.json", "utf-8")) as unknown[];
+const corridasBRCalendarFixture = readFileSync("tests/fixtures/corridasbr-calendar.html", "utf-8");
+const corridasBRDetailFixture = readFileSync("tests/fixtures/corridasbr-detail.html", "utf-8");
+const officialEventFixture = readFileSync("tests/fixtures/official-event.html", "utf-8");
 
 describe("source adapters", () => {
   it("recognizes TicketSports URLs", () => {
@@ -104,5 +118,91 @@ describe("source adapters", () => {
 
     expect(discovered.map((event) => event.externalId)).toEqual(["74641"]);
     expect(discovered.every((event) => event.country === "BR")).toBe(true);
+  });
+
+  it("discovers CorridasBR events from a state calendar", async () => {
+    const parsed = parseCorridasBRCalendar(corridasBRCalendarFixture, "SP");
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0]).toMatchObject({
+      sourceType: "corridasbr",
+      externalId: "98765",
+      name: "Corrida das Águas 2026",
+      date: "2026-10-18",
+      city: "Campinas",
+      state: "SP",
+    });
+
+    const discovered = await discoverCorridasBREvents({
+      states: ["SP"],
+      client: {
+        async getText() {
+          return corridasBRCalendarFixture;
+        },
+        async getJson() {
+          throw new Error("getJson should not be called");
+        },
+      },
+    });
+    expect(discovered.map((event) => event.externalId)).toEqual(["98765", "98766"]);
+  });
+
+  it("detects a CorridasBR security challenge instead of treating it as an empty calendar", () => {
+    expect(
+      isCorridasBRSecurityChallenge("<h1>Verificacao de seguranca</h1><p>Responda ao desafio abaixo</p>"),
+    ).toBe(true);
+    expect(isCorridasBRSecurityChallenge(corridasBRCalendarFixture)).toBe(false);
+  });
+
+  it("extracts CorridasBR detail fields and the external TicketSports target", () => {
+    const detail = parseCorridasBRDetail(
+      corridasBRDetailFixture,
+      "https://www.corridasbr.com.br/SP/mostracorrida.asp?escolha=98765",
+    );
+    expect(detail).toMatchObject({
+      name: "Corrida das Águas 2026",
+      date: "2026-10-18",
+      city: "Campinas",
+      state: "SP",
+      locationName: "Parque Portugal, Portão 2",
+      distanceText: "5 km e 10 km",
+      organizerName: "Associação Campinas Corre",
+      officialUrl: "https://www.ticketsports.com.br/e/corrida-das-aguas-98765",
+    });
+  });
+
+  it("enriches CorridasBR with a real official cover and never uses an ad banner", async () => {
+    const adapter = new CorridasBRAdapter({
+      async getText(url) {
+        return url.includes("corridasbr.com.br") ? corridasBRDetailFixture : officialEventFixture;
+      },
+      async getJson() {
+        throw new Error("getJson should not be called");
+      },
+    });
+    const extraction = await adapter.fetchAndExtract({
+      sourceId: "src_corridasbr",
+      sourceExternalId: "98765",
+      url: "https://www.corridasbr.com.br/SP/mostracorrida.asp?escolha=98765",
+    });
+    expect(extraction.sourceType).toBe("corridasbr");
+    expect(extraction.importantText).toContain("5 km e 10 km");
+    expect(JSON.stringify(extraction.rawSourceData)).not.toContain("publicidade/banner.jpg");
+  });
+
+  it("extracts JSON-LD and OpenGraph from an official event page", async () => {
+    const adapter = new OfficialEventPageAdapter({
+      async getText() {
+        return officialEventFixture;
+      },
+      async getJson() {
+        throw new Error("getJson should not be called");
+      },
+    });
+    const extraction = await adapter.fetchAndExtract({
+      sourceId: "src_official",
+      url: "https://corridadasaguas.example/2026",
+    });
+    expect(extraction.title).toBe("Corrida das Águas 2026");
+    expect(JSON.stringify(extraction.rawSourceData)).toContain("capa-2026.jpg");
   });
 });

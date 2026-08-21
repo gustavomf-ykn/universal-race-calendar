@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { buildApp } from "../apps/api/src/app.js";
 import { prisma } from "@race-calendar/database";
-import { importTicketSportsEvents } from "@race-calendar/curation";
-import { SourceAdapterRegistry, TicketSportsAdapter } from "@race-calendar/sources";
+import { importCorridasBREvents, importTicketSportsEvents, processCatalogImportRun } from "@race-calendar/curation";
+import { CorridasBRAdapter, SourceAdapterRegistry, TicketSportsAdapter } from "@race-calendar/sources";
 
 const ticketsportsFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports-simple.json", "utf-8")) as Record<
   string,
@@ -12,6 +12,7 @@ const ticketsportsFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports
 const ticketsportsListFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports-list.json", "utf-8")) as Array<
   Record<string, unknown>
 >;
+const corridasBRDetailFixture = readFileSync("tests/fixtures/corridasbr-detail.html", "utf-8");
 
 describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
@@ -33,7 +34,7 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     await prisma.$disconnect();
   });
 
-  it("creates sources, checks them as jobs, exposes published events, skips unchanged content, and flags duplicates", async () => {
+  it("creates sources, exposes published events, skips unchanged content, and links exact duplicates", async () => {
     const health = await app.inject({ method: "GET", url: "/health" });
     expect(health.statusCode).toBe(200);
 
@@ -123,10 +124,12 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
       url: `/v1/sources/${duplicateSource.id}/check`,
       headers: { "x-api-key": "test-internal-key" },
     });
-    expect(duplicateCheck.statusCode).toBe(202);
-    const duplicateJob = duplicateCheck.json<{ status: string; reasons: string[] }>();
-    expect(duplicateJob.status).toBe("manual_review");
-    expect(duplicateJob.reasons).toContain("possible_duplicate");
+    expect(duplicateCheck.statusCode).toBe(200);
+    const duplicateJob = duplicateCheck.json<{ status: string; eventId: string; reasons: string[] }>();
+    expect(duplicateJob.status).toBe("success");
+    expect(duplicateJob.eventId).toBe(eventId);
+    expect(duplicateJob.reasons).not.toContain("possible_duplicate");
+    expect(await prisma.event.count()).toBe(1);
   });
 
   it("imports TicketSports street races and exposes them through the public API", async () => {
@@ -252,6 +255,144 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     expect(latestImport.statusCode).toBe(200);
     expect(latestImport.json<{ source: string; processedCount: number; durationMs: number }>().source).toBe("ticketsports");
     expect(latestImport.json<{ processedCount: number }>().processedCount).toBe(1);
+  });
+
+  it("creates exclusive CorridasBR events, stays idempotent, and links exact TicketSports targets", async () => {
+    const registry = new SourceAdapterRegistry({
+      adapters: [
+        new CorridasBRAdapter({
+          async getText(url) {
+            if (url.includes("escolha=99123")) {
+              return corridasBRDetailFixture
+                .replaceAll("98765", "74641")
+                .replaceAll("Corrida das Águas 2026", "Meia Maratona de Florianopolis");
+            }
+            return corridasBRDetailFixture;
+          },
+          async getJson() {
+            throw new Error("getJson should not be called");
+          },
+        }),
+      ],
+    });
+    const exclusiveDiscovery = async () => [
+      {
+        sourceType: "corridasbr" as const,
+        adapter: "corridasbr",
+        externalId: "98765",
+        name: "Corrida das Águas 2026",
+        url: "https://www.corridasbr.com.br/SP/mostracorrida.asp?escolha=98765",
+        country: "BR",
+        state: "SP",
+        city: "Campinas",
+        date: "2026-10-18",
+        metadata: { enrichOfficialPages: false },
+      },
+    ];
+    const first = await importCorridasBREvents({ registry, discoverEvents: exclusiveDiscovery, delayMs: 0, force: true });
+    expect(first.publishedEvents).toBe(1);
+    const exclusive = await prisma.event.findFirstOrThrow({
+      where: { sourceType: "corridasbr", sourceExternalId: "98765" },
+      include: { sourceReferences: true },
+    });
+    expect(exclusive.publicationStatus).toBe("published");
+    expect(exclusive.mainImageUrl).toBeNull();
+    expect(exclusive.sourceReferences).toHaveLength(1);
+
+    await importCorridasBREvents({ registry, discoverEvents: exclusiveDiscovery, delayMs: 0 });
+    expect(await prisma.event.count({ where: { sourceReferences: { some: { sourceType: "corridasbr", sourceExternalId: "98765" } } } })).toBe(1);
+
+    const ticketSports = await prisma.event.findFirstOrThrow({ where: { sourceType: "ticketsports", sourceExternalId: "74641" } });
+    const countBeforeLink = await prisma.event.count();
+    await importCorridasBREvents({
+      registry,
+      delayMs: 0,
+      force: true,
+      discoverEvents: async () => [
+        {
+          sourceType: "corridasbr",
+          adapter: "corridasbr",
+          externalId: "99123",
+          name: "Meia Maratona de Florianopolis",
+          url: "https://www.corridasbr.com.br/SC/mostracorrida.asp?escolha=99123",
+          country: "BR",
+          state: "SC",
+          city: "Florianopolis",
+          date: "2026-10-18",
+          metadata: { enrichOfficialPages: false },
+        },
+      ],
+    });
+    expect(await prisma.event.count()).toBe(countBeforeLink);
+    const linkedReference = await prisma.eventSourceReference.findUniqueOrThrow({
+      where: { sourceType_sourceExternalId: { sourceType: "corridasbr", sourceExternalId: "99123" } },
+    });
+    expect(linkedReference.eventId).toBe(ticketSports.id);
+    expect(linkedReference.role).toBe("supplemental");
+
+    const publicList = await app.inject({ method: "GET", url: "/v1/events?sourceType=corridasbr&from=2026-10-01" });
+    expect(publicList.statusCode).toBe(200);
+    expect(publicList.json<{ data: Array<{ sources: Array<{ type: string }> }> }>().data.some((event) => event.sources.some((source) => source.type === "corridasbr"))).toBe(true);
+  });
+
+  it("processes a catalog simulation without modifying canonical events", async () => {
+    const before = await prisma.event.count();
+    const run = await prisma.importRun.create({
+      data: {
+        id: "sim_integration",
+        source: "corridasbr",
+        quickFilter: "SP",
+        status: "ready",
+        requestedQuantity: 1,
+        offset: 0,
+        discoveredCount: 1,
+        processedCount: 0,
+        publishedEvents: 0,
+        manualReviewEvents: 0,
+        unchangedEvents: 0,
+        failedCount: 0,
+        failures: [],
+        startedAt: new Date(),
+        finishedAt: new Date(),
+        mode: "simulate",
+        cursor: 0,
+        candidateLimit: 1,
+        options: { enrichOfficialPages: false },
+        candidates: {
+          create: {
+            sourceType: "corridasbr",
+            sourceExternalId: "sim-98765",
+            sourceUrl: "https://www.corridasbr.com.br/SP/mostracorrida.asp?escolha=sim-98765",
+            name: "Corrida das Aguas Simulada",
+            date: new Date("2026-10-18T00:00:00.000Z"),
+            city: "Campinas",
+            state: "SP",
+            provenance: { metadata: { enrichOfficialPages: false } },
+            warnings: [],
+          },
+        },
+      },
+    });
+    const registry = new SourceAdapterRegistry({
+      adapters: [
+        new CorridasBRAdapter({
+          async getText() {
+            return corridasBRDetailFixture;
+          },
+          async getJson() {
+            throw new Error("getJson should not be called");
+          },
+        }),
+      ],
+    });
+
+    const processed = await processCatalogImportRun(run.id, 25, registry);
+    expect(processed?.status).toBe("success");
+    expect(await prisma.event.count()).toBe(before);
+    const candidate = await prisma.importCandidate.findFirstOrThrow({ where: { importRunId: run.id } });
+    expect(candidate.status).toBe("processed");
+    expect(candidate.proposedEvent).toBeTruthy();
+    expect(candidate.displayPreview).toBeTruthy();
   });
 
   it("exposes the internal TicketSports import endpoint as a synchronous job", async () => {
