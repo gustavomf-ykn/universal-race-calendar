@@ -13,6 +13,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
+    "db:recover": "node scripts/recover-multisource-migration.mjs",
     "db:migrate": "prisma migrate deploy --schema prisma/schema.prisma",
     "db:seed": "tsx src/seed.ts"
   },
