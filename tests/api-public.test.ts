@@ -78,7 +78,7 @@ describe("API public and guarded routes without database", () => {
       ],
       prices: [
         { id: "price_1", name: "Taxa", price: 10, currency: "BRL", confidence: 0.9, sourceText: "taxa retirada de kit R$ 10", isCurrent: true },
-        { id: "price_2", name: "Inscricao", price: 120, currency: "BRL", confidence: 0.9, sourceText: "Inscricoes a partir de R$ 120", isCurrent: false },
+        { id: "price_2", name: "Inscricao", price: 120, currency: "BRL", confidence: 0.9, sourceText: "Inscricoes a partir de R$ 120", isCurrent: true },
       ],
       kits: [{ id: "kit_1", name: "Kit", items: ["Camiseta"], confidence: 0.7 }],
       kitPickups: [{ id: "pickup_1", confidence: 0.8, startTime: "06:00", endTime: "07:00" }],
@@ -92,5 +92,37 @@ describe("API public and guarded routes without database", () => {
     expect(publicEvent.display.distances).toEqual(["5 km"]);
     expect(publicEvent.display.currentPrice).toBe(120);
     expect(publicEvent.display.kitSummary).toBe("Camiseta");
+    expect(publicEvent.display.primaryAction).toEqual({
+      type: "registration",
+      label: "Inscrever-se",
+      url: "https://example.test/inscricao",
+    });
+  });
+
+  it("does not invent a current lot when no price is explicitly current", () => {
+    const publicEvent = serializePublicEvent({
+      prices: [
+        {
+          name: "Lote antigo",
+          price: 99.9,
+          currency: "BRL",
+          status: "unknown",
+          isCurrent: false,
+          sourceText: "Valor de inscricao do lote antigo: R$ 99,90",
+          confidence: 0.9,
+        },
+      ],
+      distances: [],
+      kits: [],
+      kitPickups: [],
+      schedule: [],
+      rules: [],
+      images: [],
+    });
+
+    expect(publicEvent.prices).toHaveLength(1);
+    expect(publicEvent.currentLot).toBeNull();
+    expect(publicEvent.display.currentPrice).toBeNull();
+    expect(publicEvent.display.currentLotName).toBeNull();
   });
 });

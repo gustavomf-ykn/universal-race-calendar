@@ -5,7 +5,14 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ["**/dist/**", "**/node_modules/**", "**/coverage/**", "packages/database/generated/**"],
+    ignores: [
+      "**/dist/**",
+      "**/node_modules/**",
+      "**/coverage/**",
+      "packages/database/generated/**",
+      "race-calendar-connect/**",
+      "race-operations-hub/**",
+    ],
   },
   {
     files: ["**/*.ts"],

@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 
 export const ADAPTER_VERSION_TICKETSPORTS = process.env.ADAPTER_VERSION_TICKETSPORTS ?? "1.0.0";
+export const ADAPTER_VERSION_CORRIDASBR = process.env.ADAPTER_VERSION_CORRIDASBR ?? "1.0.0";
+export const ADAPTER_VERSION_OFFICIAL_PAGE = process.env.ADAPTER_VERSION_OFFICIAL_PAGE ?? "1.0.0";
 export const CANONICAL_SCHEMA_VERSION = process.env.CANONICAL_SCHEMA_VERSION ?? "1.0.0";
 export const CURATION_PIPELINE_VERSION = atLeastSemver(process.env.CURATION_PIPELINE_VERSION, "1.2.0");
 
@@ -78,9 +80,27 @@ export function normalizePrice(value: string | number | null | undefined): numbe
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   const text = cleanText(value);
   if (!text) return null;
-  const match = text.match(/(?:R\$\s*)?(\d+(?:[.,]\d{2})?)/i);
+  const match = text.match(/(?:R\$\s*)?(\d[\d.,]*)/i);
   if (!match) return null;
-  const parsed = Number(match[1]!.replace(".", "").replace(",", "."));
+  const token = match[1]!;
+  const commaIndex = token.lastIndexOf(",");
+  const dotIndex = token.lastIndexOf(".");
+  let normalized = token;
+
+  if (commaIndex >= 0 && dotIndex >= 0) {
+    const decimalSeparator = commaIndex > dotIndex ? "," : ".";
+    const thousandsSeparator = decimalSeparator === "," ? "." : ",";
+    normalized = token.replaceAll(thousandsSeparator, "").replace(decimalSeparator, ".");
+  } else if (commaIndex >= 0 || dotIndex >= 0) {
+    const separator = commaIndex >= 0 ? "," : ".";
+    const pieces = token.split(separator);
+    const fractional = pieces.at(-1) ?? "";
+    normalized = fractional.length >= 1 && fractional.length <= 2
+      ? `${pieces.slice(0, -1).join("")}.${fractional}`
+      : pieces.join("");
+  }
+
+  const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 }
 

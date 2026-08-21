@@ -19,6 +19,9 @@ describe("utils", () => {
 
   it("normalizes BRL prices", () => {
     expect(normalizePrice("R$ 120,50")).toBe(120.5);
+    expect(normalizePrice("149.90")).toBe(149.9);
+    expect(normalizePrice("R$ 1.499,90")).toBe(1499.9);
+    expect(normalizePrice("BRL 1,499.90")).toBe(1499.9);
   });
 
   it("normalizes distances", () => {

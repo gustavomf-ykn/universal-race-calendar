@@ -34,9 +34,12 @@ export class ScraperHttpClient {
     const response = await this.fetchWithRetry(url, options);
     const buffer = await response.arrayBuffer();
     const charset = response.headers.get("content-type")?.match(/charset=([^;]+)/i)?.[1]?.trim();
-    for (const label of [charset, "utf-8", "iso-8859-1"].filter(Boolean) as string[]) {
+    const labels = charset
+      ? [charset, "utf-8", "windows-1252", "iso-8859-1"]
+      : ["utf-8", "windows-1252", "iso-8859-1"];
+    for (const label of [...new Set(labels.filter(Boolean))] as string[]) {
       try {
-        return new TextDecoder(label).decode(buffer);
+        return new TextDecoder(label, { fatal: true }).decode(buffer);
       } catch {
         // Try the next charset.
       }

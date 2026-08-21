@@ -4,13 +4,27 @@ import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import {
   auditCuration,
+  createCatalogImportRun,
+  getCatalogImportRun,
+  importCorridasBREvents,
   importTicketSportsEvents,
+  processCatalogImportRun,
   runAICurationBatch,
   runAICurationForEvent,
   runSourceCheck,
+  type CatalogImportRunInput,
+  type ImportCorridasBREventsOptions,
   type ImportTicketSportsEventsOptions,
 } from "@race-calendar/curation";
-import { createSource, dateToIsoDate, getLatestImportRun, getSource, listSources, prisma } from "@race-calendar/database";
+import {
+  createSource,
+  dateToIsoDate,
+  getLatestImportRun,
+  getSource,
+  listSources,
+  prisma,
+  withPostgresAdvisoryLock,
+} from "@race-calendar/database";
 import {
   curationJobStatusSchema,
   dedupeStatusSchema,
@@ -19,10 +33,16 @@ import {
   publicationStatusSchema,
   sourceKindSchema,
 } from "@race-calendar/schemas";
-import { ADAPTER_VERSION_TICKETSPORTS, CANONICAL_SCHEMA_VERSION, CURATION_PIPELINE_VERSION } from "@race-calendar/utils";
+import {
+  ADAPTER_VERSION_CORRIDASBR,
+  ADAPTER_VERSION_TICKETSPORTS,
+  CANONICAL_SCHEMA_VERSION,
+  CURATION_PIPELINE_VERSION,
+} from "@race-calendar/utils";
 
 export type BuildAppOptions = {
   importTicketSportsEvents?: (options?: ImportTicketSportsEventsOptions) => ReturnType<typeof importTicketSportsEvents>;
+  importCorridasBREvents?: (options?: ImportCorridasBREventsOptions) => ReturnType<typeof importCorridasBREvents>;
 };
 
 type EventListQuery = {
@@ -48,9 +68,12 @@ type AdminEventListQuery = EventListQuery & {
   warnings?: string | undefined;
 };
 
+let catalogImportActive = false;
+
 export async function buildApp(options: BuildAppOptions = {}) {
   const app = Fastify({ logger: true });
   const runTicketSportsImport = options.importTicketSportsEvents ?? importTicketSportsEvents;
+  const runCorridasBRImport = options.importCorridasBREvents ?? importCorridasBREvents;
   await app.register(cors, {
     origin: corsOrigins(),
   });
@@ -70,6 +93,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     canonicalSchemaVersion: CANONICAL_SCHEMA_VERSION,
     curationPipelineVersion: CURATION_PIPELINE_VERSION,
     ticketSportsAdapterVersion: ADAPTER_VERSION_TICKETSPORTS,
+    corridasBRAdapterVersion: ADAPTER_VERSION_CORRIDASBR,
   }));
   app.get("/v1/openapi.json", async () => app.swagger());
 
@@ -91,6 +115,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
           schedule: true,
           rules: true,
           images: { orderBy: { sortOrder: "asc" } },
+          sourceReferences: { orderBy: { priority: "desc" }, include: { source: true } },
         },
         orderBy,
         skip: (page - 1) * limit,
@@ -132,6 +157,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
           rules: publicEvent.rules.map(serializePublicRule),
           display: publicEvent.display,
           sourceType: event.sourceType,
+          sources: serializePublicSources(event),
           lastCuratedAt: event.curatedAt?.toISOString() ?? null,
         };
       }),
@@ -239,7 +265,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
     if (offset != null) importOptions.offset = offset;
     if (force != null) importOptions.force = force;
     if (maxDurationMs != null) importOptions.maxDurationMs = maxDurationMs;
-    const result = await runTicketSportsImport(importOptions);
+    const result = await withImportLock(() => runTicketSportsImport(importOptions));
+    if (!result) return reply.code(409).send({ error: "catalog_import_already_running" });
     return reply.code(result.status === "success" ? 200 : 207).send(result);
   });
 
@@ -247,6 +274,104 @@ export async function buildApp(options: BuildAppOptions = {}) {
     const latest = await getLatestImportRun("ticketsports");
     if (!latest) return reply.code(404).send({ error: "import_run_not_found" });
     return serializeImportRun(latest);
+  });
+
+  app.post("/v1/imports/corridasbr/run", { preHandler: requireInternalApiKey }, async (request, reply) => {
+    const body = objectBody(request.body);
+    const importOptions: ImportCorridasBREventsOptions = {};
+    const states = stringArray(body.states).map((state) => state.toUpperCase());
+    const quantity = optionalPositiveInt(body.quantity);
+    const concurrency = optionalPositiveInt(body.concurrency);
+    const delayMs = optionalNonNegativeInt(body.delayMs);
+    const offset = optionalNonNegativeInt(body.offset);
+    const force = optionalBoolean(body.force);
+    const maxDurationMs = optionalPositiveInt(body.maxDurationMs);
+    if (states.length) importOptions.states = states;
+    if (quantity != null) importOptions.quantity = quantity;
+    if (concurrency != null) importOptions.concurrency = concurrency;
+    if (delayMs != null) importOptions.delayMs = delayMs;
+    if (offset != null) importOptions.offset = offset;
+    if (force != null) importOptions.force = force;
+    if (maxDurationMs != null) importOptions.maxDurationMs = maxDurationMs;
+    const result = await withImportLock(() => runCorridasBRImport(importOptions));
+    if (!result) return reply.code(409).send({ error: "catalog_import_already_running" });
+    return reply.code(result.status === "success" ? 200 : 207).send(result);
+  });
+
+  app.get("/v1/imports/corridasbr/latest", { preHandler: requireInternalApiKey }, async (request, reply) => {
+    const latest = await getLatestImportRun("corridasbr");
+    if (!latest) return reply.code(404).send({ error: "import_run_not_found" });
+    return serializeImportRun(latest);
+  });
+
+  app.post("/v1/admin/import-runs", { preHandler: requireInternalApiKey }, async (request, reply) => {
+    const body = objectBody(request.body);
+    const sources = stringArray(body.sources).filter(
+      (source): source is "ticketsports" | "corridasbr" => source === "ticketsports" || source === "corridasbr",
+    );
+    const input: CatalogImportRunInput = {
+      mode: body.mode === "apply" ? "apply" : "simulate",
+      force: optionalBoolean(body.force) ?? false,
+      enrichOfficialPages: optionalBoolean(body.enrichOfficialPages) ?? true,
+    };
+    if (sources.length) input.sources = sources;
+    const states = stringArray(body.states).map((state) => state.toUpperCase());
+    if (states.length) input.states = states;
+    const from = stringOrNull(body.from);
+    const to = stringOrNull(body.to);
+    const candidateLimit = optionalPositiveInt(body.candidateLimit);
+    if (from) input.from = from;
+    if (to) input.to = to;
+    if (candidateLimit) input.candidateLimit = candidateLimit;
+    const run = await withImportLock(() => createCatalogImportRun(input));
+    if (!run) return reply.code(409).send({ error: "catalog_import_already_running" });
+    return reply.code(201).send(serializeCatalogImportRun(run));
+  });
+
+  app.post("/v1/admin/import-runs/:id/process", { preHandler: requireInternalApiKey }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const limit = optionalPositiveInt(objectBody(request.body).limit) ?? 25;
+    const run = await withImportLock(() => processCatalogImportRun(id, limit));
+    if (!run) return reply.code(409).send({ error: "catalog_import_already_running" });
+    return serializeCatalogImportRun(run);
+  });
+
+  app.get("/v1/admin/import-runs/:id", { preHandler: requireInternalApiKey }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const run = await getCatalogImportRun(id);
+    if (!run) return reply.code(404).send({ error: "import_run_not_found" });
+    const grouped = await prisma.importCandidate.groupBy({
+      by: ["sourceType", "action", "status"],
+      where: { importRunId: id },
+      _count: { _all: true },
+    });
+    return { ...serializeCatalogImportRun(run), breakdown: grouped };
+  });
+
+  app.get("/v1/admin/import-runs/:id/candidates", { preHandler: requireInternalApiKey }, async (request) => {
+    const { id } = request.params as { id: string };
+    const query = request.query as {
+      sourceType?: string;
+      state?: string;
+      action?: string;
+      status?: string;
+      page?: string;
+      limit?: string;
+    };
+    const page = positiveInt(query.page, 1);
+    const limit = Math.min(positiveInt(query.limit, 50), 100);
+    const where = {
+      importRunId: id,
+      ...(query.sourceType ? { sourceType: query.sourceType } : {}),
+      ...(query.state ? { state: query.state.toUpperCase() } : {}),
+      ...(query.action ? { action: query.action } : {}),
+      ...(query.status ? { status: query.status } : {}),
+    };
+    const [total, rows] = await Promise.all([
+      prisma.importCandidate.count({ where }),
+      prisma.importCandidate.findMany({ where, orderBy: [{ date: "asc" }, { name: "asc" }], skip: (page - 1) * limit, take: limit }),
+    ]);
+    return { data: rows.map(serializeImportCandidate), pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
   });
 
   app.get("/v1/extraction-jobs/:id", { preHandler: requireInternalApiKey }, async (request, reply) => {
@@ -299,6 +424,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
           prices: true,
           images: { orderBy: { sortOrder: "asc" } },
           source: true,
+          sourceReferences: { orderBy: { priority: "desc" }, include: { source: true } },
         },
         orderBy: { updatedAt: "desc" },
         skip: (page - 1) * limit,
@@ -325,6 +451,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
         rules: true,
         images: { orderBy: { sortOrder: "asc" } },
         source: true,
+        sourceReferences: { orderBy: { priority: "desc" }, include: { source: true } },
         versions: { orderBy: { createdAt: "desc" }, take: 5 },
         curationJobs: { orderBy: { createdAt: "desc" }, take: 10 },
         extractionJobs: { orderBy: { createdAt: "desc" }, take: 10 },
@@ -438,6 +565,46 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
   app.get("/v1/audit/curation-summary", { preHandler: requireInternalApiKey }, async () => auditCuration());
 
+  app.get("/v1/admin/catalog-summary", { preHandler: requireInternalApiKey }, async () => {
+    const future = { publicationStatus: "published" as const, country: "BR", date: { gte: startOfToday() } };
+    const [total, ticketSports, corridasBRExclusive, bothSources, possibleDuplicates, withBanner, withDistance, withLocation, latestRuns] =
+      await Promise.all([
+        prisma.event.count({ where: future }),
+        prisma.event.count({ where: { ...future, sourceReferences: { some: { sourceType: "ticketsports" } } } }),
+        prisma.event.count({
+          where: {
+            ...future,
+            sourceReferences: { some: { sourceType: "corridasbr" }, none: { sourceType: "ticketsports" } },
+          },
+        }),
+        prisma.event.count({
+          where: {
+            ...future,
+            AND: [
+              { sourceReferences: { some: { sourceType: "ticketsports" } } },
+              { sourceReferences: { some: { sourceType: "corridasbr" } } },
+            ],
+          },
+        }),
+        prisma.event.count({ where: { ...future, dedupeStatus: { in: ["possible_duplicate", "needs_review"] } } }),
+        prisma.event.count({ where: { ...future, OR: [{ mainImageUrl: { not: null } }, { images: { some: {} } }] } }),
+        prisma.event.count({ where: { ...future, distances: { some: {} } } }),
+        prisma.event.count({ where: { ...future, city: { not: null }, state: { not: null } } }),
+        prisma.importRun.findMany({ orderBy: { createdAt: "desc" }, take: 10 }),
+      ]);
+    return {
+      total,
+      bySource: { ticketsports: ticketSports, corridasbrExclusive: corridasBRExclusive, bothSources },
+      possibleDuplicates,
+      coverage: {
+        banner: coverage(withBanner, total),
+        distance: coverage(withDistance, total),
+        location: coverage(withLocation, total),
+      },
+      latestImports: latestRuns.map(serializeImportRun),
+    };
+  });
+
   app.get("/v1/audit/events", { preHandler: requireInternalApiKey }, async (request) => {
     const query = request.query as { publicationStatus?: string; sourceType?: string; page?: string; limit?: string };
     const page = positiveInt(query.page, 1);
@@ -499,6 +666,7 @@ async function sendEventDetail(id: string, reply: FastifyReply) {
       rules: true,
       images: { orderBy: { sortOrder: "asc" } },
       source: true,
+      sourceReferences: { orderBy: { priority: "desc" }, include: { source: true } },
     },
   });
   if (!event) return reply.code(404).send({ error: "event_not_found" });
@@ -538,6 +706,7 @@ async function sendEventDetail(id: string, reply: FastifyReply) {
     currentLotName: publicEvent.currentLot?.name ?? null,
     currency: publicEvent.currentLot?.currency ?? publicEvent.prices[0]?.currency ?? null,
     display: publicEvent.display,
+    sources: serializePublicSources(event),
     source: event.source
       ? {
           id: event.source.id,
@@ -647,6 +816,7 @@ function serializeAdminEventListItem(event: any) {
     sourceType: event.sourceType,
     sourceExternalId: event.sourceExternalId,
     sourceUrl: event.sourceUrl,
+    sources: serializePublicSources(event),
     source: event.source
       ? {
           id: event.source.id,
@@ -736,7 +906,7 @@ function adminEventsWhere(query: AdminEventListQuery) {
   if (query.country) where.country = query.country.toUpperCase();
   if (query.state) where.state = query.state.toUpperCase();
   if (query.city) where.city = { contains: query.city, mode: "insensitive" as const };
-  if (query.sourceType) where.sourceType = query.sourceType;
+  applySourceTypeFilter(where, query.sourceType);
   if (query.search) where.name = { contains: query.search, mode: "insensitive" as const };
   const from = isoDate(query.from);
   const to = isoDate(query.to);
@@ -836,7 +1006,7 @@ function publicEventsWhere(query: EventListQuery) {
   };
   if (query.state) where.state = query.state.toUpperCase();
   if (query.city) where.city = { contains: query.city, mode: "insensitive" as const };
-  if (query.sourceType) where.sourceType = query.sourceType;
+  applySourceTypeFilter(where, query.sourceType);
   const parsedModality = modalitySchema.safeParse(query.modality);
   if (parsedModality.success) where.modality = parsedModality.data;
   const parsedStatus = eventStatusSchema.safeParse(query.status);
@@ -869,6 +1039,28 @@ function eventOrderBy(sort: string | undefined) {
   if (sort === "date_desc") return { date: "desc" as const };
   if (sort === "name") return { name: "asc" as const };
   return { date: "asc" as const };
+}
+
+function applySourceTypeFilter(where: any, value: string | undefined) {
+  const sourceTypes = (value ?? "")
+    .split(",")
+    .map((sourceType) => sourceType.trim().toLowerCase())
+    .filter((sourceType) => sourceType === "ticketsports" || sourceType === "corridasbr");
+  if (!sourceTypes.length) return;
+  where.OR = [
+    { sourceType: { in: sourceTypes } },
+    { sourceReferences: { some: { sourceType: { in: sourceTypes } } } },
+  ];
+}
+
+async function withImportLock<T>(run: () => Promise<T>): Promise<T | null> {
+  if (catalogImportActive) return null;
+  catalogImportActive = true;
+  try {
+    return await withPostgresAdvisoryLock("universal-race-calendar:catalog-import", run);
+  } finally {
+    catalogImportActive = false;
+  }
 }
 
 async function requireInternalApiKey(request: FastifyRequest, reply: FastifyReply) {
@@ -921,6 +1113,21 @@ function objectBody(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.flatMap((item) => (typeof item === "string" && item.trim() ? [item.trim()] : []))
+    : [];
+}
+
+function startOfToday(): Date {
+  const today = new Date();
+  return new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+}
+
+function coverage(count: number, total: number) {
+  return { count, percentage: total ? Number(((count / total) * 100).toFixed(1)) : 0 };
+}
+
 function isValidUrl(value: string): boolean {
   try {
     new URL(value);
@@ -960,10 +1167,47 @@ function serializeImportRun(run: Awaited<ReturnType<typeof getLatestImportRun>>)
     unchangedEvents: run.unchangedEvents,
     failedCount: run.failedCount,
     failures: run.failures,
+    mode: run.mode,
+    cursor: run.cursor,
+    candidateLimit: run.candidateLimit,
+    options: run.options,
     startedAt: run.startedAt.toISOString(),
     finishedAt: run.finishedAt.toISOString(),
     durationMs: run.finishedAt.getTime() - run.startedAt.getTime(),
     createdAt: run.createdAt.toISOString(),
+  };
+}
+
+function serializeCatalogImportRun(run: NonNullable<Awaited<ReturnType<typeof getCatalogImportRun>>>) {
+  return {
+    ...serializeImportRun(run),
+    candidateCount: run._count.candidates,
+    hasMore: run.cursor < run._count.candidates,
+  };
+}
+
+function serializeImportCandidate(candidate: any) {
+  return {
+    id: candidate.id,
+    importRunId: candidate.importRunId,
+    sourceType: candidate.sourceType,
+    sourceExternalId: candidate.sourceExternalId,
+    sourceUrl: candidate.sourceUrl,
+    name: candidate.name,
+    date: dateToIsoDate(candidate.date),
+    city: candidate.city,
+    state: candidate.state,
+    status: candidate.status,
+    action: candidate.action,
+    matchEventId: candidate.matchEventId,
+    matchScore: candidate.matchScore,
+    proposedEvent: candidate.proposedEvent,
+    displayPreview: candidate.displayPreview,
+    provenance: candidate.provenance,
+    warnings: candidate.warnings,
+    errorMessage: candidate.errorMessage,
+    createdAt: candidate.createdAt.toISOString(),
+    updatedAt: candidate.updatedAt.toISOString(),
   };
 }
 
@@ -977,7 +1221,8 @@ export function serializePublicEvent(event: any) {
   const currentLot = currentPriceLot(prices);
   const coverImageUrl = event.mainImageUrl ?? event.images?.[0]?.url ?? event.images?.[0] ?? null;
   const locationLabel = publicLocationLabel(event);
-  const registrationUrl = event.registrationUrl ?? event.officialUrl ?? null;
+  const actionUrl = event.registrationUrl ?? event.officialUrl ?? event.sourceUrl ?? event.sourceReferences?.[0]?.url ?? null;
+  const actionType = event.registrationUrl ? "registration" : event.officialUrl ? "official" : "source";
   const kitSummary = publicKitSummary(kits, kitPickup);
 
   return {
@@ -996,10 +1241,29 @@ export function serializePublicEvent(event: any) {
       currentLotName: currentLot?.name ?? null,
       currency: currentLot?.currency ?? prices[0]?.currency ?? null,
       kitSummary,
-      registrationUrl,
+      registrationUrl: event.registrationUrl ?? event.officialUrl ?? null,
+      primaryAction: actionUrl
+        ? {
+            type: actionType,
+            label: actionType === "registration" ? "Inscrever-se" : actionType === "official" ? "Ver informacoes" : "Ver fonte",
+            url: actionUrl,
+          }
+        : null,
       badges: publicBadges({ distances, currentLot, kits, kitPickup }),
     },
   };
+}
+
+function serializePublicSources(event: any) {
+  const references = Array.isArray(event.sourceReferences) ? event.sourceReferences : [];
+  if (references.length) {
+    return references.map((reference: any) => ({
+      type: reference.sourceType,
+      role: reference.role,
+      url: reference.url,
+    }));
+  }
+  return event.sourceType ? [{ type: event.sourceType, role: "primary", url: event.sourceUrl }] : [];
 }
 
 function sanitizePublicDistances(distances: any[]): any[] {
@@ -1033,9 +1297,10 @@ function sanitizePublicPrices(prices: any[]): any[] {
     const key = `${price.name ?? ""}|${value}|${price.currency ?? "BRL"}`;
     if (seen.has(key)) return [];
     seen.add(key);
-    return [{ ...price, isCurrent: false }];
+    const status = cleanForPublicPolicy(price.status);
+    const isClosed = /(sold out|sold_out|closed|ended|expired|encerrado|esgotado)/i.test(status);
+    return [{ ...price, isCurrent: price.isCurrent === true && !isClosed }];
   });
-  if (sanitized.length && !sanitized.some((price) => price.isCurrent)) sanitized[0] = { ...sanitized[0], isCurrent: true };
   return sanitized;
 }
 
@@ -1146,10 +1411,7 @@ function currentPriceLot<T extends { isCurrent: boolean; price: number | null; c
   prices: T[],
 ): T | null {
   const current = prices.find((price) => price.isCurrent);
-  if (current) return current;
-  return prices
-    .filter((price) => typeof price.price === "number")
-    .sort((a, b) => (a.price ?? Number.POSITIVE_INFINITY) - (b.price ?? Number.POSITIVE_INFINITY))[0] ?? null;
+  return current ?? null;
 }
 
 function curationOnlyValue(value: unknown): "not_curated" | "published" | "pending_review" | "failed" | undefined {

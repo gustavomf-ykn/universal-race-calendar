@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { MockAIProvider } from "@race-calendar/ai";
 import {
   curateSourceExtraction,
+  curateCorridasBRSourceExtraction,
   curateTicketSportsSourceExtraction,
   evaluatePublishability,
   applyRaceEventExtraction,
@@ -10,14 +11,69 @@ import {
   shouldPersistCanonicalEvent,
 } from "@race-calendar/curation";
 import type { RaceEventExtraction, RawSourceExtraction } from "@race-calendar/schemas";
-import { MockSourceAdapter, TicketSportsAdapter } from "@race-calendar/sources";
+import { CorridasBRAdapter, MockSourceAdapter, TicketSportsAdapter } from "@race-calendar/sources";
 
 const ticketsportsFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports-simple.json", "utf-8")) as Record<
   string,
   unknown
 >;
+const corridasBRDetailFixture = readFileSync("tests/fixtures/corridasbr-detail.html", "utf-8");
+const officialEventFixture = readFileSync("tests/fixtures/official-event.html", "utf-8");
 
 describe("mock AI pipeline", () => {
+  it("publishes an exclusive CorridasBR event without inventing banner, lot, price, or kit", async () => {
+    const adapter = new CorridasBRAdapter({
+      async getText() {
+        return corridasBRDetailFixture;
+      },
+      async getJson() {
+        throw new Error("getJson should not be called");
+      },
+    });
+    const raw = await adapter.fetchAndExtract({
+      sourceId: "src_corridasbr",
+      sourceExternalId: "98765",
+      url: "https://www.corridasbr.com.br/SP/mostracorrida.asp?escolha=98765",
+      metadata: { enrichOfficialPages: false },
+    });
+    const result = await curateCorridasBRSourceExtraction(raw);
+    expect(result.normalizedEvent).toMatchObject({
+      sourceType: "corridasbr",
+      name: "Corrida das Águas 2026",
+      date: "2026-10-18",
+      city: "Campinas",
+      state: "SP",
+      country: "BR",
+      publicationStatus: "published",
+      mainImageUrl: null,
+      prices: [],
+      kits: [],
+    });
+    expect(result.normalizedEvent.distances.map((distance) => distance.distanceKm)).toEqual([5, 10]);
+  });
+
+  it("accepts explicit official-page cover and offer evidence for a CorridasBR event", async () => {
+    const adapter = new CorridasBRAdapter({
+      async getText(url) {
+        return url.includes("corridasbr.com.br") ? corridasBRDetailFixture : officialEventFixture;
+      },
+      async getJson() {
+        throw new Error("getJson should not be called");
+      },
+    });
+    const raw = await adapter.fetchAndExtract({
+      sourceId: "src_corridasbr_official",
+      sourceExternalId: "98765",
+      url: "https://www.corridasbr.com.br/SP/mostracorrida.asp?escolha=98765",
+    });
+    const result = await curateCorridasBRSourceExtraction(raw);
+    expect(result.normalizedEvent.mainImageUrl).toBe("https://corridadasaguas.example/capa-2026.jpg");
+    expect(result.normalizedEvent.registrationUrl).toBe("https://corridadasaguas.example/inscricao");
+    expect(result.normalizedEvent.prices).toEqual([
+      expect.objectContaining({ name: "1º lote", price: 149.9, currency: "BRL", isCurrent: true }),
+    ]);
+  });
+
   it("runs raw source extraction through curation and normalization", async () => {
     const adapter = new MockSourceAdapter();
     const raw = await adapter.fetchAndExtract({
