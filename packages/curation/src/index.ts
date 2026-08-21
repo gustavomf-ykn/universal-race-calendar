@@ -1204,12 +1204,19 @@ export function shouldPersistCanonicalEvent(event: Pick<CanonicalRaceEvent, "cou
 }
 
 async function hasCurrentCurationForRaw(raw: RawSourceExtraction): Promise<boolean> {
-  if (!raw.sourceType || !raw.sourceExternalId) return false;
+  const externalIdentity =
+    raw.sourceType && raw.sourceExternalId
+      ? [
+          { sourceType: raw.sourceType, sourceExternalId: raw.sourceExternalId },
+          { sourceReferences: { some: { sourceType: raw.sourceType, sourceExternalId: raw.sourceExternalId } } },
+        ]
+      : [];
   const existing = await prisma.event.findFirst({
     where: {
       OR: [
-        { sourceType: raw.sourceType, sourceExternalId: raw.sourceExternalId },
-        { sourceReferences: { some: { sourceType: raw.sourceType, sourceExternalId: raw.sourceExternalId } } },
+        ...externalIdentity,
+        { sourceId: raw.sourceId },
+        { sourceReferences: { some: { sourceId: raw.sourceId } } },
       ],
     },
     select: {
