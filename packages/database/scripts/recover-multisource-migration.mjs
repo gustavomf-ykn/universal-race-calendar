@@ -7,7 +7,8 @@ import { PrismaClient } from "@prisma/client";
 
 const migrationName = "20260821000000_multisource_catalog";
 const packageDirectory = fileURLToPath(new URL("..", import.meta.url));
-const prisma = new PrismaClient();
+const datasourceUrl = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
+const prisma = new PrismaClient(datasourceUrl ? { datasourceUrl } : undefined);
 
 try {
   let failedMigrations;
@@ -37,6 +38,14 @@ try {
     const previousLogs = typeof failedMigrations[0]?.logs === "string" ? failedMigrations[0].logs : "No migration log was stored.";
     console.warn(`Recovering failed migration ${migrationName}.`);
     console.warn(previousLogs.slice(0, 4000));
+    console.warn("Removing only the partial objects introduced by the failed migration.");
+    await prisma.$transaction([
+      prisma.$executeRawUnsafe('DROP TABLE IF EXISTS "ImportCandidate" CASCADE'),
+      prisma.$executeRawUnsafe('DROP TABLE IF EXISTS "EventSourceReference" CASCADE'),
+      prisma.$executeRawUnsafe(
+        'ALTER TABLE "ImportRun" DROP COLUMN IF EXISTS "mode", DROP COLUMN IF EXISTS "cursor", DROP COLUMN IF EXISTS "candidateLimit", DROP COLUMN IF EXISTS "options"',
+      ),
+    ]);
     await prisma.$disconnect();
 
     const prismaCommand = process.platform === "win32" ? "prisma.cmd" : "prisma";
