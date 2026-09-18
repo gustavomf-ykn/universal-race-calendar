@@ -4,7 +4,7 @@
 
 Calendário original: 46 testes passaram antes da implementação. OpenResults original: 43 testes offline passaram; teste externo completo não foi executado. Não foi identificado defeito preexistente nas suítes offline. Commits e evidências dos incidentes estão em UNIFICATION-BASELINE.md.
 
-Validação da integração em Windows, Node 22/Python 3.12 e PostgreSQL 18 local, banco `race_backend_test`. CI foi configurado para PostgreSQL 16 e Ubuntu, mas sua execução remota ainda depende da publicação do PR. Os testes destrutivos exigem host local e nome de banco terminado em `_test`. Nenhum teste foi executado contra banco ou bucket de produção.
+Validação da integração em Windows, Node 24.17/Python 3.12 e PostgreSQL 18 local, banco `race_backend_test`. CI foi configurado para Node 22, PostgreSQL 16 e Ubuntu, mas sua execução remota ainda depende da publicação do PR. Os testes destrutivos exigem host local e nome de banco terminado em `_test`. Nenhum teste foi executado contra banco ou bucket de produção.
 
 ## Executado
 
