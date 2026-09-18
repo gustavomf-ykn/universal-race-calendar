@@ -14,17 +14,17 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: race_calendar
+          POSTGRES_DB: race_backend_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d race_calendar"
+          --health-cmd "pg_isready -U postgres -d race_backend_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/race_calendar?schema=public
-      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/race_calendar?schema=public
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/race_backend_test?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/race_backend_test?schema=public
       AI_PROVIDER: mock
       INTERNAL_API_KEY: test-internal-key
     steps:
@@ -41,4 +41,12 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r apps/openresults-worker/requirements-worker.txt
       - run: pnpm test
+      - run: python -m pytest -m "not integration" -q
+        working-directory: apps/openresults-worker
+      - run: pnpm openapi:export
+      - run: git diff --exit-code docs/openapi.json

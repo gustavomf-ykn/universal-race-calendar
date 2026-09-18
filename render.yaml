@@ -3,10 +3,10 @@ services:
     name: universal-race-calendar-v2
     runtime: node
     plan: free
-    buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm db:generate && pnpm db:migrate && pnpm build
+    buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm db:generate && pnpm build
     startCommand: pnpm start:api
     healthCheckPath: /health
-    autoDeployTrigger: checksPass
+    autoDeployTrigger: off
     envVars:
       - key: NODE_VERSION
         value: "22"

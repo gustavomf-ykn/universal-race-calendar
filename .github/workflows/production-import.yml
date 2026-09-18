@@ -1,138 +1,19 @@
-name: Production Import
-
+name: Legacy import entry point
 on:
   workflow_dispatch:
-    inputs:
-      quantity:
-        description: "Maximum TicketSports street-race events to import"
-        required: true
-        default: "1000"
-      concurrency:
-        description: "Import concurrency"
-        required: true
-        default: "3"
-      chunk_size:
-        description: "Events processed per API request"
-        required: true
-        default: "25"
-      delay_ms:
-        description: "Delay between detail requests in milliseconds"
-        required: true
-        default: "100"
-      max_duration_ms:
-        description: "Maximum processing time per API request"
-        required: true
-        default: "240000"
-      force:
-        description: "Reprocess even when source content hash is unchanged"
-        required: true
-        default: "false"
-  schedule:
-    - cron: "17 8 * * *"
-
+permissions:
+  contents: read
 jobs:
-  import:
+  enqueue:
     runs-on: ubuntu-latest
-    env:
-      PRODUCTION_API_BASE_URL: ${{ secrets.PRODUCTION_API_BASE_URL }}
-      PRODUCTION_INTERNAL_API_KEY: ${{ secrets.PRODUCTION_INTERNAL_API_KEY }}
-      IMPORT_QUANTITY: ${{ inputs.quantity || '1000' }}
-      IMPORT_CONCURRENCY: ${{ inputs.concurrency || '3' }}
-      IMPORT_CHUNK_SIZE: ${{ inputs.chunk_size || '25' }}
-      IMPORT_DELAY_MS: ${{ inputs.delay_ms || '100' }}
-      IMPORT_MAX_DURATION_MS: ${{ inputs.max_duration_ms || '240000' }}
-      IMPORT_FORCE: ${{ inputs.force || 'false' }}
+    timeout-minutes: 3
     steps:
-      - name: Check required secrets
-        run: |
-          test -n "$PRODUCTION_API_BASE_URL"
-          test -n "$PRODUCTION_INTERNAL_API_KEY"
-      - name: Run TicketSports import
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts
-          offset=0
-          run_index=1
-          while [ "$offset" -lt "$IMPORT_QUANTITY" ]; do
-            remaining=$((IMPORT_QUANTITY - offset))
-            if [ "$remaining" -lt "$IMPORT_CHUNK_SIZE" ]; then
-              chunk_quantity="$remaining"
-            else
-              chunk_quantity="$IMPORT_CHUNK_SIZE"
-            fi
-            request_file="artifacts/import-request-${run_index}.json"
-            result_file="artifacts/import-result-${run_index}.json"
-            jq -n \
-              --argjson quantity "$chunk_quantity" \
-              --argjson offset "$offset" \
-              --argjson concurrency "$IMPORT_CONCURRENCY" \
-              --argjson delayMs "$IMPORT_DELAY_MS" \
-              --argjson maxDurationMs "$IMPORT_MAX_DURATION_MS" \
-              --argjson force "$IMPORT_FORCE" \
-              '{quantity: $quantity, offset: $offset, concurrency: $concurrency, delayMs: $delayMs, maxDurationMs: $maxDurationMs, force: $force}' > "$request_file"
-            echo "Processing chunk #$run_index: offset=$offset quantity=$chunk_quantity concurrency=$IMPORT_CONCURRENCY delayMs=$IMPORT_DELAY_MS maxDurationMs=$IMPORT_MAX_DURATION_MS force=$IMPORT_FORCE"
-            curl -fsS \
-              --max-time 300 \
-              --retry 2 \
-              --retry-delay 5 \
-              --retry-all-errors \
-              -X POST "$PRODUCTION_API_BASE_URL/v1/imports/ticketsports/run" \
-              -H "Content-Type: application/json" \
-              -H "X-API-Key: $PRODUCTION_INTERNAL_API_KEY" \
-              --data @"$request_file" \
-              -o "$result_file"
-            processed="$(jq -r '.processedCount' "$result_file")"
-            failed="$(jq -r '.failedCount' "$result_file")"
-            published="$(jq -r '.publishedEvents' "$result_file")"
-            review="$(jq -r '.manualReviewEvents' "$result_file")"
-            unchanged="$(jq -r '.unchangedEvents' "$result_file")"
-            status="$(jq -r '.status' "$result_file")"
-            next_offset="$(jq -r '.nextOffset // empty' "$result_file")"
-            echo "Chunk #$run_index result: status=$status processed=$processed published=$published manualReview=$review unchanged=$unchanged failed=$failed nextOffset=${next_offset:-null}"
-            if [ "$processed" = "0" ]; then
-              break
-            fi
-            if [ -n "$next_offset" ] && [ "$next_offset" -gt "$offset" ]; then
-              offset="$next_offset"
-            else
-              offset=$((offset + processed))
-            fi
-            run_index=$((run_index + 1))
-          done
-          jq -s '{
-            status: (if any(.status == "partial_success") then "partial_success" elif any(.status == "time_limit_reached") then "time_limit_reached" else "success" end),
-            source: "ticketsports",
-            requestedQuantity: (map(.requestedQuantity) | add // 0),
-            chunkCount: length,
-            discoveredCount: (map(.discoveredCount) | max // 0),
-            processedCount: (map(.processedCount) | add // 0),
-            nextOffset: (.[-1].nextOffset // null),
-            publishedEvents: (map(.publishedEvents) | add // 0),
-            manualReviewEvents: (map(.manualReviewEvents) | add // 0),
-            unchangedEvents: (map(.unchangedEvents) | add // 0),
-            failedCount: (map(.failedCount) | add // 0),
-            startedAt: (.[0].startedAt // null),
-            finishedAt: (.[-1].finishedAt // null),
-            chunks: .
-          }' artifacts/import-result-*.json > artifacts/import-result.json
-      - name: Validate public events
-        run: |
-          curl -fsS "$PRODUCTION_API_BASE_URL/v1/events?sourceType=ticketsports&limit=5" -o artifacts/sample-events.json
-          jq -e '.data | type == "array"' artifacts/sample-events.json
-      - name: Write summary
-        run: |
-          echo "## Production TicketSports import" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Import result:" >> "$GITHUB_STEP_SUMMARY"
-          echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          cat artifacts/import-result.json >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Sample events:" >> "$GITHUB_STEP_SUMMARY"
-          echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          cat artifacts/sample-events.json >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          name: production-import-results
-          path: artifacts/*.json
+          node-version: 22
+      - run: node scripts/enqueue-catalog.mjs
+        env:
+          API_BASE_URL: ${{ secrets.PRODUCTION_API_BASE_URL }}
+          API_KEY: ${{ secrets.PRODUCTION_INTERNAL_API_KEY }}
+          QUANTITY: '25'

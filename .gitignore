@@ -2,6 +2,10 @@ node_modules/
 .pnpm-store/
 dist/
 coverage/
+__pycache__/
+.pytest_cache/
+.venv/
+*.sqlite3
 .env
 .env.local
 .cache/

@@ -1,0 +1,14 @@
+-- Store operational timestamps as absolute instants, independent of server timezone.
+ALTER TABLE "CollectionTask" ALTER COLUMN "leaseUntil" TYPE TIMESTAMPTZ(3) USING "leaseUntil" AT TIME ZONE 'UTC';
+ALTER TABLE "CollectionTask" ALTER COLUMN "availableAt" TYPE TIMESTAMPTZ(3) USING "availableAt" AT TIME ZONE 'UTC';
+ALTER TABLE "CollectionTask" ALTER COLUMN "createdAt" TYPE TIMESTAMPTZ(3) USING "createdAt" AT TIME ZONE 'UTC';
+ALTER TABLE "CollectionTask" ALTER COLUMN "updatedAt" TYPE TIMESTAMPTZ(3) USING "updatedAt" AT TIME ZONE 'UTC';
+ALTER TABLE "CollectionTask" ALTER COLUMN "finishedAt" TYPE TIMESTAMPTZ(3) USING "finishedAt" AT TIME ZONE 'UTC';
+ALTER TABLE "ResultSet" ALTER COLUMN "updatedAt" TYPE TIMESTAMPTZ(3) USING "updatedAt" AT TIME ZONE 'UTC';
+ALTER TABLE "ExportArtifact" ALTER COLUMN "expiresAt" TYPE TIMESTAMPTZ(3) USING "expiresAt" AT TIME ZONE 'UTC';
+ALTER TABLE "ExportArtifact" ALTER COLUMN "createdAt" TYPE TIMESTAMPTZ(3) USING "createdAt" AT TIME ZONE 'UTC';
+ALTER TABLE "SourceMatch" ALTER COLUMN "date" TYPE TIMESTAMPTZ(3) USING "date" AT TIME ZONE 'UTC';
+ALTER TABLE "SourceMatch" ALTER COLUMN "updatedAt" TYPE TIMESTAMPTZ(3) USING "updatedAt" AT TIME ZONE 'UTC';
+ALTER TABLE "ApiCredential" ALTER COLUMN "revokedAt" TYPE TIMESTAMPTZ(3) USING "revokedAt" AT TIME ZONE 'UTC';
+ALTER TABLE "ApiCredential" ALTER COLUMN "createdAt" TYPE TIMESTAMPTZ(3) USING "createdAt" AT TIME ZONE 'UTC';
+ALTER TABLE "ApiUsage" ALTER COLUMN "window" TYPE TIMESTAMPTZ(3) USING "window" AT TIME ZONE 'UTC';

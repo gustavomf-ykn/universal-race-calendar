@@ -238,6 +238,8 @@ model Event {
   extractionJobs      ExtractionJob[]
   curationJobs        CurationJob[]
   sourceReferences    EventSourceReference[]
+  resultSets          ResultSet[]
+  exports             ExportArtifact[]
 
   @@index([publicationStatus])
   @@index([date])
@@ -419,4 +421,126 @@ model CurationJob {
   @@index([rawSourceExtractionId])
   @@index([provider, model, contentHash, schemaVersion, curationVersion, status])
   @@index([status])
+}
+
+// Event is an edition, never a global race or athlete identity.
+model CollectionTask {
+  id             String   @id @default(uuid())
+  source         String
+  kind           String
+  status         String   @default("queued")
+  ownerId        String
+  idempotencyKey String
+  requestHash    String
+  payload        Json
+  progress       Json     @default("{}")
+  attempt        Int      @default(0)
+  maxAttempts    Int      @default(3)
+  leaseToken     String?
+  leaseUntil     DateTime? @db.Timestamptz(3)
+  availableAt    DateTime @default(now()) @db.Timestamptz(3)
+  errorCode      String?
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @default(now()) @db.Timestamptz(3)
+  finishedAt     DateTime? @db.Timestamptz(3)
+  @@unique([ownerId, idempotencyKey])
+  @@index([source, status, availableAt])
+}
+
+model SourceSlot {
+  source String @id
+}
+
+model ResultSet {
+  id         String   @id @default(uuid())
+  eventId    String
+  event      Event    @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  source     String
+  externalId String
+  sourceUrl  String
+  updatedAt  DateTime @default(now()) @db.Timestamptz(3)
+  contentHash String
+  count      Int
+  disciplines RaceDiscipline[]
+  results    RaceResult[]
+  @@unique([source, externalId])
+  @@index([eventId])
+}
+
+model RaceDiscipline {
+  id          String @id @default(uuid())
+  resultSetId String
+  resultSet   ResultSet @relation(fields: [resultSetId], references: [id], onDelete: Cascade)
+  externalId  String
+  name        String
+  distanceKm  Float?
+  @@unique([resultSetId, externalId])
+}
+
+model RaceResult {
+  id               String @id @default(uuid())
+  resultSetId      String
+  resultSet        ResultSet @relation(fields: [resultSetId], references: [id], onDelete: Cascade)
+  recordKey        String
+  modality         String
+  gender           String?
+  category         String?
+  bib              String?
+  name             String
+  team             String?
+  overallPosition  Int?
+  categoryPosition Int?
+  time             String?
+  pace             String?
+  @@unique([resultSetId, recordKey])
+  @@index([resultSetId, modality, overallPosition, id])
+}
+
+model ExportArtifact {
+  id          String @id @default(uuid())
+  eventId     String
+  event       Event @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  ownerId     String
+  taskId      String @unique
+  status      String @default("queued")
+  objectPath  String?
+  expiresAt   DateTime @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  @@index([expiresAt])
+}
+
+model SourceMatch {
+  id         String @id @default(uuid())
+  source     String
+  externalId String
+  url        String
+  name       String
+  date       DateTime? @db.Timestamptz(3)
+  city       String?
+  state      String?
+  status     String @default("pending")
+  eventId    String?
+  resolvedBy String?
+  updatedAt  DateTime @default(now()) @db.Timestamptz(3)
+  @@unique([source, externalId])
+  @@index([status])
+}
+
+model ApiCredential {
+  id           String @id @default(uuid())
+  name         String
+  keyHash      String @unique
+  scopes       String[]
+  limitPerHour Int @default(1000)
+  revokedAt    DateTime? @db.Timestamptz(3)
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  usage        ApiUsage[]
+}
+
+model ApiUsage {
+  credentialId String
+  credential   ApiCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  window       DateTime @db.Timestamptz(3)
+  count        Int @default(0)
+  @@id([credentialId, window])
 }

@@ -1,3 +1,19 @@
+# Backend unificado de corridas
+
+API Fastify, executor TypeScript e executor Python OpenResults separados, com PostgreSQL/Supabase, fila durável e Storage privado. Nenhum painel novo foi criado.
+
+- [Operação local, Supabase, implantação, diagnóstico e rollback](docs/RUNBOOK.md)
+- [Migrations e transferência controlada de dados](docs/MIGRATIONS.md)
+- [Contratos e roteiro do futuro painel Lovable](docs/LOVABLE-INTEGRATION.md)
+- [OpenAPI versionado](docs/openapi.json) — também em `/docs` e `/v1/openapi.json`
+- [Validação e limites desta entrega](docs/VALIDATION.md)
+- [Evidências da base e incidentes anteriores](docs/UNIFICATION-BASELINE.md)
+- [Origem/licença do componente Python](apps/openresults-worker/UPSTREAM.md)
+
+As instruções abaixo são do calendário anterior e ficam como referência. Para o backend unificado, siga os documentos acima: importações HTTP agora retornam 202 e exigem Idempotency-Key; iniciar o worker CLI antigo não consome a fila nova. Não usar rotinas antigas de recuperação destrutiva do banco.
+
+---
+
 # Universal Race Calendar API
 
 API universal para transformar paginas de eventos de corrida de rua/trail em dados canonicos, confiaveis e simples de consumir por sites, apps e calendarios.

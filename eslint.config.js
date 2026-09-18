@@ -9,10 +9,19 @@ export default tseslint.config(
       "**/dist/**",
       "**/node_modules/**",
       "**/coverage/**",
+      "**/.pytest_cache/**",
+      "**/__pycache__/**",
       "packages/database/generated/**",
       "race-calendar-connect/**",
       "race-operations-hub/**",
+      // Unmodified upstream browser assets/examples retained for Python regression tests.
+      "apps/openresults-worker/app/static/**",
+      "apps/openresults-worker/examples/**",
     ],
+  },
+  {
+    files: ["scripts/*.mjs"],
+    languageOptions: { globals: { process:"readonly",console:"readonly",fetch:"readonly",AbortSignal:"readonly",URL:"readonly" } },
   },
   {
     files: ["**/*.ts"],
