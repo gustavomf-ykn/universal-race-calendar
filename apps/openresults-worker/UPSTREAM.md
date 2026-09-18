@@ -7,3 +7,5 @@ antigos são preservados apenas para rastreabilidade e testes de compatibilidade
 A implantação unificada inicia `python -m worker`, nunca `app.main`.
 O código de origem era privado na data da integração; publicar este diretório
 em repositório público exige autorização explícita do proprietário.
+
+O proprietário autorizou explicitamente a publicação desta integração em 18/09/2026, antes da abertura do PR #4 no repositório principal.
