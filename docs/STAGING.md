@@ -6,7 +6,7 @@ Projeto identificado pelo proprietário em 19/09/2026:
 - URL: `https://sggrijhyblejlgimgzzc.supabase.co`
 - JWKS: `https://sggrijhyblejlgimgzzc.supabase.co/auth/v1/.well-known/jwks.json`
 
-A consulta pública confirmou HTTP 200, ES256 e provedor de login por e-mail habilitado. Isso **não** valida login, banco, RLS ou Storage. Chave secreta completa e conexões PostgreSQL ainda não foram disponibilizadas. Nenhuma migration remota ou usuário foi criado.
+Homologação real executada em 19/09/2026: 11 migrations, 26 tabelas auditadas, Auth real, Storage privado e fluxo TicketSports–OpenResults com 435 resultados. Executores locais Node/Python conectados exclusivamente a este projeto. Aplicação no commit `753b2ba400f95a28c684e210581d8c2177cdcfd7`; scripts/evidências adicionados no commit subsequente deste PR. Nenhuma configuração de produção foi alterada.
 
 ## Lista única de acessos e onde colocá-los
 
@@ -62,7 +62,7 @@ Não foram identificados acesso à hospedagem ou Docker neste computador. O CI f
 
 ## Candidata real e roteiro de aceite
 
-Metadados públicos conferidos: MOUNTAIN DO COSTÃO DO SANTINHO 2026, 25/07/2026, Florianópolis/SC. OpenResults `37007`, quatro modalidades, total informado 435. A página do organizador vinculada pelo OpenResults aponta diretamente para TicketSports `74857`; a API TicketSports confirmou nome/data/local. Nenhum atleta foi extraído nesta preparação.
+Metadados públicos conferidos: MOUNTAIN DO COSTÃO DO SANTINHO 2026, 25/07/2026, Florianópolis/SC. OpenResults `37007`, quatro modalidades, total informado 435. A página do organizador vinculada pelo OpenResults aponta diretamente para TicketSports `74857`; a API TicketSports confirmou nome/data/local. O fluxo posterior persistiu 435 resultados; nomes e dados individuais não são publicados neste relatório.
 
 1. Criar duas identidades temporárias próprias via Auth Admin API, sem convite: uma com app_metadata.role=admin, outra comum. Gerar senhas em memória; emitir tokens por login real. Registrar apenas os UUIDs para remoção posterior.
 2. Descobrir/publicar a edição pela API de fontes e tarefa de check TicketSports. Usar o ID externo 74857 com o adapter ticketsports; é uma edição passada, portanto a listagem de próximas corridas não é suficiente.
@@ -73,17 +73,49 @@ Metadados públicos conferidos: MOUNTAIN DO COSTÃO DO SANTINHO 2026, 25/07/2026
 7. Interromper processo durante tarefa, reiniciar e aguardar lease real de 90 s; conferir tentativa e preservação de dados. Falhas controladas devem ser identificadas separadamente de falhas reais da fonte.
 8. Expirar exportação de teste, confirmar limpeza e resultados permanentes. Remover os dois usuários temporários ao encerrar, sem remover eventos/resultados como efeito da limpeza operacional.
 
-## Aceite atual
+## Aceite real em 19/09/2026
 
-| Critério | Estado |
+| Critério | Estado e evidência |
 |---|---|
-| Identidade do projeto e JWKS público | Aprovado |
-| Revisão e regressão local | Aprovado: 67 TS e 47 Python |
-| Login real autorizado e testes negativos Auth | Pendente de chave secreta |
-| Migrations/RLS/fila no Supabase e reexecução | Pendente das conexões |
-| Storage real e download/expiração | Pendente de secrets e processos |
-| Imagens Docker e Chromium | Aprovado no CI isolado: build, processos, banco e navegador real |
-| Fluxo principal real, repetição e recuperação em staging | Pendente da configuração |
-| Ensaio de backups antigos | Pendente dos backups; não bloqueia sozinho a construção do painel |
+| 1. Login autorizado | Aprovado: login Supabase real, JWT ES256 e admin |
+| 2. Descoberta real | Aprovado: TicketSports 74857, tarefa `67e01102-a3c8-4cbd-b41d-63463d90e671` |
+| 3. Associação | Aprovado: OpenResults 37007, mesma edição/data/local; inspeção `6ff49694-4cc4-428e-a380-3f61c20105b5` |
+| 4. API responde 202 | Aprovado: coleta `6a9ced00-0827-4f92-a546-f07ddd4475d6` |
+| 5. Workers processam | Aprovado: processos TS/Python reais, tarefas completed |
+| 6. Resultados persistidos | Aprovado: 435, consulta paginada; total conferido pelo parser com a fonte |
+| 7. Exportar e baixar | Aprovado: tarefa `7177d145-6ebb-4027-893c-1c4be2151243`, XLSX de 36.128 bytes |
+| 8. Repetição | Aprovado: mesma chave retorna mesma tarefa; nova coleta `538b7aaa-1044-4eb7-af19-a87b0b3799d2` mantém 435 |
+| 9. Recuperação | Aprovado: tarefa `9d17409d-c487-440d-91c7-7e60329956cc`, tentativa 2 após 93 s |
+| 10. Expiração preserva resultados | Aprovado: link expirado recusado, objetos removidos, 435 resultados disponíveis |
 
-Painel: contratos disponíveis para planejamento, mas integração homologada ainda não aprovada. Produção: não aprovada. Não confundir testes locais/CI e metadados públicos com aceite real completo.
+Evento interno: `evt_91fe44bc51e94cf6acf036b6`. CorridasBR validado separadamente, uma edição SC, tarefa `55243d30-2fa4-4499-a79b-a6bd32cfa368`; não foi associada à prova OpenResults.
+
+Auth: sem token 401, token inválido 401, usuário comum na administração 403, API key com escopo insuficiente 403, revogada 401. PostgREST negou leitura operacional a anon e usuário autenticado. Duas identidades próprias temporárias foram criadas sem convite, autenticadas e removidas ao final. Senhas/tokens existiram somente em memória. JWT genuinamente expirado não foi aguardado; a verificação de expiração também possui regressão local.
+
+Banco: migrate deploy aplicado e repetido com sucesso, 11 migrations concluídas; auditoria de 26 tabelas com RLS e privilégios negados aos papéis API; execução das funções da fila negada a esses papéis. Bucket privado com limite 50 MiB, nenhuma política pública de objetos. Download direto anônimo recusado; link assinado funcionou e deixou de funcionar após expirar.
+
+Recuperação controlada: bloqueio transacional apenas no artefato de teste manteve o worker ocupado; processo Python foi encerrado e reiniciado, aguardando o lease verdadeiro de 90 s. Heartbeat, conclusão e barreira de gravação recusaram o token antigo. Uma publicação incompleta foi simulada chamando o publicador real com resultado incompleto: contagem e hash persistidos permaneceram iguais. Isso é injeção controlada, não uma falha provocada nas fontes reais.
+
+Expiração controlada: antecipado expiresAt somente das duas exportações de teste; executada a rotina real de limpeza, confirmando objetos ausentes e resultados permanentes. Os resultados continuam no banco. Processos locais temporários foram encerrados após o ensaio.
+
+### Reproduzir
+
+Depois de `check`, `migrate` e `audit`, com Python/dependências disponíveis:
+
+```powershell
+.\scripts\with-staging-secrets.ps1 -Action auth -ProjectRef sggrijhyblejlgimgzzc
+.\scripts\with-staging-secrets.ps1 -Action flow -ProjectRef sggrijhyblejlgimgzzc
+.\scripts\with-staging-secrets.ps1 -Action recovery -ProjectRef sggrijhyblejlgimgzzc
+.\scripts\with-staging-secrets.ps1 -Action corridasbr -ProjectRef sggrijhyblejlgimgzzc
+```
+
+Executar sem outros workers concorrentes de staging: o teste de recuperação pressupõe controlar o executor. Relatórios sanitizados ficam em `.secrets/staging-*-report.json`, ignorados pelo Git e protegidos pela ACL. Não imprimir o arquivo de credenciais. A comparação realizada cobre total declarado pela fonte, persistência, repetição, hashes e download; não houve auditoria manual independente de classificação individual.
+
+### Limites e próximos acessos
+
+- Docker/Chromium: imagens reais e navegador DOM/JS aprovados no CI isolado, [job](https://github.com/gustavomf-ykn/universal-race-calendar/actions/runs/35422211603/job/105841846703). Este computador não tem Docker; os processos conectados ao Supabase rodaram nativamente. Fallback Playwright contra a fonte real não foi acionado; smoke separado do navegador passou no CI.
+- Hospedagem: identificar serviços/host existentes e exclusivos de staging. Não há URL HTTPS pública da API homologada. Inserir as variáveis da tabela no gerenciador de secrets desses três processos, implantar as imagens e repetir smoke nesse host. Nenhum serviço foi contratado.
+- CORS: definir origem exata do futuro painel na API; não colocar credenciais privilegiadas no frontend.
+- Backups: ensaio pendente de cópias consistentes e destino descartável confirmado; procedimento em MIGRATIONS.md. Não importar no banco de aceite sem plano explícito.
+
+Parecer para painel: pronto para construir sobre os contratos; integração remota e teste no navegador dependem da API de homologação hospedada. Parecer para produção: não pronto, faltam operação hospedada, configuração final, ensaio de restauração/migração e decisão de corte separada.

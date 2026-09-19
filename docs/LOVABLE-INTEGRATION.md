@@ -126,6 +126,8 @@ unificada; a API FastAPI antiga não deve ser publicada junto desta implantaçã
 
 Consulte [VALIDATION.md](VALIDATION.md) para distinguir fixtures e integrações reais.
 
-## Homologa��o atual
+## Homologação atual
 
-Projeto Supabase confirmado: `race-platform-staging`, URL p�blica `https://sggrijhyblejlgimgzzc.supabase.co`. JWKS ES256 e provedor de e-mail verificados. URL base da API hospedada e login/Storage reais ainda pendentes de configura��o. N�o apontar o painel para produ��o. Estado e acessos necess�rios: [STAGING.md](STAGING.md). A chave public�vel pertence � configura��o p�blica do cliente; SUPABASE_SECRET_KEY, chaves legadas privilegiadas, URLs do banco e chaves internas permanecem exclusivamente no servidor.
+Supabase: `race-platform-staging`, URL pública `https://sggrijhyblejlgimgzzc.supabase.co`. Login ES256, permissões, Storage e fluxo real com 435 resultados foram testados. Use a chave publishable desse projeto como configuração pública do cliente. A API foi executada temporariamente em localhost durante o ensaio; ainda não há URL HTTPS pública para a Lovable. Não usar localhost como endereço do painel hospedado.
+
+A construção do painel pode começar pelos contratos. A integração remota exige hospedar a API de staging, preencher sua URL base e configurar CORS para a origem do painel. Banco, fila e Storage já foram preparados. Não criar tabelas pelo Lovable. SUPABASE_SECRET_KEY, chaves privilegiadas legadas, URLs do banco e chaves internas ficam exclusivamente no servidor. Evidências, limitações e próximos acessos: [STAGING.md](STAGING.md).

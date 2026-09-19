@@ -53,7 +53,7 @@ Esse compose é **somente local** e sobrescreve as URLs para o serviço `postgre
 | DIRECT_URL | migrations; conexão direta ou session pooler | segredo de servidor |
 | WORKER_DATABASE_URL | psycopg; URI libpq, sem `?schema=public` | segredo de servidor |
 | SUPABASE_URL | issuer/JWKS e Storage | pública |
-| SUPABASE_SERVICE_ROLE_KEY | upload/limpeza/assinatura de artefatos | segredo de servidor |
+| SUPABASE_SECRET_KEY | upload/limpeza/assinatura; SERVICE_ROLE_KEY legado como alternativa | segredo de servidor |
 | INTERNAL_API_KEY | scheduler e administração interna; use valor aleatório | segredo de servidor |
 | CORS_ORIGINS | origens exatas do painel, separadas por vírgula | configuração |
 | GIT_SHA | commit da imagem; Render usa RENDER_GIT_COMMIT | pública |
@@ -69,7 +69,7 @@ Apenas SUPABASE_URL e a chave publicável Supabase entram na Lovable. Chaves de 
 4. Verificar bucket privado `race-exports`, criado pela migration quando schema Storage existe. Se migrou primeiro PostgreSQL comum e depois o transferiu, reaplicar somente o SQL idempotente de `20260918000200_storage/migration.sql` no projeto Supabase. Não abrir políticas públicas no bucket.
 5. Implantar as imagens `Dockerfile.backend` (API e worker TS com comandos distintos) e `apps/openresults-worker/Dockerfile.worker` (Python). API porta 3000 atrás de HTTPS. Configurar reinício automático, logs e limites de memória/CPU. Não iniciar os servidores antigos.
 6. Criar usuário de teste Supabase e atribuir `app_metadata.role=admin` pela administração Auth. Testar usuário comum e admin, inclusive token expirado e acesso direto negado pelo PostgREST.
-7. Executar o roteiro integrado da Lovable com uma prova, concorrência 1. Confirmar XLSX no bucket privado, URL assinada, expiração e persistência após reinício. Esse teste em Supabase real ainda não foi executado nesta entrega.
+7. Executar o roteiro integrado da Lovable com uma prova, concorrência 1. Confirmar XLSX no bucket privado, URL assinada, expiração e persistência após reinício. O ensaio real em staging está documentado em STAGING.md; repetir após implantar no host definitivo de homologação.
 8. Validar backup/restauração e procedimentos de MIGRATIONS.md antes de decidir corte de produção. Migrations não rodam no build Render; auto deploy está desativado. Nada nesta tarefa autoriza o corte.
 9. Depois do deploy aprovado, ajustar secret `PRODUCTION_API_BASE_URL` do GitHub para o serviço correto e `PRODUCTION_INTERNAL_API_KEY`. Conferir os nomes efetivos no workflow. Só `catalog-import.yml` tem agendamento diário 08:17 UTC; os outros workflows são manuais. Cada chamada responde 202 e encerra; progresso está na API.
 

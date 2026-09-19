@@ -61,6 +61,6 @@ Reexecutar `--apply` com a mesma c√≥pia/mapping mant√©m ResultSet e n√£o duplica
 
 ZIP e arquivos tempor√°rios antigos n√£o s√£o migrados; gerar novos XLSX no Storage a partir dos resultados permanentes. Jobs antigos continuam apenas no backup de origem, n√£o viram tarefas prontas para execu√ß√£o no banco novo. Esses s√£o limites deliberados de compatibilidade, n√£o perda dos resultados importados.
 
-## Ensaio apÛs a homologaÁ„o de 19/09/2026
+## Ensaio ap√≥s a homologa√ß√£o de 19/09/2026
 
-Nenhum backup real foi recebido ou importado. Depois do aceite em STAGING.md, obter dump PostgreSQL consistente (incluindo _prisma_migrations) e backup SQLite pela API de backup, com WAL capturado. Confirmar um destino descart·vel antes de restaurar; n„o misturar o ensaio com os dados do aceite sem plano explÌcito. Comparar manifests, referÍncias, contagens por ediÁ„o e amostras. Esta pendÍncia È independente do teste de Auth/Storage e n„o justifica acesso ‡ produÁ„o.
+Nenhum backup real foi recebido ou importado. Depois do aceite em STAGING.md, obter dump PostgreSQL consistente (incluindo _prisma_migrations) e backup SQLite pela API de backup, com WAL capturado. Confirmar um destino descart√°vel antes de restaurar; n√£o misturar o ensaio com os dados do aceite sem plano expl√≠cito. Comparar manifests, refer√™ncias, contagens por edi√ß√£o e amostras. Esta pend√™ncia √© independente do teste de Auth/Storage e n√£o justifica acesso √† produ√ß√£o.

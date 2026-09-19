@@ -59,6 +59,12 @@ A amostra OpenResults identificou erro no tipo passado como TLS SNI; foi corrigi
 
 Contratos e fluxo integrado estão validados localmente para iniciar o trabalho do painel. A liberação operacional em Supabase/Render depende dos passos externos acima; não foi declarada produção pronta.
 
-## Atualiza��o de 19/09/2026
+## Atualização de 19/09/2026
 
-No commit `73844eb`, 67 testes TypeScript e 47 Python passaram. O CI adicional construiu e executou as imagens reais, aplicou migrations duas vezes em PostgreSQL descart�vel, iniciou API e ambos os workers e lan�ou Chromium com verifica��o de DOM/JavaScript. A pend�ncia anterior de build/smoke das imagens foi resolvida. O fallback no site real e o fluxo integrado no Supabase ainda aguardam configura��o; acompanhe [STAGING.md](STAGING.md).
+No commit `73844eb`, 67 testes TypeScript e 47 Python passaram. O CI adicional construiu e executou as imagens reais, aplicou migrations duas vezes em PostgreSQL descartável, iniciou API e ambos os workers e lançou Chromium com verificação de DOM/JavaScript. A pendência anterior de build/smoke das imagens foi resolvida. O fallback no site real e o fluxo integrado no Supabase ainda aguardam configuração; acompanhe [STAGING.md](STAGING.md).
+
+## Homologação Supabase real em 19/09/2026
+
+As pendências históricas de Auth, banco, Storage e fluxo real acima foram executadas em `race-platform-staging` com aplicação `753b2ba`: 11 migrations (reexecução aprovada), auditoria de 26 tabelas, login e autorização reais, 435 resultados da edição TicketSports 74857/OpenResults 37007, exportação/download, repetição e recuperação de executor após 93 segundos. Expiração removeu arquivos sem remover resultados. CorridasBR foi validado separadamente com uma edição. Scripts reproduzíveis e IDs em [STAGING.md](STAGING.md).
+
+Os processos conectados ao Supabase eram locais/nativos; o CI executou as imagens Docker e Chromium separadamente. Não há API hospedada homologada nem ensaio com backups antigos. Esses limites permanecem pendentes e não autorizam produção.
