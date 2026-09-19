@@ -80,6 +80,11 @@ jobs:
           test "$(docker compose -f compose.backend.yaml ps --status running --services | wc -l)" -eq 4
       - name: Launch installed Chromium without network or fixtures
         run: docker compose -f compose.backend.yaml exec -T results-worker python browser_smoke.py
+      - name: Batch images exit on an empty queue
+        run: |
+          docker compose -f compose.backend.yaml stop calendar-worker results-worker
+          timeout 45s docker compose -f compose.backend.yaml run --rm -e WORKER_MODE=batch -e WORKER_MAX_SECONDS=30 calendar-worker
+          timeout 45s docker compose -f compose.backend.yaml run --rm -e WORKER_MODE=batch -e WORKER_MAX_SECONDS=30 results-worker
       - name: Stop processes cleanly
         if: always()
         run: docker compose -f compose.backend.yaml down --volumes

@@ -18,3 +18,5 @@ race-operations-hub/
 .secrets/
 .env.*
 !.env.example
+/batch-report.json
+/batch-summary.json

@@ -1,4 +1,6 @@
-# Hospedagem do backend — decisão pendente
+# Hospedagem do backend — histórico da comparação
+
+Decisão atual: sem contratação de Railway/VPS. A arquitetura gratuita de homologação, limites e restrição de uso do Actions estão em [BATCH-HOSTING.md](BATCH-HOSTING.md). A recomendação paga abaixo é histórica e foi substituída pela decisão do proprietário.
 
 Pesquisa oficial em 19/09/2026. Nenhum serviço contratado, provisionado ou implantado. Supabase `race-platform-staging` permanece como banco/Auth/Storage. Preços em moeda original, antes de tributos, câmbio/cartão e eventual domínio; não incluem serviços de produção.
 

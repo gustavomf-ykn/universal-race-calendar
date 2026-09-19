@@ -68,3 +68,9 @@ No commit `73844eb`, 67 testes TypeScript e 47 Python passaram. O CI adicional c
 As pendências históricas de Auth, banco, Storage e fluxo real acima foram executadas em `race-platform-staging` com aplicação `753b2ba`: 11 migrations (reexecução aprovada), auditoria de 26 tabelas, login e autorização reais, 435 resultados da edição TicketSports 74857/OpenResults 37007, exportação/download, repetição e recuperação de executor após 93 segundos. Expiração removeu arquivos sem remover resultados. CorridasBR foi validado separadamente com uma edição. Scripts reproduzíveis e IDs em [STAGING.md](STAGING.md).
 
 Os processos conectados ao Supabase eram locais/nativos; o CI executou as imagens Docker e Chromium separadamente. Não há API hospedada homologada nem ensaio com backups antigos. Esses limites permanecem pendentes e não autorizam produção.
+
+## Workers finitos — 19/09/2026
+
+71 testes TypeScript e 54 Python passaram, além de build, tipos e lint. O novo ensaio local contra Supabase real aprovou fila vazia, limite de tarefas/duração, preservação do modo contínuo, coleta de 435 resultados, exportação após encerramento e recuperação dos dois executores na tentativa 2. IDs e tempos em STAGING.md. OpenAPI foi regenerado sem diferenças.
+
+CI inclui build das imagens, início contínuo, Chromium e saída batch com fila vazia em banco descartável. Isso não substitui os workflows batch contra Supabase, cuja execução e medição completa no Actions dependem de Secrets/configuração externa. API Render remota também permanece pendente. Limites dos planos e do uso permitido do Actions: BATCH-HOSTING.md.

@@ -121,3 +121,17 @@ Executar sem outros workers concorrentes de staging: o teste de recuperação pr
 - Backups: ensaio pendente de cópias consistentes e destino descartável confirmado; procedimento em MIGRATIONS.md. Não importar no banco de aceite sem plano explícito.
 
 Parecer para painel: pronto para construir sobre os contratos; integração remota e teste no navegador dependem da API de homologação hospedada. Parecer para produção: não pronto, faltam operação hospedada, configuração final, ensaio de restauração/migração e decisão de corte separada.
+
+## Execução finita validada em 19/09/2026
+
+Decisão atual: Render Free somente API e Actions somente lotes de desenvolvimento/homologação, com alternativa local para operação. Configuração e limites: [BATCH-HOSTING.md](BATCH-HOSTING.md). Nenhum serviço Render foi criado nesta etapa.
+
+`scripts/staging-batch-smoke.py` executou processos locais reais contra o mesmo Supabase isolado, sem fixtures no caminho de coleta. Passaram: fila vazia nos dois workers, modo contínuo preservado, limite de uma tarefa, limite de duração, recuperação após expiração real do lease, idempotência e download do Storage depois do encerramento do worker.
+
+- Coleta OpenResults `39ec58fc-d052-4b68-9ac3-cd52536c5a37`: 9 s no laço do worker, 435 resultados preservados, sem duplicação.
+- Exportação `c30b6e89-d8c6-413f-8a6a-c385dd40f03a`: 2 s, download validado após a saída do executor.
+- Limite de 4 s interrompeu as tarefas TS `d4bdb212-abcb-4bdb-b46a-0f66406be4b3` e Python `5cb9e22a-0cec-4313-b609-71bc99bfe104`. Após 92 s, lotes seguintes recuperaram ambas e concluíram na tentativa 2, em 1 s e 3 s. Token antigo recusado; 435 resultados mantidos.
+
+Interrupções foram controladas com bloqueios transacionais em registros de teste, sem provocar falhas nas fontes. Relatório sanitizado local: `.secrets/staging-batch-report.json`. Reproduzir com `with-staging-secrets.ps1 -Action batch -ProjectRef sggrijhyblejlgimgzzc`, sem outros workers concorrentes.
+
+Tempos acima não incluem preparação completa e não medem GitHub Actions. Novos workflows contra Supabase e API remota Render permanecem pendentes de configuração externa. Regressões locais: 71 testes TypeScript e 54 Python, build/tipos/lint aprovados. CI de imagens é uma validação separada em banco descartável.

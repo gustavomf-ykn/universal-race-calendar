@@ -5,8 +5,7 @@ on:
       quantity:
         description: Maximum events per source (1-500)
         default: '100'
-  schedule:
-    - cron: '17 8 * * *'
+# Legacy enqueue remains manual. Daily staging batches consume existing tasks.
 permissions:
   contents: read
 concurrency:

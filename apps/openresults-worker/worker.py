@@ -21,6 +21,7 @@ from app.config import Settings
 from app.services.openresults.metadata import EventMetadataService
 from app.services.openresults.catalog import EventCatalog
 from app.services.scraper import OpenResultsScraper
+from batch import BatchRun
 
 
 def storage_headers():
@@ -248,23 +249,49 @@ async def execute(task):
 
 
 async def main():
+    run = BatchRun()
+    watchdog = run.watchdog()
     stopped=False
     def stop(*_):
         nonlocal stopped
         stopped=True
     signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
     tick=0
-    while not stopped:
+    try:
+      # Batch runs may finish before the old 60-tick cleanup cadence.
+      if run.batch and os.environ.get('SUPABASE_URL'):
+        try: await cleanup_exports()
+        except (httpx.HTTPError,KeyError): print('Export cleanup pending; verify Storage configuration.',flush=True)
+      while not stopped and run.can_claim():
         task=await asyncio.to_thread(query,'SELECT * FROM claim_task(%s,%s)',(['openresults','exports'],str(uuid.uuid4())),True)
         if task:
+            run.claimed += 1
+            run.active_task_id = task['id']
             await execute(task)
+            outcome=await asyncio.to_thread(query,'SELECT status FROM "CollectionTask" WHERE id=%s',(task['id'],),True)
+            run.tasks.append({'id':task['id'],'status':outcome['status']})
+            run.tasks = run.tasks[-100:]
+            run.active_task_id = None
         else:
+            if run.batch:
+                run.reason = 'queue_empty'
+                break
             await asyncio.sleep(1)
         tick+=1
         if tick%60==0:
             try: await cleanup_exports()
             except (httpx.HTTPError,KeyError): print('Export cleanup pending; verify Storage configuration.',flush=True)
+    except Exception:
+        run.reason = 'worker_failed'
+        raise RuntimeError('worker_failed') from None
+    finally:
+        if watchdog: watchdog.cancel()
+        run.report()
 
 
 if __name__=='__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception:
+        print('Worker stopped; inspect sanitized task history and database connectivity.',flush=True)
+        raise SystemExit(1) from None

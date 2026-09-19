@@ -1,5 +1,7 @@
 # Operação do backend unificado
 
+Modo atual de homologação: [API Render Free e executores finitos](BATCH-HOSTING.md). Com WORKER_MODE=batch, configurar WORKER_MAX_TASKS e WORKER_MAX_SECONDS. Com continuous (padrão), os comandos abaixo continuam válidos. Nenhum job de lote cria coletas automaticamente.
+
 ## Processos e autoridade dos dados
 
 Fastify serve HTTP; `apps/worker/src/queue.ts` executa TicketSports/CorridasBR/curadoria; `apps/openresults-worker/worker.py` executa OpenResults e XLSX. Nenhum worker inicia FastAPI. A interface Python antiga foi incorporada como compatibilidade histórica, não é publicada pelos containers novos.
@@ -71,7 +73,7 @@ Apenas SUPABASE_URL e a chave publicável Supabase entram na Lovable. Chaves de 
 6. Criar usuário de teste Supabase e atribuir `app_metadata.role=admin` pela administração Auth. Testar usuário comum e admin, inclusive token expirado e acesso direto negado pelo PostgREST.
 7. Executar o roteiro integrado da Lovable com uma prova, concorrência 1. Confirmar XLSX no bucket privado, URL assinada, expiração e persistência após reinício. O ensaio real em staging está documentado em STAGING.md; repetir após implantar no host definitivo de homologação.
 8. Validar backup/restauração e procedimentos de MIGRATIONS.md antes de decidir corte de produção. Migrations não rodam no build Render; auto deploy está desativado. Nada nesta tarefa autoriza o corte.
-9. Depois do deploy aprovado, ajustar secret `PRODUCTION_API_BASE_URL` do GitHub para o serviço correto e `PRODUCTION_INTERNAL_API_KEY`. Conferir os nomes efetivos no workflow. Só `catalog-import.yml` tem agendamento diário 08:17 UTC; os outros workflows são manuais. Cada chamada responde 202 e encerra; progresso está na API.
+9. Para homologação gratuita, seguir BATCH-HOSTING.md. Os workflows legados de criação de tarefas ficam manuais nesta branch; os novos workflows apenas consomem a fila de staging. Não alterar secrets de produção. Cada solicitação pela API responde 202; progresso está na API.
 
 ## Fila e recuperação
 

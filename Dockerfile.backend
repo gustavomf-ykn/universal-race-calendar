@@ -7,6 +7,7 @@ COPY packages ./packages
 COPY apps/api ./apps/api
 COPY apps/worker ./apps/worker
 COPY scripts/staging-preflight.mjs ./scripts/staging-preflight.mjs
+COPY scripts/check-runner-env.mjs scripts/start-staging-api.mjs ./scripts/
 RUN pnpm install --frozen-lockfile && pnpm db:generate && pnpm build
 USER node
 ENV NODE_ENV=production

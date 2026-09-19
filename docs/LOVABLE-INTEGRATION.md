@@ -131,3 +131,16 @@ Consulte [VALIDATION.md](VALIDATION.md) para distinguir fixtures e integrações
 Supabase: `race-platform-staging`, URL pública `https://sggrijhyblejlgimgzzc.supabase.co`. Login ES256, permissões, Storage e fluxo real com 435 resultados foram testados. Use a chave publishable desse projeto como configuração pública do cliente. A API foi executada temporariamente em localhost durante o ensaio; ainda não há URL HTTPS pública para a Lovable. Não usar localhost como endereço do painel hospedado.
 
 A construção do painel pode começar pelos contratos. A integração remota exige hospedar a API de staging, preencher sua URL base e configurar CORS para a origem do painel. Banco, fila e Storage já foram preparados. Não criar tabelas pelo Lovable. SUPABASE_SECRET_KEY, chaves privilegiadas legadas, URLs do banco e chaves internas ficam exclusivamente no servidor. Evidências, limitações e próximos acessos: [STAGING.md](STAGING.md).
+
+
+## API suspensível e execução em lotes
+
+A API responde 202 quando a tarefa foi registrada; isso não significa que já existe executor ativo. Em homologação, workers iniciam manualmente ou na próxima janela agendada do GitHub. Agendamento pode atrasar e não garante horário exato. Para uso operacional fora de desenvolvimento/testes, ver a restrição e alternativa local em [BATCH-HOSTING.md](BATCH-HOSTING.md).
+
+O estado queued deve aparecer como **Aguardando executor ou nova tentativa**, running como **Em processamento**, partial como **Parcial**, completed como **Concluída**, failed como **Falhou** e cancelled como **Cancelada**. Não inventar um estado scheduled nem ETA exato. Uma tarefa em running pode permanecer assim após interrupção até outra execução recuperar seu lease.
+
+Render Free suspende a API por inatividade: no primeiro acesso pode haver demora de aproximadamente um minuto. Após timeout na criação, repetir a mesma intenção com a **mesma Idempotency-Key**, persistida no cliente até obter a resposta; trocar a chave pode criar outra tarefa. Não implementar dispatch do GitHub pelo navegador e não expor token GitHub ou secrets dos workers.
+
+Enquanto queued, evitar consultas de poucos segundos durante horas: atualizar sob demanda, ao voltar à tela, ou com backoff durante sessão ativa. Quando running, acompanhar a cada 5–10 s e reduzir frequência se não houver mudança; parar ao fechar a tela ou chegar ao estado terminal. Não usar polling/pings para impedir a suspensão do Render.
+
+Mostrar a última atualização dos dados usando resultSet.updatedAt dos resultados e updatedAt do evento no contrato, sem confundir com updatedAt da tarefa. Resultados válidos anteriores continuam disponíveis se uma nova coleta for parcial/falhar. Exportações também aguardam executor; link assinado dura até 60 s, artefato expira em 24 h e limpeza física aguarda lote Python. Solicitar uma nova exportação pode ser necessário se a anterior expirar antes de ser processada. Configuração/agenda, Secrets por serviço e procedimento manual: [BATCH-HOSTING.md](BATCH-HOSTING.md).
