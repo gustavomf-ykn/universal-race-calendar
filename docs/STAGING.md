@@ -1,5 +1,7 @@
 # Homologação race-platform-staging
 
+Hospedagem: o proprietário informou não ter serviços existentes no Render. Comparação atual de custos e arquivos preparados, aguardando escolha sem contratação/deploy: [HOSTING.md](HOSTING.md).
+
 Projeto identificado pelo proprietário em 19/09/2026:
 - Nome: `race-platform-staging`
 - Project ref: `sggrijhyblejlgimgzzc`

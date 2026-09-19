@@ -6,6 +6,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig*.json ./
 COPY packages ./packages
 COPY apps/api ./apps/api
 COPY apps/worker ./apps/worker
+COPY scripts/staging-preflight.mjs ./scripts/staging-preflight.mjs
 RUN pnpm install --frozen-lockfile && pnpm db:generate && pnpm build
 USER node
 ENV NODE_ENV=production
