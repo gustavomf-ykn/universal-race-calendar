@@ -1,0 +1,26 @@
+services:
+  api:
+    build: .
+    image: scraper-openresults:local
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: "8000"
+      EVENTS_MIN_DATE: "2025-01-01"
+      OPENRESULTS_DATABASE_PATH: /data/scraper-openresults.sqlite3
+      OPENRESULTS_TEMP_DIR: /data/files
+      OPENRESULTS_ALLOWED_ORIGINS: http://127.0.0.1:8000,http://localhost:8000
+      OPENRESULTS_MAX_JOBS: "1"
+      OPENRESULTS_TRUST_PROXY_HEADERS: "0"
+    volumes:
+      - scraper-openresults-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  scraper-openresults-data:

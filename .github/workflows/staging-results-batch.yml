@@ -1,0 +1,66 @@
+name: Staging results batch
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '43 8 * * *'
+permissions:
+  contents: read
+concurrency:
+  group: staging-results-batch
+  cancel-in-progress: false
+jobs:
+  batch:
+    if: github.repository == 'gustavomf-ykn/universal-race-calendar' && (github.event_name == 'workflow_dispatch' || vars.STAGING_BATCH_ENABLED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: race-platform-staging
+    env:
+      WORKER_MODE: batch
+      WORKER_MAX_TASKS: '3'
+      WORKER_MAX_SECONDS: '600'
+      WORKER_REPORT_PATH: ${{ github.workspace }}/batch-report.json
+      SUPABASE_URL: https://sggrijhyblejlgimgzzc.supabase.co
+    steps:
+      - name: Start timing
+        run: echo "JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            apps/openresults-worker/requirements.txt
+            apps/openresults-worker/requirements-worker.txt
+      - name: Install dependencies and real Chromium
+        run: |
+          pip install -r apps/openresults-worker/requirements-worker.txt
+          python -m playwright install --with-deps chromium
+      - name: Chromium smoke
+        working-directory: apps/openresults-worker
+        run: python browser_smoke.py
+      - name: Validate isolated target
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.STAGING_WORKER_DATABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.STAGING_SUPABASE_SECRET_KEY }}
+        run: node scripts/check-runner-env.mjs python
+      - name: Consume existing tasks
+        working-directory: apps/openresults-worker
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.STAGING_WORKER_DATABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.STAGING_SUPABASE_SECRET_KEY }}
+        run: timeout --signal=TERM --kill-after=10s 630s python -m worker
+      - name: Sanitized summary
+        if: always()
+        run: node scripts/batch-summary.mjs python
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: staging-results-summary
+          path: batch-summary.json
+          retention-days: 3
+          if-no-files-found: ignore

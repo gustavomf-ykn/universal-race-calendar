@@ -14,17 +14,17 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: race_calendar
+          POSTGRES_DB: race_backend_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d race_calendar"
+          --health-cmd "pg_isready -U postgres -d race_backend_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/race_calendar?schema=public
-      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/race_calendar?schema=public
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/race_backend_test?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/race_backend_test?schema=public
       AI_PROVIDER: mock
       INTERNAL_API_KEY: test-internal-key
     steps:
@@ -41,4 +41,50 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r apps/openresults-worker/requirements-worker.txt
       - run: pnpm test
+      - run: python -m pytest -m "not integration" -q
+        working-directory: apps/openresults-worker
+      - run: pnpm openapi:export
+      - run: git diff --exit-code docs/openapi.json
+
+  containers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build isolated images
+        run: |
+          cp .env.example .env
+          docker compose -f compose.backend.yaml build
+      - name: Apply migrations twice to disposable PostgreSQL
+        run: |
+          docker compose -f compose.backend.yaml up -d postgres
+          docker compose -f compose.backend.yaml run --rm api pnpm db:migrate
+          docker compose -f compose.backend.yaml run --rm api pnpm db:migrate
+      - name: Start three real processes and check connectivity
+        run: |
+          docker compose -f compose.backend.yaml up -d api calendar-worker results-worker
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/health; then break; fi
+            sleep 2
+          done
+          curl --fail --silent http://127.0.0.1:3000/health
+          docker compose -f compose.backend.yaml exec -T api node --input-type=module -e 'import {prisma} from "@race-calendar/database"; await prisma.$queryRawUnsafe("SELECT 1"); await prisma.$disconnect(); console.log("api_database_passed");'
+          docker compose -f compose.backend.yaml exec -T results-worker python -c 'from worker import query; assert query("SELECT 1 AS ok",one=True)["ok"] == 1; print("python_database_passed")'
+          test "$(docker compose -f compose.backend.yaml ps --status running --services | wc -l)" -eq 4
+      - name: Launch installed Chromium without network or fixtures
+        run: docker compose -f compose.backend.yaml exec -T results-worker python browser_smoke.py
+      - name: Batch images exit on an empty queue
+        run: |
+          docker compose -f compose.backend.yaml stop calendar-worker results-worker
+          timeout 45s docker compose -f compose.backend.yaml run --rm -e WORKER_MODE=batch -e WORKER_MAX_SECONDS=30 calendar-worker
+          timeout 45s docker compose -f compose.backend.yaml run --rm -e WORKER_MODE=batch -e WORKER_MAX_SECONDS=30 results-worker
+      - name: Stop processes cleanly
+        if: always()
+        run: docker compose -f compose.backend.yaml down --volumes

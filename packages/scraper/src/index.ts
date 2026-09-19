@@ -1,4 +1,5 @@
 import * as cheerio from "cheerio";
+import { safeResponse } from "./safe-http.js";
 import { cleanText, hashContent, unique } from "@race-calendar/utils";
 
 export type ScraperHttpClientOptions = {
@@ -63,26 +64,29 @@ export class ScraperHttpClient {
     let lastError: unknown;
     for (let attempt = 1; attempt <= this.maxRetries; attempt += 1) {
       if (options.delayMs && attempt === 1) await wait(options.delayMs);
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      let retryDelay = 400 * attempt;
       try {
-        const response = await fetch(url, {
-          headers: {
+        const response = await safeResponse(url, {
             "User-Agent": this.userAgent,
             Accept: "text/html,application/xhtml+xml,application/json,text/plain,*/*",
             ...options.headers,
-          },
-          signal: controller.signal,
-        });
+          }, this.timeoutMs);
         if (!response.ok) {
+          const header = response.headers.get("retry-after");
+          if (header) {
+            const seconds = Number(header);
+            const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(header) - Date.now();
+            // Longer upstream cooldowns are handled by the durable queue/operator.
+            if (delay > 30000) throw new ScraperHttpError("upstream_cooldown", url, 403);
+            if (Number.isFinite(delay)) retryDelay = Math.max(retryDelay, delay);
+          }
           throw new ScraperHttpError(`Source returned HTTP ${response.status}`, url, response.status);
         }
         return response;
       } catch (error) {
         lastError = error;
-        if (attempt < this.maxRetries) await wait(400 * attempt);
-      } finally {
-        clearTimeout(timeout);
+        if (error instanceof ScraperHttpError && error.statusCode && error.statusCode < 500 && error.statusCode !== 429) throw error;
+        if (attempt < this.maxRetries) await wait(retryDelay);
       }
     }
 

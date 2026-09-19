@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ScraperHttpClient } from "@race-calendar/scraper";
+import { ScraperHttpClient } from "../packages/scraper/src/index.js";
+import { safeResponse } from "../packages/scraper/src/safe-http.js";
+vi.mock("../packages/scraper/src/safe-http.js",()=>({safeResponse:vi.fn()}));
 
 describe("scraper encoding", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -10,10 +12,7 @@ describe("scraper encoding", () => {
       0x53, 0xe3, 0x6f, 0x20, 0x4a, 0x6f, 0x73, 0xe9,
       0x3c, 0x2f, 0x68, 0x31, 0x3e,
     ]);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response(bytes, { headers: { "content-type": "text/html; charset=windows-1252" } })),
-    );
+    vi.mocked(safeResponse).mockResolvedValue(new Response(bytes, { headers: { "content-type": "text/html; charset=windows-1252" } }));
     const client = new ScraperHttpClient({ maxRetries: 1 });
     await expect(client.getText("https://www.corridasbr.com.br/SP/calendario.asp")).resolves.toContain("São José");
   });

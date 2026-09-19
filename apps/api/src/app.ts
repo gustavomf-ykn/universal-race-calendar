@@ -1,17 +1,16 @@
-import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import { registerBackend, acceptTask } from "./backend.js";
+import { installLegacyContracts } from "./legacy-contracts.js";
+import { installCalendarContracts } from "./contracts.js";
+import { requireAdmin as requireInternalApiKey } from "./auth.js";
+import Fastify, { type FastifyReply, type FastifyError } from "fastify";
 import cors from "@fastify/cors";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import {
   auditCuration,
-  createCatalogImportRun,
   getCatalogImportRun,
   importCorridasBREvents,
   importTicketSportsEvents,
-  processCatalogImportRun,
-  runAICurationBatch,
-  runAICurationForEvent,
-  runSourceCheck,
   type CatalogImportRunInput,
   type ImportCorridasBREventsOptions,
   type ImportTicketSportsEventsOptions,
@@ -23,7 +22,6 @@ import {
   getSource,
   listSources,
   prisma,
-  withPostgresAdvisoryLock,
 } from "@race-calendar/database";
 import {
   curationJobStatusSchema,
@@ -68,28 +66,37 @@ type AdminEventListQuery = EventListQuery & {
   warnings?: string | undefined;
 };
 
-let catalogImportActive = false;
+
 
 export async function buildApp(options: BuildAppOptions = {}) {
-  const app = Fastify({ logger: true });
-  const runTicketSportsImport = options.importTicketSportsEvents ?? importTicketSportsEvents;
-  const runCorridasBRImport = options.importCorridasBREvents ?? importCorridasBREvents;
+  const app = Fastify({ logger: { redact: ["req.headers.authorization", "req.headers.x-api-key", "req.headers.x-client-key"] } });
+  void options; // Deprecated constructor injection retained for source compatibility.
   await app.register(cors, {
     origin: corsOrigins(),
   });
   await app.register(swagger, {
     openapi: {
+      components: { securitySchemes: { supabaseAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" }, clientKey: { type: "apiKey", in: "header", name: "X-Client-Key" }, internalKey: { type: "apiKey", in: "header", name: "X-API-Key" } } },
       info: {
         title: "Universal Race Calendar API",
-        version: "0.1.0",
+        version: "2.0.0",
       },
     },
   });
   await app.register(swaggerUi, { routePrefix: "/docs" });
+  installCalendarContracts(app);
+  installLegacyContracts(app);
+  app.setErrorHandler<FastifyError>((error,request,reply)=>{
+    const code=error.statusCode??500;
+    if(code>=500)request.log.error({code:error.code??"internal_error"},"Request failed; inspect service and database health.");
+    return reply.code(code).send({error:code>=500?"internal_error":error.validation?"invalid_request":error.message});
+  });
 
   app.get("/health", async () => ({ status: "ok" }));
   app.get("/v1/version", async () => ({
     status: "ok",
+    gitSha: process.env.RENDER_GIT_COMMIT ?? process.env.GIT_SHA ?? "development",
+    backendVersion: "2.0.0",
     canonicalSchemaVersion: CANONICAL_SCHEMA_VERSION,
     curationPipelineVersion: CURATION_PIPELINE_VERSION,
     ticketSportsAdapterVersion: ADAPTER_VERSION_TICKETSPORTS,
@@ -159,6 +166,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
           sourceType: event.sourceType,
           sources: serializePublicSources(event),
           lastCuratedAt: event.curatedAt?.toISOString() ?? null,
+          lastUpdatedAt: event.updatedAt.toISOString(),
         };
       }),
       pagination: {
@@ -178,7 +186,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   });
 
   app.get("/v1/events/nearby", async (request) => {
-    const query = request.query as { lat?: string; lng?: string; radiusKm?: string; from?: string; to?: string };
+    const query = request.query as { lat?: string; lng?: string; radiusKm?: string; from?: string; to?: string; page?: string; limit?: string };
     const lat = Number(query.lat);
     const lng = Number(query.lng);
     const radiusKm = Number(query.radiusKm ?? 50);
@@ -191,8 +199,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
         latitude: { not: null },
         longitude: { not: null },
       },
-      include: { distances: true, prices: true },
-      take: 200,
+      select: { id:true,slug:true,name:true,date:true,city:true,state:true,country:true,latitude:true,longitude:true },
+
     });
     const data = rows
       .map((event) => ({ event, distanceKm: haversineKm(lat, lng, event.latitude ?? 0, event.longitude ?? 0) }))
@@ -208,7 +216,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
         country: item.event.country,
         distanceKm: Number(item.distanceKm.toFixed(1)),
       }));
-    return { data, pagination: { page: 1, limit: data.length, total: data.length, totalPages: 1 } };
+    const page=positiveInt(query.page,1),limit=Math.min(positiveInt(query.limit,20),100);
+    return { data:data.slice((page-1)*limit,page*limit), pagination: { page,limit,total:data.length,totalPages:Math.ceil(data.length/limit) } };
   });
 
   app.get("/v1/events/:id", async (request, reply) => {
@@ -244,8 +253,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     const { id } = request.params as { id: string };
     const source = await getSource(id);
     if (!source) return reply.code(404).send({ error: "source_not_found" });
-    const result = await runSourceCheck(id);
-    return reply.code(result.status === "success" ? 200 : 202).send(result);
+    return acceptTask(request, reply, source.adapter === "corridasbr" ? "corridasbr" : "ticketsports", "check-source", { sourceId: id });
   });
 
   app.post("/v1/imports/ticketsports/run", { preHandler: requireInternalApiKey }, async (request, reply) => {
@@ -265,9 +273,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     if (offset != null) importOptions.offset = offset;
     if (force != null) importOptions.force = force;
     if (maxDurationMs != null) importOptions.maxDurationMs = maxDurationMs;
-    const result = await withImportLock(() => runTicketSportsImport(importOptions));
-    if (!result) return reply.code(409).send({ error: "catalog_import_already_running" });
-    return reply.code(result.status === "success" ? 200 : 207).send(result);
+    return acceptTask(request, reply, "ticketsports", "calendar", { ...importOptions, quantity: Math.min(importOptions.quantity ?? 25, 500), concurrency: 1, delayMs: Math.max(importOptions.delayMs ?? 500, 500) });
   });
 
   app.get("/v1/imports/ticketsports/latest", { preHandler: requireInternalApiKey }, async (request, reply) => {
@@ -293,9 +299,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     if (offset != null) importOptions.offset = offset;
     if (force != null) importOptions.force = force;
     if (maxDurationMs != null) importOptions.maxDurationMs = maxDurationMs;
-    const result = await withImportLock(() => runCorridasBRImport(importOptions));
-    if (!result) return reply.code(409).send({ error: "catalog_import_already_running" });
-    return reply.code(result.status === "success" ? 200 : 207).send(result);
+    return acceptTask(request, reply, "corridasbr", "calendar", { ...importOptions, quantity: Math.min(importOptions.quantity ?? 25, 500), concurrency: 1, delayMs: Math.max(importOptions.delayMs ?? 500, 500) });
   });
 
   app.get("/v1/imports/corridasbr/latest", { preHandler: requireInternalApiKey }, async (request, reply) => {
@@ -323,17 +327,13 @@ export async function buildApp(options: BuildAppOptions = {}) {
     if (from) input.from = from;
     if (to) input.to = to;
     if (candidateLimit) input.candidateLimit = candidateLimit;
-    const run = await withImportLock(() => createCatalogImportRun(input));
-    if (!run) return reply.code(409).send({ error: "catalog_import_already_running" });
-    return reply.code(201).send(serializeCatalogImportRun(run));
+    return acceptTask(request, reply, "maintenance", "catalog", { ...input, candidateLimit: Math.min(input.candidateLimit ?? 25, 500) });
   });
 
   app.post("/v1/admin/import-runs/:id/process", { preHandler: requireInternalApiKey }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const limit = optionalPositiveInt(objectBody(request.body).limit) ?? 25;
-    const run = await withImportLock(() => processCatalogImportRun(id, limit));
-    if (!run) return reply.code(409).send({ error: "catalog_import_already_running" });
-    return serializeCatalogImportRun(run);
+    return acceptTask(request, reply, "maintenance", "catalog-process", { runId: id, limit: Math.min(limit, 25) });
   });
 
   app.get("/v1/admin/import-runs/:id", { preHandler: requireInternalApiKey }, async (request, reply) => {
@@ -384,23 +384,23 @@ export async function buildApp(options: BuildAppOptions = {}) {
   app.post("/v1/curation/events/:id/run", { preHandler: requireInternalApiKey }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = objectBody(request.body);
-    const result = await runAICurationForEvent(id, {
+    return acceptTask(request, reply, "maintenance", "curate-event", { eventId: id,
       dryRun: optionalBoolean(body.dryRun) ?? false,
       force: optionalBoolean(body.force) ?? false,
     });
-    return reply.code(result.status === "success" || result.status === "skipped_cached" ? 200 : 202).send(result);
+
   });
 
   app.post("/v1/curation/events/batch", { preHandler: requireInternalApiKey }, async (request, reply) => {
     const body = objectBody(request.body);
     const only = curationOnlyValue(body.only);
-    const result = await runAICurationBatch({
-      limit: optionalPositiveInt(body.limit) ?? 10,
+    return acceptTask(request, reply, "maintenance", "curate-batch", {
+      limit: Math.min(optionalPositiveInt(body.limit) ?? 10, 100),
       only,
       dryRun: optionalBoolean(body.dryRun) ?? false,
       force: optionalBoolean(body.force) ?? false,
     });
-    return reply.code(result.status === "success" ? 200 : 207).send(result);
+
   });
 
   app.get("/v1/curation/jobs/:id", { preHandler: requireInternalApiKey }, async (request, reply) => {
@@ -651,6 +651,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     };
   });
 
+  await registerBackend(app);
   return app;
 }
 
@@ -1037,7 +1038,7 @@ function publicEventsWhere(query: EventListQuery) {
 
 function eventOrderBy(sort: string | undefined) {
   if (sort === "date_desc") return { date: "desc" as const };
-  if (sort === "name") return { name: "asc" as const };
+  if (sort === "name" || sort === "name_asc") return { name: "asc" as const };
   return { date: "asc" as const };
 }
 
@@ -1045,29 +1046,12 @@ function applySourceTypeFilter(where: any, value: string | undefined) {
   const sourceTypes = (value ?? "")
     .split(",")
     .map((sourceType) => sourceType.trim().toLowerCase())
-    .filter((sourceType) => sourceType === "ticketsports" || sourceType === "corridasbr");
+    .filter((sourceType) => sourceType === "ticketsports" || sourceType === "corridasbr" || sourceType === "openresults");
   if (!sourceTypes.length) return;
   where.OR = [
     { sourceType: { in: sourceTypes } },
     { sourceReferences: { some: { sourceType: { in: sourceTypes } } } },
   ];
-}
-
-async function withImportLock<T>(run: () => Promise<T>): Promise<T | null> {
-  if (catalogImportActive) return null;
-  catalogImportActive = true;
-  try {
-    return await withPostgresAdvisoryLock("universal-race-calendar:catalog-import", run);
-  } finally {
-    catalogImportActive = false;
-  }
-}
-
-async function requireInternalApiKey(request: FastifyRequest, reply: FastifyReply) {
-  const expected = process.env.INTERNAL_API_KEY;
-  if (!expected) return reply.code(500).send({ error: "internal_api_key_not_configured" });
-  const provided = request.headers["x-api-key"];
-  if (provided !== expected) return reply.code(401).send({ error: "unauthorized" });
 }
 
 function positiveInt(value: string | undefined, fallback: number): number {
@@ -1261,6 +1245,8 @@ function serializePublicSources(event: any) {
       type: reference.sourceType,
       role: reference.role,
       url: reference.url,
+      externalId: reference.sourceExternalId,
+      updatedAt: reference.updatedAt?.toISOString() ?? null,
     }));
   }
   return event.sourceType ? [{ type: event.sourceType, role: "primary", url: event.sourceUrl }] : [];
