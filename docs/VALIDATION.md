@@ -58,3 +58,7 @@ A amostra OpenResults identificou erro no tipo passado como TLS SNI; foi corrigi
 - Cancelamento de tarefas running, exporta√ß√£o ZIP e migra√ß√£o de hist√≥rico operacional antigo n√£o entram no contrato unificado inicial.
 
 Contratos e fluxo integrado est√£o validados localmente para iniciar o trabalho do painel. A libera√ß√£o operacional em Supabase/Render depende dos passos externos acima; n√£o foi declarada produ√ß√£o pronta.
+
+## AtualizaÁ„o de 19/09/2026
+
+No commit `73844eb`, 67 testes TypeScript e 47 Python passaram. O CI adicional construiu e executou as imagens reais, aplicou migrations duas vezes em PostgreSQL descart·vel, iniciou API e ambos os workers e lanÁou Chromium com verificaÁ„o de DOM/JavaScript. A pendÍncia anterior de build/smoke das imagens foi resolvida. O fallback no site real e o fluxo integrado no Supabase ainda aguardam configuraÁ„o; acompanhe [STAGING.md](STAGING.md).

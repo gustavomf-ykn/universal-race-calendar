@@ -82,7 +82,7 @@ Metadados públicos conferidos: MOUNTAIN DO COSTÃO DO SANTINHO 2026, 25/07/2026
 | Login real autorizado e testes negativos Auth | Pendente de chave secreta |
 | Migrations/RLS/fila no Supabase e reexecução | Pendente das conexões |
 | Storage real e download/expiração | Pendente de secrets e processos |
-| Imagens Docker e Chromium | Pendente do CI ampliado |
+| Imagens Docker e Chromium | Aprovado no CI isolado: build, processos, banco e navegador real |
 | Fluxo principal real, repetição e recuperação em staging | Pendente da configuração |
 | Ensaio de backups antigos | Pendente dos backups; não bloqueia sozinho a construção do painel |
 
