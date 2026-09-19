@@ -8,6 +8,19 @@ from app.models import EventMetadata,ExtractionResult,ModalityInfo
 import worker
 
 mode=sys.argv[1]
+if mode=='privileges':
+    from pathlib import Path
+    with worker.connection() as conn:
+        for role in ['anon','authenticated']:
+            conn.execute(f"DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname='{role}') THEN CREATE ROLE {role}; END IF; END $$")
+            conn.execute(f'GRANT EXECUTE ON FUNCTION claim_task(text[],text) TO {role}')
+            conn.execute(f'GRANT SELECT ON "_prisma_migrations" TO {role}')
+        conn.execute(Path('../../packages/database/prisma/migrations/20260919000000_staging_privileges/migration.sql').read_text())
+        for role in ['anon','authenticated']:
+            assert not conn.execute("SELECT has_function_privilege(%s,'claim_task(text[],text)','EXECUTE') AS allowed",(role,)).fetchone()['allowed']
+            assert not conn.execute("SELECT has_table_privilege(%s,'\"_prisma_migrations\"','SELECT') AS allowed",(role,)).fetchone()['allowed']
+    print('explicit_api_privileges_revoked')
+    sys.exit(0)
 if mode=="cleanup":
     asyncio.run(worker.cleanup_exports())
     sys.exit(0)

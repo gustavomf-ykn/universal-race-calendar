@@ -355,11 +355,15 @@ export async function registerBackend(app: FastifyInstance) {
       let downloadUrl: string | null = null;
       if (!expired && item.status === "completed" && item.objectPath) {
         const base = process.env.SUPABASE_URL;
-        const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
         if (!base || !key) return reply.code(503).send({ error: "storage_not_configured" });
         const response = await fetch(`${base}/storage/v1/object/sign/race-exports/${item.objectPath}`, {
           method: "POST",
-          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+          headers: {
+            apikey: key,
+            ...(key.startsWith("sb_secret_") ? {} : { Authorization: `Bearer ${key}` }),
+            "Content-Type": "application/json",
+          },
           body: JSON.stringify({
             expiresIn: Math.max(1, Math.min(60, Math.floor((item.expiresAt.getTime() - Date.now()) / 1000))),
           }),

@@ -57,6 +57,13 @@ describe.skipIf(!process.env.DATABASE_URL)("unified backend with PostgreSQL and 
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
       const path = req.url!;
+      if (path.startsWith("/storage/v1/")) {
+        if (req.headers.apikey !== "sb_secret_fixture" || req.headers.authorization) {
+          res.statusCode = 401;
+          res.end("{}");
+          return;
+        }
+      }
       if (path === "/auth/v1/.well-known/jwks.json") {
         res.setHeader("content-type", "application/json");
         res.end(JSON.stringify({ keys: [jwk] }));
@@ -89,6 +96,7 @@ describe.skipIf(!process.env.DATABASE_URL)("unified backend with PostgreSQL and 
     const address = server.address() as { port: number };
     process.env.SUPABASE_URL = `http://127.0.0.1:${address.port}`;
     process.env.SUPABASE_SERVICE_ROLE_KEY = "fixture-only";
+    process.env.SUPABASE_SECRET_KEY = "sb_secret_fixture";
     app = await buildApp();
   });
   afterAll(async () => {
@@ -416,6 +424,9 @@ describe.skipIf(!process.env.DATABASE_URL)("unified backend with PostgreSQL and 
     const task = await enqueueTask("different-owner", "owned-task", "openresults", "inspect", {});
     expect((await app.inject({ method: "GET", url: `/v1/tasks/${task.id}`, headers })).statusCode).toBe(404);
     expect((await app.inject({ method: "GET", url: "/v1/tasks", headers })).statusCode).toBe(429);
+  });
+  it("revokes explicit Supabase API grants on queue functions and migration history", async () => {
+    await fixture("privileges", "maintenance", "unused");
   });
   it("keeps backend tables protected by RLS even with SELECT privileges", async () => {
     const rows = await prisma.$queryRaw<

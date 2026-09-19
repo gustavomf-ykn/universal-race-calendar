@@ -23,6 +23,11 @@ from app.services.openresults.catalog import EventCatalog
 from app.services.scraper import OpenResultsScraper
 
 
+def storage_headers():
+    key=os.environ.get('SUPABASE_SECRET_KEY') or os.environ['SUPABASE_SERVICE_ROLE_KEY']
+    return {'apikey':key, **({} if key.startswith('sb_secret_') else {'Authorization':f'Bearer {key}'})}
+
+
 def connection():
     # psycopg uses libpq URI, not Prisma's ?schema=public parameter.
     return psycopg.connect(os.environ["WORKER_DATABASE_URL"], row_factory=dict_row)
@@ -147,7 +152,7 @@ async def export(task):
     base=os.environ['SUPABASE_URL'].rstrip('/')
     async with httpx.AsyncClient(timeout=30) as client:
         response=await client.post(f'{base}/storage/v1/object/race-exports/{path}',headers={
-            'Authorization':f"Bearer {os.environ['SUPABASE_SERVICE_ROLE_KEY']}",
+            **storage_headers(),
             'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','x-upsert':'true'},content=output.getvalue())
         response.raise_for_status()
     with connection() as conn:
@@ -167,7 +172,7 @@ async def cleanup_exports():
         _cleanup_cursor=''
         return
     base=os.environ['SUPABASE_URL'].rstrip('/')+'/storage/v1/object'
-    headers={'Authorization':f"Bearer {os.environ['SUPABASE_SERVICE_ROLE_KEY']}"}
+    headers=storage_headers()
     async with httpx.AsyncClient(timeout=30) as client:
         for item in items:
             response=await client.post(base+'/list/race-exports',headers=headers,json={'prefix':item['id']+'/', 'limit':100,'offset':0})

@@ -35,3 +35,12 @@ def test_excel_cells_do_not_execute_formulas():
     assert excel_cell('=HYPERLINK("example")').startswith("'")
     assert excel_cell(' +SUM(1,1)').startswith("'")
     assert excel_cell('Ana')=='Ana'
+
+
+def test_storage_keys_use_correct_gateway_headers(monkeypatch):
+    from worker import storage_headers
+    monkeypatch.setenv('SUPABASE_SECRET_KEY','sb_secret_fixture')
+    assert storage_headers()=={'apikey':'sb_secret_fixture'}
+    monkeypatch.delenv('SUPABASE_SECRET_KEY')
+    monkeypatch.setenv('SUPABASE_SERVICE_ROLE_KEY','legacy-fixture')
+    assert storage_headers()=={'apikey':'legacy-fixture','Authorization':'Bearer legacy-fixture'}

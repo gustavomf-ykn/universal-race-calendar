@@ -14,3 +14,7 @@ packages/database/generated/
 race-calendar-connect/
 race-operations-hub/
 !.gitkeep
+
+.secrets/
+.env.*
+!.env.example

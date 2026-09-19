@@ -125,3 +125,7 @@ Sem identidade global de atleta, cobranÃ§a ou painel. Contratos novos usam a API
 unificada; a API FastAPI antiga nÃ£o deve ser publicada junto desta implantaÃ§Ã£o.
 
 Consulte [VALIDATION.md](VALIDATION.md) para distinguir fixtures e integraÃ§Ãµes reais.
+
+## Homologação atual
+
+Projeto Supabase confirmado: `race-platform-staging`, URL pública `https://sggrijhyblejlgimgzzc.supabase.co`. JWKS ES256 e provedor de e-mail verificados. URL base da API hospedada e login/Storage reais ainda pendentes de configuração. Não apontar o painel para produção. Estado e acessos necessários: [STAGING.md](STAGING.md). A chave publicável pertence à configuração pública do cliente; SUPABASE_SECRET_KEY, chaves legadas privilegiadas, URLs do banco e chaves internas permanecem exclusivamente no servidor.

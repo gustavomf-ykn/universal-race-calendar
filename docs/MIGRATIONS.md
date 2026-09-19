@@ -60,3 +60,7 @@ Itens sem mapping ficam `mapping_required`; incompletos ficam `skipped_incomplet
 Reexecutar `--apply` com a mesma c√≥pia/mapping mant√©m ResultSet e n√£o duplica RaceResult. Uma tarefa operacional adicional √© esperada. Antes/depois: comparar contagem por conjunto, rela√ß√µes, data e amostras de bib/modalidade/classifica√ß√£o com a c√≥pia; n√£o usar s√≥ quantidade global como prova de migra√ß√£o correta. Falha durante publica√ß√£o mant√©m o √∫ltimo conjunto v√°lido.
 
 ZIP e arquivos tempor√°rios antigos n√£o s√£o migrados; gerar novos XLSX no Storage a partir dos resultados permanentes. Jobs antigos continuam apenas no backup de origem, n√£o viram tarefas prontas para execu√ß√£o no banco novo. Esses s√£o limites deliberados de compatibilidade, n√£o perda dos resultados importados.
+
+## Ensaio apÛs a homologaÁ„o de 19/09/2026
+
+Nenhum backup real foi recebido ou importado. Depois do aceite em STAGING.md, obter dump PostgreSQL consistente (incluindo _prisma_migrations) e backup SQLite pela API de backup, com WAL capturado. Confirmar um destino descart·vel antes de restaurar; n„o misturar o ensaio com os dados do aceite sem plano explÌcito. Comparar manifests, referÍncias, contagens por ediÁ„o e amostras. Esta pendÍncia È independente do teste de Auth/Storage e n„o justifica acesso ‡ produÁ„o.

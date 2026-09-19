@@ -1,0 +1,32 @@
+# Existing external Supabase only; unlike compose.backend.yaml, no local database
+# and no database URL overrides. The user supplies an absolute private env path.
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    env_file: ${STAGING_ENV_FILE:?Set the absolute path of the private staging env file}
+    environment:
+      NODE_ENV: production
+    ports: ['127.0.0.1:3000:3000']
+    restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      test: ['CMD','node','-e','fetch("http://127.0.0.1:3000/health").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))']
+      interval: 30s
+      timeout: 5s
+  calendar-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: ['node','apps/worker/dist/apps/worker/src/queue.js']
+    env_file: ${STAGING_ENV_FILE:?Set the absolute path of the private staging env file}
+    restart: unless-stopped
+    stop_grace_period: 30s
+  results-worker:
+    build:
+      context: .
+      dockerfile: apps/openresults-worker/Dockerfile.worker
+    env_file: ${STAGING_ENV_FILE:?Set the absolute path of the private staging env file}
+    restart: unless-stopped
+    stop_grace_period: 30s
