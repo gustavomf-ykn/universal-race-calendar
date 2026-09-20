@@ -54,7 +54,9 @@ jobs:
         env:
           WORKER_DATABASE_URL: ${{ secrets.STAGING_WORKER_DATABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.STAGING_SUPABASE_SECRET_KEY }}
-        run: timeout --signal=TERM --kill-after=10s 630s python -m worker
+        run: |
+          python database_smoke.py
+          timeout --signal=TERM --kill-after=10s 630s python -m worker
       - name: Sanitized summary
         if: always()
         run: node scripts/batch-summary.mjs python
