@@ -41,6 +41,8 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build
+      - name: Check read-only database preflight against disposable PostgreSQL
+        run: node scripts/check-staging-database.mjs
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
