@@ -1,8 +1,7 @@
 name: Staging calendar batch
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '23 8 * * *'
+# Scheduling intentionally disabled until manual staging validation is approved.
 permissions:
   contents: read
 concurrency:
@@ -10,7 +9,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   batch:
-    if: github.repository == 'gustavomf-ykn/universal-race-calendar' && (github.event_name == 'workflow_dispatch' || vars.STAGING_BATCH_ENABLED == 'true')
+    if: github.repository == 'gustavomf-ykn/universal-race-calendar' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: race-platform-staging
@@ -38,6 +37,13 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm db:generate
           pnpm --filter @race-calendar/worker... build
+      - name: Check DIRECT_URL connectivity without migrations
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+        run: |
+          node scripts/check-runner-env.mjs typescript
+          node scripts/check-staging-database.mjs
       - name: Consume existing tasks
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
@@ -48,6 +54,7 @@ jobs:
           AI_CURATION_REQUIRED: 'false'
         run: |
           node scripts/check-runner-env.mjs typescript
+          node scripts/check-staging-database.mjs
           timeout --signal=TERM --kill-after=10s 510s node apps/worker/dist/apps/worker/src/queue.js
       - name: Sanitized summary
         if: always()

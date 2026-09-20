@@ -1,8 +1,7 @@
 name: Staging results batch
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '43 8 * * *'
+# Scheduling intentionally disabled until manual staging validation is approved.
 permissions:
   contents: read
 concurrency:
@@ -10,7 +9,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   batch:
-    if: github.repository == 'gustavomf-ykn/universal-race-calendar' && (github.event_name == 'workflow_dispatch' || vars.STAGING_BATCH_ENABLED == 'true')
+    if: github.repository == 'gustavomf-ykn/universal-race-calendar' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: race-platform-staging
@@ -47,7 +46,9 @@ jobs:
         env:
           WORKER_DATABASE_URL: ${{ secrets.STAGING_WORKER_DATABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.STAGING_SUPABASE_SECRET_KEY }}
-        run: node scripts/check-runner-env.mjs python
+        run: |
+          node scripts/check-runner-env.mjs python
+          node scripts/check-staging-storage.mjs
       - name: Consume existing tasks
         working-directory: apps/openresults-worker
         env:

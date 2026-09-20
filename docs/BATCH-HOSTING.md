@@ -31,10 +31,10 @@ Python limpa exportações expiradas no início de cada lote, além da cadência
 
 | Workflow | Agenda UTC proposta | Limite do worker | Limite de job, com preparação |
 |---|---|---|---|
-| Staging calendar batch | 08:23 diariamente | 3 tarefas / 480 s | 15 min |
-| Staging results batch | 08:43 diariamente | 3 tarefas / 600 s | 20 min |
+| Staging calendar batch | Desativada (proposta futura: 08:23) | 3 tarefas / 480 s | 15 min |
+| Staging results batch | Desativada (proposta futura: 08:43) | 3 tarefas / 600 s | 20 min |
 
-Agendas só habilitam o job se a repository variable `STAGING_BATCH_ENABLED=true`. Deixar ausente até configurar os Secrets e validar manualmente. Acionamento manual ignora essa variável. Uma execução concorrente por tipo, `cancel-in-progress=false`; locks/leases protegem entre hosts também. Uma execução pendente pode ser substituída conforme a concorrência do GitHub; as tarefas duráveis continuam no banco.
+Os gatilhos schedule foram removidos: execução exclusivamente manual. A variável STAGING_BATCH_ENABLED não é usada e não pode ativar horários. Habilitar uma agenda exige mudança revisada no YAML após aprovação da homologação. Uma execução concorrente por tipo, `cancel-in-progress=false`; locks/leases protegem entre hosts também. Uma execução pendente pode ser substituída conforme a concorrência do GitHub; as tarefas duráveis continuam no banco.
 
 Permissão do token: contents:read. Checkout sem credenciais persistidas. Sem pull_request_target, dispatch pelo navegador, HTTP prolongado ao Render, enqueue automático, migrations ou download de atletas em artifacts. Só dependências pnpm/pip em cache; Chromium é instalado e smoke-tested em cada job Python (não guardar perfil do navegador nem dados de coleta em cache). Relatório sanitizado em artifact por 3 dias e summary mesmo quando falha. Cancelamento forçado de todo o runner ainda pode impedir os passos finais.
 
@@ -57,6 +57,18 @@ URL Supabase/ref estão fixados publicamente nos workflows, com preflight que re
 
 Para executar: GitHub → Actions → Staging calendar batch ou Staging results batch → Run workflow → selecionar a versão revisada disponível. Conferir resumo, tarefas da API e artifact `batch-summary.json`. O workflow nunca cria a coleta: primeiro solicitar pela API autorizada, usando Idempotency-Key, ou usar as tarefas pequenas já criadas na homologação.
 
+### Primeira execução manual após o merge pelo proprietário
+
+O proprietário informou que cadastrou os quatro Secrets no Environment `race-platform-staging`. Cadastro não comprova validade: não lemos nem imprimimos seus valores. Os arquivos ainda não existem em `main`; sua disponibilização inicial depende do merge do PR #4 pelo proprietário. O merge executa CI, mas não dispara estes dois workflows nem ativa agenda.
+
+1. Confirmar CI verde no commit final e fazer o merge; aguardar o CI de `main`. Não ativar agendamentos e não executar os workflows legados de produção.
+2. Conferir que não há outro executor de staging ativo e que a fila contém apenas as tarefas pequenas desejadas. Para o primeiro smoke, uma fila vazia é suficiente para conectividade, mas não comprova coleta/exportação.
+3. Actions → **Staging calendar batch** → Run workflow → **main**. O preflight rejeita outro projeto/SSL incorreto, verifica separadamente DATABASE_URL e DIRECT_URL com leitura de schema, sem migrations, e inicia o lote. A saída `staging_database_access_passed` deve aparecer para ambas as conexões; não há impressão de URLs.
+4. Depois, executar **Staging results batch**, também em main. Verificar Chromium, configuração, `staging_private_storage_access_passed` e resumo do worker. O teste do Storage consulta somente os metadados do bucket privado, não enumera arquivos nem publica dados; autentica a chave mesmo com fila vazia. A conexão Python é exercitada pela consulta da fila.
+5. Registrar SHA, links dos runs, duração de todos os steps (incluindo preparação/Chromium), motivos de saída e IDs/status de tarefas. `queue_empty` é sucesso de inicialização; `report_unavailable`, erro de conectividade ou falha no Storage exige correção antes de prosseguir. A publicação/download de uma exportação será comprovada separadamente com uma tarefa pequena.
+
+Se o Environment exigir aprovação ou restringir branches, autorizar apenas main conforme suas regras. Não enviar secrets pelo chat, inputs de workflow ou logs. Render ainda não configurado não impede estes testes: os workers acessam Supabase diretamente. Nenhum workflow faz deploy da API.
+
 ### Proteção de gastos
 
 Antes de habilitar: Settings da conta → Billing and licensing → Budgets and alerts; conferir orçamento de Actions/artifacts e bloqueio de uso pago (`Stop usage when budget limit is reached`) conforme os controles disponíveis. Manter orçamento de uso pago zero/bloqueado quando suportado, sem adicionar forma de pagamento ou habilitar cobrança nesta tarefa. Não aumentar cache acima dos 10 GB incluídos, não usar runners maiores. Verificar consumo de outros repositórios/CI e retenção de artifacts. [Orçamentos oficiais](https://docs.github.com/en/billing/how-tos/set-up-budgets). No Render conferir limites de banda/pipeline e bloquear excedentes conforme o painel; sem forma de pagamento, a documentação prevê suspensão em vez de continuidade cobrada.
@@ -75,9 +87,9 @@ Não foi possível confirmar os controles financeiros atuais da conta pelo conec
 
 Execuções locais nativas contra Supabase em 19/09: lote vazio TS <1 s; vazio Python 1–2 s com limpeza; check TicketSports cerca de 1 s; coleta OpenResults de 435 resultados cerca de 9 s; exportação 2–3 s. Esses tempos começam **depois da importação do processo** e não incluem provisionamento do runner, checkout, instalação, build ou Chromium. Não são uma previsão de custo do Actions.
 
-Os workflows novos ainda não foram executados no GitHub com Supabase: faltam acesso a Secrets e disponibilização inicial na branch padrão. Preparação fria/quente e duração total real permanecem **pendentes de medição**. Os testes/CI anteriores não substituem essa medição. Summary registra tempo desde o primeiro passo e tempo do worker; usar os timestamps do job/steps do Actions para incluir toda a preparação e upload.
+Os workflows novos ainda não foram executados no GitHub com Supabase: o usuário informou o cadastro dos quatro Secrets no Environment, mas a validação de seus valores ainda depende da execução após disponibilização inicial na branch padrão. Preparação fria/quente e duração total real permanecem **pendentes de medição**. Os testes/CI anteriores não substituem essa medição. Summary registra tempo desde o primeiro passo e tempo do worker; usar os timestamps do job/steps do Actions para incluir toda a preparação e upload.
 
-Projeção máxima configurada para 31 dias: `31 × (15 + 20) = 1.085 minutos de jobs`, mais acionamentos manuais, CI, builds e outras homologações. É teto configurado, não consumo medido nem cobrança prevista. Quando houver medições: `dias × (média do job TS + média do job Python) + minutos de CI + manuais`, separando runs frias e com cache. Para orçamento privado hipotético de 2.000 min, não tratar 1.085 como suficiente sem somar todos os repositórios; para este público, computação padrão é gratuita sujeita aos termos. Artefatos continuam mínimos e com retenção curta.
+Projeção hipotética se uma agenda diária for aprovada no futuro (atualmente desativada), para 31 dias: `31 × (15 + 20) = 1.085 minutos de jobs`, mais acionamentos manuais, CI, builds e outras homologações. É teto configurado, não consumo medido nem cobrança prevista. Quando houver medições: `dias × (média do job TS + média do job Python) + minutos de CI + manuais`, separando runs frias e com cache. Para orçamento privado hipotético de 2.000 min, não tratar 1.085 como suficiente sem somar todos os repositórios; para este público, computação padrão é gratuita sujeita aos termos. Artefatos continuam mínimos e com retenção curta.
 
 ## Validação e portabilidade
 
