@@ -2,7 +2,21 @@
 
 API de homologação: https://universal-race-calendar.onrender.com (Render Free). Workers executados manualmente no GitHub Actions; agendamentos não foram habilitados. Comparação de hospedagem: [HOSTING.md](HOSTING.md).
 
-## Aceite remoto em 20/09/2026 — parcial
+## Complemento em 20/09/2026 — API hospedada e worker local
+
+Nova coleta intencional (nova Idempotency-Key), tarefa **`1acc7940-7868-405a-80bc-e8d3c0e2a00f`**, criada pela API hospedada no commit `97f27f7c98fe5a01b0fe676302b14cc97f9b3886`. Worker Python local com a correção `21dc3e6` do PR #6: **completed**, tentativa 1, `errorCode=null`, `progress.stage=published`, `processed=435`. Lote encerrou com `task_limit`, uma tarefa adquirida, 13 segundos, sem recuperação pendente.
+
+Antes: 435 resultados. Depois: 435. Conteúdo canônico idêntico, timestamp de publicação atualizado. Portanto houve **nova leitura e publicação bem-sucedida**, sem registros novos nem mudança de conteúdo; não foi apenas preservação após falha. Associação existente reutilizada, sem duplicar evento.
+
+Isolamento conferido: execuções GitHub encerradas, agendas desativadas, nenhum processo worker local ativo antes; fila sem queued/running antes do POST e contendo somente essa tarefa queued/attempt 0 depois. O relatório do processo local confirmou exatamente seu ID. Nenhum runner foi disparado. Worker encerrou ao terminar; usuário próprio temporário criado sem convite e removido. Nenhum mecanismo de contorno nem repetição da coleta foi usado.
+
+O sucesso neste computador não resolve o bloqueio observado na infraestrutura GitHub. Usar o executor local enquanto necessário; não repetir automaticamente tentativas bloqueadas. Script reproduzível: `scripts/staging-local-flow.py` / wrapper `-Action localflow`; recusa outra execução enquanto existir seu relatório ignorado `.secrets/staging-local-report.json`. Arquivar esse relatório só após autorização de outro ensaio. Ele inicia um processo real local, ao contrário do roteiro `remote`.
+
+**Implantação do PR #6:** não altera schema nem contém migrations. Atualizar código/reiniciar worker Python para o diagnóstico específico; o launcher e os guias são locais. API hospedada atual aceita esse errorCode como string, portanto não exige redeploy para essa correção. Merge e atualização dos processos ficam a cargo do proprietário; nenhum foi feito automaticamente.
+
+**Prontidão Lovable:** login, calendário/resultados persistidos, tarefas e exportação prontos; novas coletas OpenResults comprovadas com worker local. Geração de novos arquivos também depende do Python ligado. Restam criar/promover o usuário real, configurar a origem CORS/URLs de Auth quando houver painel e aceitar a operação manual. Instruções: [LOCAL-WORKERS.md](LOCAL-WORKERS.md) e [LOVABLE-INTEGRATION.md](LOVABLE-INTEGRATION.md). Produção continua sem aceite; o runner remoto não foi revalidado para ingestão.
+
+## Aceite remoto em 20/09/2026 — parcial, anterior ao complemento local
 
 Commit efetivamente informado por `/v1/version`: `97f27f7c98fe5a01b0fe676302b14cc97f9b3886`, backend 2.0.0. `/health` respondeu 200; `/v1/openapi.json` respondeu 200 e corresponde ao JSON do repositório. A identidade do staging foi confirmada pelo JWT desse projeto e pela presença das tarefas criadas pela API no banco isolado, consultado somente em leitura. Nenhuma migration foi aplicada nesta rodada.
 
