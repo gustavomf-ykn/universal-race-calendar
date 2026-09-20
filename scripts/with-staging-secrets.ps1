@@ -1,4 +1,4 @@
-param([ValidateSet('check','migrate','audit','auth','flow','corridasbr','recovery','batch','api','calendar','results')][string]$Action='check',[Parameter(Mandatory=$true)][ValidatePattern('^[a-z]{20}$')][string]$ProjectRef)
+param([ValidateSet('check','migrate','audit','auth','flow','corridasbr','recovery','batch','remote','localflow','api','calendar','results')][string]$Action='check',[Parameter(Mandatory=$true)][ValidatePattern('^[a-z]{20}$')][string]$ProjectRef)
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 $config=Get-Content -Raw -LiteralPath (Join-Path $root '.secrets/staging.dpapi.json') | ConvertFrom-Json
@@ -21,6 +21,8 @@ try {
   'corridasbr' { & python scripts/staging-real-flow.py --corridasbr }
   'recovery' { & python scripts/staging-recovery.py }
   'batch' { & python scripts/staging-batch-smoke.py }
+  'remote' { & python scripts/staging-remote-flow.py }
+  'localflow' { & python scripts/staging-local-flow.py }
   'api' { & node apps/api/dist/apps/api/src/server.js }
   'calendar' { & node apps/worker/dist/apps/worker/src/queue.js }
   'results' { Push-Location apps/openresults-worker;try { & python -m worker } finally {Pop-Location} }

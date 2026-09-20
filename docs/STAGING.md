@@ -1,6 +1,58 @@
 # Homologação race-platform-staging
 
-Hospedagem: o proprietário informou não ter serviços existentes no Render. Comparação atual de custos e arquivos preparados, aguardando escolha sem contratação/deploy: [HOSTING.md](HOSTING.md).
+API de homologação: https://universal-race-calendar.onrender.com (Render Free). Workers executados manualmente no GitHub Actions; agendamentos não foram habilitados. Comparação de hospedagem: [HOSTING.md](HOSTING.md).
+
+## Complemento em 20/09/2026 — API hospedada e worker local
+
+Nova coleta intencional (nova Idempotency-Key), tarefa **`1acc7940-7868-405a-80bc-e8d3c0e2a00f`**, criada pela API hospedada no commit `97f27f7c98fe5a01b0fe676302b14cc97f9b3886`. Worker Python local com a correção `21dc3e6` do PR #6: **completed**, tentativa 1, `errorCode=null`, `progress.stage=published`, `processed=435`. Lote encerrou com `task_limit`, uma tarefa adquirida, 13 segundos, sem recuperação pendente.
+
+Antes: 435 resultados. Depois: 435. Conteúdo canônico idêntico, timestamp de publicação atualizado. Portanto houve **nova leitura e publicação bem-sucedida**, sem registros novos nem mudança de conteúdo; não foi apenas preservação após falha. Associação existente reutilizada, sem duplicar evento.
+
+Isolamento conferido: execuções GitHub encerradas, agendas desativadas, nenhum processo worker local ativo antes; fila sem queued/running antes do POST e contendo somente essa tarefa queued/attempt 0 depois. O relatório do processo local confirmou exatamente seu ID. Nenhum runner foi disparado. Worker encerrou ao terminar; usuário próprio temporário criado sem convite e removido. Nenhum mecanismo de contorno nem repetição da coleta foi usado.
+
+O sucesso neste computador não resolve o bloqueio observado na infraestrutura GitHub. Usar o executor local enquanto necessário; não repetir automaticamente tentativas bloqueadas. Script reproduzível: `scripts/staging-local-flow.py` / wrapper `-Action localflow`; recusa outra execução enquanto existir seu relatório ignorado `.secrets/staging-local-report.json`. Arquivar esse relatório só após autorização de outro ensaio. Ele inicia um processo real local, ao contrário do roteiro `remote`.
+
+**Implantação do PR #6:** não altera schema nem contém migrations. Atualizar código/reiniciar worker Python para o diagnóstico específico; o launcher e os guias são locais. API hospedada atual aceita esse errorCode como string, portanto não exige redeploy para essa correção. Merge e atualização dos processos ficam a cargo do proprietário; nenhum foi feito automaticamente.
+
+**Prontidão Lovable:** login, calendário/resultados persistidos, tarefas e exportação prontos; novas coletas OpenResults comprovadas com worker local. Geração de novos arquivos também depende do Python ligado. Restam criar/promover o usuário real, configurar a origem CORS/URLs de Auth quando houver painel e aceitar a operação manual. Instruções: [LOCAL-WORKERS.md](LOCAL-WORKERS.md) e [LOVABLE-INTEGRATION.md](LOVABLE-INTEGRATION.md). Produção continua sem aceite; o runner remoto não foi revalidado para ingestão.
+
+## Aceite remoto em 20/09/2026 — parcial, anterior ao complemento local
+
+Commit efetivamente informado por `/v1/version`: `97f27f7c98fe5a01b0fe676302b14cc97f9b3886`, backend 2.0.0. `/health` respondeu 200; `/v1/openapi.json` respondeu 200 e corresponde ao JSON do repositório. A identidade do staging foi confirmada pelo JWT desse projeto e pela presença das tarefas criadas pela API no banco isolado, consultado somente em leitura. Nenhuma migration foi aplicada nesta rodada.
+
+| Validação | Resultado observado |
+|---|---|
+| Auth remoto | Admin Supabase permitido; sem token e token inválido: 401; usuário comum na administração: 403 |
+| Associação | Reutilizada edição `evt_91fe44bc51e94cf6acf036b6`, OpenResults 37007 e TicketSports 74857; nenhum evento novo |
+| API → fila | POST coleta: 202; tarefa `702c8b1d-6290-461b-8083-186a60d1a806`, inicialmente queued/attempt 0 |
+| Runner → coleta nova | **Falhou**: tarefa adquirida, attempt 1, bloqueio de acesso à fonte; não houve nova publicação de resultados |
+| Preservação e consulta | 435 resultados anteriores, paginação completa; conteúdo e amostra comparados por hash em memória permaneceram iguais |
+| API → fila → exportação | 202; tarefa `966690d9-99f4-43c8-bfb7-9baae5f37da2` concluída pelo runner |
+| Storage | Artefato `a414e2ab-8824-4a73-b3db-06adfc4c466a`, XLSX 36.135 bytes/435 linhas; download assinado 200, bucket privado, URL pública sem assinatura 400; endpoint sem login 401 |
+| Idempotência | Mesma chave e mesmo usuário retornaram a mesma coleta antes/depois da falha; exportação repetida retornou o mesmo artefato e tarefa |
+| Limpeza de identidades | Três usuários próprios temporários, sem convites, removidos ao final |
+
+Execuções do workflow **Staging results batch**, mesmo commit da API:
+- [Tentativa 1 — coleta](https://github.com/gustavomf-ykn/universal-race-calendar/actions/runs/35481941925/attempts/1): `claimed=1`, tarefa failed, 13 s de consumo.
+- [Tentativa 2 — exportação](https://github.com/gustavomf-ykn/universal-race-calendar/actions/runs/35481941925/attempts/2): `claimed=1`, tarefa completed, 16 s de consumo. Chromium smoke aprovado nas duas execuções.
+
+O workflow encerrou verde nas duas tentativas porque o processo batch terminou normalmente; isso não transforma uma tarefa failed em sucesso. `reason=queue_empty` é a razão de término **depois** de consumir a tarefa. Nenhum consumidor local foi iniciado; calendário já associado dispensou o lote TypeScript.
+
+O diagnóstico do worker implantado é genérico (`collection_failed`). O estado persistido `maxAttempts=attempt=1`, definido pelo tratamento de `AccessBlockedError`, identifica bloqueio da fonte durante a extração (7%). Não há evidência suficiente para atribuir um status HTTP específico. A correção proposta passa a registrar `source_access_blocked`, sem mensagem bruta, sem retry adicional e sem contornar bloqueios. Ela ainda não está implantada.
+
+O XLSX exporta **dados anteriores preservados**, não uma coleta nova desta execução. Não foi possível comparar uma nova resposta completa da fonte com esses dados; não presumimos que ela permaneceu inalterada. Não repetimos a coleta com nova chave depois do bloqueio. Recuperação por lease, expiração e nova coleta intencional constam do ensaio local anterior abaixo; não foram repetidas remotamente nesta rodada. Expiração do link/arquivo não foi acelerada aqui.
+
+A chave interna protegida localmente recebeu 401 da API Render; isso mostra que ela não foi aceita, sem provar se há ausência ou diferença de configuração. O fluxo completo de autorização usou JWT Supabase admin válido. Se ferramentas internas precisarem dessa chave, alinhar **INTERNAL_API_KEY** em Render → serviço → Environment com o valor protegido de staging, sem copiá-lo para chat ou frontend. Esse ajuste não é necessário para o login do painel.
+
+CORS observado: origem provisória `https://frontend-not-configured.invalid` permitida; `https://untrusted.example` sem `Access-Control-Allow-Origin`. Atualizar para a origem real do painel conforme [LOVABLE-INTEGRATION.md](LOVABLE-INTEGRATION.md). Nenhum merge, deploy, configuração de produção ou agenda foi alterado.
+
+### Reproduzir o ensaio remoto
+
+`scripts/staging-remote-flow.py`, acionado pelo wrapper DPAPI com `-Action remote`, opera apenas na API pública, Auth/Storage do staging e consultas SQL em modo somente leitura. Não inicia API/worker local. Definir `STAGING_REMOTE_PHASE` em sequência: `check`, `collect`, aguardar workflow manual Python, `results`, `export`, aguardar workflow manual Python, `download`. O relatório sanitizado fica em `.secrets/staging-remote-report.json`, ignorado pelo Git; tokens, senhas, links assinados e linhas de atletas não são persistidos.
+
+Executar cada fase somente após inspecionar a anterior. `lastPhaseStatus=passed` indica que as verificações daquela fase terminaram; o resultado da coleta é o campo separado `collectionOutcome`. Após `download`, a identidade do ensaio é removida. Para outro ensaio autorizado, arquivar o relatório fora do Git antes de começar; se interrompido antes do download, remover via Auth Admin o usuário identificado por `temporaryAdminId`. Não usar os comandos locais `flow`/`results` para comprovar processamento pelo runner.
+
+**Parecer:** possível construir e conectar login, consultas e exportações da Lovable com workers manuais; ingestão nova pelo runner segue pendente por bloqueio da fonte. Não há aceite integral remoto nem prontidão de produção. Backups/migração antiga permanecem uma pendência separada.
 
 Projeto identificado pelo proprietário em 19/09/2026:
 - Nome: `race-platform-staging`
@@ -52,7 +104,7 @@ Com os runtimes/dependências instalados e ambiente Python ativado:
 
 `check` valida configuração, não conectividade. `migrate` chama Prisma migrate deploy e emite apenas resultado sanitizado. `audit` é somente leitura: confere tabelas/RLS, privilégios dos papéis API, funções da fila, histórico Prisma e bucket privado. Nunca executar a suíte Vitest destrutiva apontando para Supabase; ela só aceita banco local terminado em `_test`.
 
-Para processos locais, em terminais separados, usar o mesmo wrapper com `-Action api`, `calendar` e `results`. Não há URL pública de API homologada definida neste momento.
+Para ensaios locais, usar o wrapper com `-Action api`, `calendar` e `results`. Não iniciar esses consumidores durante um ensaio destinado a comprovar os runners remotos. A URL pública e as evidências atuais estão no início deste documento.
 
 ## Servidor existente / Docker
 

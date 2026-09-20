@@ -240,7 +240,8 @@ async def execute(task):
         if isinstance(exc, AccessBlockedError):
             with connection() as conn:
                 conn.execute('UPDATE "CollectionTask" SET "maxAttempts"=attempt WHERE id=%s AND "leaseToken"=%s',(task['id'],task['leaseToken']))
-        code='incomplete_extraction' if isinstance(exc,ValueError) and str(exc)=='incomplete_extraction' else 'collection_failed'
+        code=('source_access_blocked' if isinstance(exc, AccessBlockedError) else
+              'incomplete_extraction' if isinstance(exc,ValueError) and str(exc)=='incomplete_extraction' else 'collection_failed')
         outcome='partial' if code=='incomplete_extraction' else 'failed'
         await asyncio.to_thread(query,'SELECT finish_task(%s,%s,%s,%s,%s)',(task['id'],task['leaseToken'],outcome,Jsonb(progress),code))
     finally:

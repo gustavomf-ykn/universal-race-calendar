@@ -100,6 +100,23 @@ URL permanente. Exportação e histórico de tarefas não são proprietários do
 
 ## Estados para a interface
 
+`source_access_blocked` é um **errorCode**, não um estado novo. Em tarefa failed, mostrar “Fonte bloqueou o acesso; resultados anteriores mantidos”, conservar a última atualização dos resultados e não criar retries automáticos. Workers antigos podem devolver apenas `collection_failed`; tratar como falha genérica, sem presumir bloqueio. `completed` significa publicação concluída, mas não necessariamente novos registros: uma coleta válida pode retornar conteúdo igual.
+
+### Campos efetivamente disponíveis
+
+| Recurso | Campos/limites para a interface |
+|---|---|
+| Evento | `id`, `slug`, `name`, `date`, `city`, `state`, `country`, `eventStatus`, `modality`, `display`, `sources`, `lastUpdatedAt`; demais detalhes e nulabilidade no OpenAPI. Não usar `event.updatedAt`, que não faz parte desse contrato |
+| Modalidade | `id`, `name`, `distanceKm`, `externalId`, `resultSet.source`, `resultSet.updatedAt` |
+| Resultado | `id`, `name`, `bib`, `modality`, `gender`, `category`, `team`, `overallPosition`, `categoryPosition`, `time`, `pace`, `resultSet.{source,sourceUrl,updatedAt}`; campos opcionais podem ser null |
+| Tarefa | `id`, `source`, `kind`, `status`, `progress`, `attempt`, `maxAttempts`, `errorCode`, `createdAt`, `updatedAt`, `finishedAt` |
+| POST exportação | `id`, `taskId`, `status`, `expiresAt`; não retorna arquivo imediatamente |
+| GET exportação | Campos anteriores + `downloadUrl` (null enquanto indisponível); status pode ser `expired`, específico do artefato |
+
+`GET /v1/tasks` admite apenas `page` e `limit`, sem filtro de status/fonte. `GET /v1/events/{id}/results` admite `page`, `limit` e `modality` (nome exato); não há busca por atleta, gênero ou categoria no servidor. Respostas paginadas usam `{data,pagination:{page,limit,total,totalPages}}`, limite máximo 100. Não inventar filtros, endpoint de disponibilidade de worker, endpoint de retry ou disparo de GitHub/local pela interface. Para os detalhes restantes, seguir o OpenAPI publicado.
+
+`POST /v1/collections` para OpenResults usa `source` e `eventId` já associado; a URL é resolvida pelo servidor. Ausência de associação retorna 409 `source_association_required`. Para calendário, admite `source` ticketsports/corridasbr, `quantity` (1–500), `force` e `states`. `POST /v1/events/{id}/exports` não exige corpo nem oferece seleção de formato/filtros: exporta a edição em XLSX. Persistir `id` e `taskId` retornados, pois não existe listagem geral de exportações nesse contrato.
+
 | status | Rótulo | Tratamento |
 |---|---|---|
 | queued | Aguardando | Pode ser espera por retry; mostrar attempt/errorCode |
@@ -128,14 +145,32 @@ Consulte [VALIDATION.md](VALIDATION.md) para distinguir fixtures e integrações
 
 ## Homologação atual
 
-Supabase: `race-platform-staging`, URL pública `https://sggrijhyblejlgimgzzc.supabase.co`. Login ES256, permissões, Storage e fluxo real com 435 resultados foram testados. Use a chave publishable desse projeto como configuração pública do cliente. A API foi executada temporariamente em localhost durante o ensaio; ainda não há URL HTTPS pública para a Lovable. Não usar localhost como endereço do painel hospedado.
+API: `https://universal-race-calendar.onrender.com`. Supabase: `race-platform-staging`, URL pública `https://sggrijhyblejlgimgzzc.supabase.co`. Commit remoto observado em 20/09/2026: `97f27f7c98fe5a01b0fe676302b14cc97f9b3886`. O OpenAPI publicado em `/v1/openapi.json` corresponde ao contrato do repositório.
 
-A construção do painel pode começar pelos contratos. A integração remota exige hospedar a API de staging, preencher sua URL base e configurar CORS para a origem do painel. Banco, fila e Storage já foram preparados. Não criar tabelas pelo Lovable. SUPABASE_SECRET_KEY, chaves privilegiadas legadas, URLs do banco e chaves internas ficam exclusivamente no servidor. Evidências, limitações e próximos acessos: [STAGING.md](STAGING.md).
+Login real admin, rejeições 401/403, consulta paginada dos 435 resultados anteriores e exportação pelo runner para bucket privado foram aprovados. A nova coleta foi adquirida pelo runner, mas falhou por bloqueio de acesso à fonte; os dados anteriores permaneceram intactos. O código implantado informa `collection_failed`; a correção proposta distingue `source_access_blocked`, ainda sem deploy. Não apresentar essa tentativa como atualização bem-sucedida. A integração remota é parcial, embora login, consultas e exportação já possam ser construídos e conectados. Evidências e IDs: [STAGING.md](STAGING.md).
+
+Complemento: a tarefa `1acc7940-7868-405a-80bc-e8d3c0e2a00f`, criada pela mesma API hospedada, foi concluída por um worker local com a correção do PR #6. Publicou 435 resultados na primeira tentativa; conteúdo igual, timestamp renovado. Assim, novas coletas funcionaram neste computador, sem validar novamente o GitHub runner bloqueado. O painel pode integrar esse modelo manual; instruções de operação: [LOCAL-WORKERS.md](LOCAL-WORKERS.md). Não é necessário migration ou redeploy da API para o novo código de erro; basta atualizar o worker.
+
+### Informações públicas para entregar à Lovable
+
+- URL base da API acima, URL pública do Supabase e chave **publishable** obtida em Supabase → Project Settings → API Keys desse projeto.
+- Este documento, [openapi.json](openapi.json), [STAGING.md](STAGING.md) e Swagger público `https://universal-race-calendar.onrender.com/docs`.
+- Implementar login pelo Supabase SDK; enviar o access token na API. Não criar tabelas, workers ou acesso direto ao banco. `SUPABASE_SECRET_KEY`, chaves privilegiadas legadas, URLs do banco, chave interna e tokens GitHub ficam exclusivamente no servidor.
+
+### Criar o administrador e liberar a origem do painel
+
+1. Criar uma identidade própria no Supabase Auth do **staging**, com email/senha cadastrados pelos mecanismos seguros do Supabase. Não reutilizar as identidades temporárias do ensaio: elas foram removidas.
+2. Um operador confiável promove esse usuário via Auth Admin, em ambiente de servidor com segredo protegido. Com um cliente administrativo Supabase, usar `auth.admin.updateUserById(userId, { app_metadata: { ...existingAppMetadata, role: 'admin' } })`, preservando outros metadados. Nunca executar esse código ou disponibilizar a chave administrativa no Lovable. [Referência oficial](https://supabase.com/docs/reference/javascript/auth-admin-updateuserbyid).
+3. Fazer novo login/renovar a sessão depois da promoção. Usuário comum deve continuar recebendo 403 em operações administrativas; `user_metadata` não concede permissão.
+4. Em Render → Web Service → Environment, ajustar **CORS_ORIGINS** para a origem HTTPS exata do painel publicado, sem caminho nem barra final. Múltiplas origens explícitas usam vírgula; não usar `*`. Substituir a origem provisória `https://frontend-not-configured.invalid`. Aplicar essa configuração ao serviço quando autorizado; auto deploy permanece desligado.
+5. Em Supabase → Authentication → URL Configuration, configurar Site URL e URLs de redirecionamento realmente utilizadas pelo painel (confirmação, recuperação, OAuth se implementado). Isso é separado do CORS da API.
+
+Após existir a URL do painel, validar o preflight a partir dessa origem e fazer login/coleta/exportação conforme a permissão. As chaves públicas não concedem administração por si só.
 
 
 ## API suspensível e execução em lotes
 
-A API responde 202 quando a tarefa foi registrada; isso não significa que já existe executor ativo. Em homologação, workers iniciam manualmente ou na próxima janela agendada do GitHub. Agendamento pode atrasar e não garante horário exato. Para uso operacional fora de desenvolvimento/testes, ver a restrição e alternativa local em [BATCH-HOSTING.md](BATCH-HOSTING.md).
+A API responde 202 quando a tarefa foi registrada; isso não significa que já existe executor ativo. Nesta homologação, workers iniciam **manualmente**, no computador ou no GitHub, sem disputar a fila. Agendamentos continuam desativados. Iniciar/encerrar e dependências de cada função: [LOCAL-WORKERS.md](LOCAL-WORKERS.md). Novas exportações exigem o worker Python, mesmo quando os resultados já existem. Não prometer uma próxima execução automática. Para uso operacional fora de desenvolvimento/testes, ver [BATCH-HOSTING.md](BATCH-HOSTING.md).
 
 O estado queued deve aparecer como **Aguardando executor ou nova tentativa**, running como **Em processamento**, partial como **Parcial**, completed como **Concluída**, failed como **Falhou** e cancelled como **Cancelada**. Não inventar um estado scheduled nem ETA exato. Uma tarefa em running pode permanecer assim após interrupção até outra execução recuperar seu lease.
 
@@ -143,4 +178,4 @@ Render Free suspende a API por inatividade: no primeiro acesso pode haver demora
 
 Enquanto queued, evitar consultas de poucos segundos durante horas: atualizar sob demanda, ao voltar à tela, ou com backoff durante sessão ativa. Quando running, acompanhar a cada 5–10 s e reduzir frequência se não houver mudança; parar ao fechar a tela ou chegar ao estado terminal. Não usar polling/pings para impedir a suspensão do Render.
 
-Mostrar a última atualização dos dados usando resultSet.updatedAt dos resultados e updatedAt do evento no contrato, sem confundir com updatedAt da tarefa. Resultados válidos anteriores continuam disponíveis se uma nova coleta for parcial/falhar. Exportações também aguardam executor; link assinado dura até 60 s, artefato expira em 24 h e limpeza física aguarda lote Python. Solicitar uma nova exportação pode ser necessário se a anterior expirar antes de ser processada. Configuração/agenda, Secrets por serviço e procedimento manual: [BATCH-HOSTING.md](BATCH-HOSTING.md).
+Mostrar a última atualização dos dados usando resultSet.updatedAt dos resultados e lastUpdatedAt do evento, sem confundir com updatedAt da tarefa. Resultados válidos anteriores continuam disponíveis se uma nova coleta for parcial/falhar. Exportações também aguardam executor; link assinado dura até 60 s, artefato expira em 24 h e limpeza física aguarda lote Python. Solicitar uma nova exportação pode ser necessário se a anterior expirar antes de ser processada. Configuração/agenda, Secrets por serviço e procedimento manual: [BATCH-HOSTING.md](BATCH-HOSTING.md).
