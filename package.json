@@ -15,8 +15,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "pnpm --filter @race-calendar/database db:generate",
-    "db:migrate": "pnpm --filter @race-calendar/database db:recover && pnpm --filter @race-calendar/database db:migrate",
-    "db:seed": "pnpm --filter @race-calendar/database db:seed"
+    "db:migrate": "pnpm --filter @race-calendar/database db:migrate",
+    "db:seed": "pnpm --filter @race-calendar/database db:seed",
+    "start:worker": "node apps/worker/dist/apps/worker/src/queue.js",
+    "openapi:export": "node scripts/export-openapi.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",

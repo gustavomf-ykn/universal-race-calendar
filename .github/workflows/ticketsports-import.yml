@@ -1,77 +1,19 @@
-name: TicketSports Import
-
+name: Legacy import entry point
 on:
   workflow_dispatch:
-    inputs:
-      quantity:
-        description: "Maximum TicketSports street-race events to import"
-        required: true
-        default: "25"
-      concurrency:
-        description: "Import concurrency"
-        required: true
-        default: "3"
-      delay_ms:
-        description: "Delay between detail requests in milliseconds"
-        required: true
-        default: "300"
-
+permissions:
+  contents: read
 jobs:
-  import:
+  enqueue:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: race_calendar
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d race_calendar"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/race_calendar?schema=public
-      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/race_calendar?schema=public
-      AI_PROVIDER: mock
-      INTERNAL_API_KEY: test-internal-key
-      TICKETSPORTS_IMPORT_QUANTITY: ${{ inputs.quantity }}
-      TICKETSPORTS_IMPORT_CONCURRENCY: ${{ inputs.concurrency }}
-      TICKETSPORTS_IMPORT_DELAY_MS: ${{ inputs.delay_ms }}
-      TICKETSPORTS_IMPORT_QUICK_FILTER: corrida-de-rua
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm db:generate
-      - run: pnpm db:migrate
-      - name: Import TicketSports street races
-        run: |
-          mkdir -p artifacts
-          pnpm --filter @race-calendar/worker import-ticketsports | tee artifacts/import-result.json
-      - name: Export imported events
-        run: pnpm --filter @race-calendar/worker export-events --sourceType=ticketsports --limit=500 > artifacts/ticketsports-events.json
-      - name: Write summary
-        run: |
-          echo "## TicketSports import" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Import result:" >> "$GITHUB_STEP_SUMMARY"
-          echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          cat artifacts/import-result.json >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Downloaded artifact includes:" >> "$GITHUB_STEP_SUMMARY"
-          echo "- import-result.json" >> "$GITHUB_STEP_SUMMARY"
-          echo "- ticketsports-events.json" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ticketsports-results
-          path: artifacts/*.json
+      - run: node scripts/enqueue-catalog.mjs
+        env:
+          API_BASE_URL: ${{ secrets.PRODUCTION_API_BASE_URL }}
+          API_KEY: ${{ secrets.PRODUCTION_INTERNAL_API_KEY }}
+          QUANTITY: '25'

@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { assertTaskLease } from "./lease.js";
+export { setTaskLease } from "./lease.js";
+export { enqueueTask, claimTask, heartbeatTask, finishTask, publicTask, TaskConflict, stableJson } from "./tasks.js";
 import { PrismaClient } from "@prisma/client";
 import type { CanonicalRaceEvent, CurationJobStatus, CurationStatus, RawSourceExtraction } from "@race-calendar/schemas";
 
@@ -185,6 +188,9 @@ export async function saveCanonicalEvent(event: CanonicalRaceEvent, options: { c
         })
       : null;
   const existingBySource = directExisting ?? referenceExisting?.event ?? null;
+  if(existingBySource?.date && event.date && existingBySource.date.getUTCFullYear()!==new Date(event.date).getUTCFullYear()) {
+    throw new Error("source_identifier_reused_for_different_edition");
+  }
   const crossSourceMatch = existingBySource ? null : await findCanonicalEventMatch(event);
   if (crossSourceMatch?.automatic) {
     const linked = await mergeCrossSourceEvent(crossSourceMatch.event.id, event);
@@ -210,6 +216,7 @@ export async function saveCanonicalEvent(event: CanonicalRaceEvent, options: { c
 
   if (existingBySource) {
     const saved = await prisma.$transaction(async (tx) => {
+      await assertTaskLease(tx);
       const updated = await tx.event.update({
         where: { id: existingBySource.id },
         data: {
@@ -229,7 +236,9 @@ export async function saveCanonicalEvent(event: CanonicalRaceEvent, options: { c
     return { event: saved, canonicalEvent, duplicateOfEventId };
   }
 
-  const saved = await prisma.event.create({
+  const saved = await prisma.$transaction(async tx=>{
+    await assertTaskLease(tx);
+    return tx.event.create({
     data: {
       id: prefixedId("evt"),
       ...eventScalarData(canonicalEvent),
@@ -241,6 +250,7 @@ export async function saveCanonicalEvent(event: CanonicalRaceEvent, options: { c
     },
   });
 
+  });
   await upsertEventSourceReference(saved.id, canonicalEvent, "primary", options.contentHash);
 
   return { event: saved, canonicalEvent, duplicateOfEventId };
@@ -264,10 +274,14 @@ export async function findCanonicalEventMatch(event: CanonicalRaceEvent): Promis
     });
     if (sameSource) return { event: sameSource, score: 1, automatic: true, sameSource: true };
   }
+  if (!event.date) return null;
+  const editionDate=new Date(`${event.date}T00:00:00.000Z`);
   const ticketSportsId = ticketSportsIdFromEvent(event);
   if (ticketSportsId) {
-    const byTicketSportsId = await prisma.event.findFirst({
+    const byTicketSportsId = await prisma.event.findMany({
+      take: 2,
       where: {
+        date: editionDate,
         OR: [
           { sourceType: "ticketsports", sourceExternalId: ticketSportsId },
           { sourceReferences: { some: { sourceType: "ticketsports", sourceExternalId: ticketSportsId } } },
@@ -276,13 +290,15 @@ export async function findCanonicalEventMatch(event: CanonicalRaceEvent): Promis
       },
       select: { id: true, sourceType: true },
     });
-    if (byTicketSportsId) return { event: byTicketSportsId, score: 1, automatic: true, sameSource: false };
+    if (byTicketSportsId.length) return { event: byTicketSportsId[0]!, score: 1, automatic: byTicketSportsId.length === 1, sameSource: false };
   }
 
   const urls = [event.registrationUrl, event.officialUrl, event.sourceUrl].filter((value): value is string => Boolean(value));
   if (urls.length) {
-    const byUrl = await prisma.event.findFirst({
+    const byUrl = await prisma.event.findMany({
+      take: 2,
       where: {
+        date: editionDate,
         publicationStatus: { not: "rejected" },
         OR: [
           { registrationUrl: { in: urls } },
@@ -293,18 +309,20 @@ export async function findCanonicalEventMatch(event: CanonicalRaceEvent): Promis
       },
       select: { id: true, sourceType: true },
     });
-    if (byUrl) return { event: byUrl, score: 1, automatic: true, sameSource: false };
+    if (byUrl.length) return { event: byUrl[0]!, score: 1, automatic: byUrl.length === 1, sameSource: false };
   }
 
-  const exact = await prisma.event.findFirst({
+  const exact = await prisma.event.findMany({
+      take: 2,
     where: {
       canonicalFingerprint: event.canonicalFingerprint,
+      date: editionDate,
       publicationStatus: { not: "rejected" },
     },
     orderBy: { createdAt: "asc" },
     select: { id: true, sourceType: true },
   });
-  if (exact) return { event: exact, score: 1, automatic: true, sameSource: false };
+  if (exact.length) return { event: exact[0]!, score: 1, automatic: exact.length === 1, sameSource: false };
   if (!event.date || !event.city || !event.state) return null;
 
   const candidates = await prisma.event.findMany({
@@ -325,7 +343,7 @@ export async function findCanonicalEventMatch(event: CanonicalRaceEvent): Promis
   return {
     event: { id: best.id, sourceType: best.sourceType },
     score: best.score,
-    automatic: best.score >= 0.92,
+    automatic: false,
     sameSource: false,
   };
 }
@@ -428,6 +446,7 @@ async function mergeCrossSourceEvent(
       };
 
   const updated = await prisma.$transaction(async (tx) => {
+    await assertTaskLease(tx);
     if (promoteIncoming) {
       const row = await tx.event.update({
         where: { id: existing.id },
@@ -497,29 +516,32 @@ async function upsertEventSourceReference(
   contentHash?: string | null,
 ) {
   if (!event.sourceId || !event.sourceType || !event.sourceExternalId || !event.sourceUrl) return;
-  await prisma.eventSourceReference.upsert({
-    where: { sourceType_sourceExternalId: { sourceType: event.sourceType, sourceExternalId: event.sourceExternalId } },
+  await prisma.$transaction(async tx => {
+    await assertTaskLease(tx);
+    await tx.eventSourceReference.upsert({
+    where: { sourceType_sourceExternalId: { sourceType: event.sourceType!, sourceExternalId: event.sourceExternalId! } },
     create: {
       id: prefixedId("ref"),
       eventId,
-      sourceId: event.sourceId,
-      sourceType: event.sourceType,
-      sourceExternalId: event.sourceExternalId,
-      url: event.sourceUrl,
+      sourceId: event.sourceId!,
+      sourceType: event.sourceType!,
+      sourceExternalId: event.sourceExternalId!,
+      url: event.sourceUrl!,
       role,
-      priority: sourcePriority(event.sourceType),
+      priority: sourcePriority(event.sourceType!),
       contentHash: contentHash ?? null,
       lastSeenAt: new Date(),
     },
     update: {
       eventId,
-      sourceId: event.sourceId,
-      url: event.sourceUrl,
+      sourceId: event.sourceId!,
+      url: event.sourceUrl!,
       role,
-      priority: sourcePriority(event.sourceType),
+      priority: sourcePriority(event.sourceType!),
       ...(contentHash ? { contentHash } : {}),
       lastSeenAt: new Date(),
     },
+    });
   });
 }
 
@@ -823,7 +845,9 @@ export async function updateEventCurationMetadata(input: {
   model?: string | null;
   curationVersion?: string | null;
 }) {
-  return prisma.event.update({
+  return prisma.$transaction(async tx => {
+    await assertTaskLease(tx);
+    return tx.event.update({
     where: { id: input.eventId },
     data: withoutUndefined({
       curationStatus: input.curationStatus,
@@ -832,6 +856,7 @@ export async function updateEventCurationMetadata(input: {
       curationModel: input.model,
       curationVersion: input.curationVersion,
     }),
+    });
   });
 }
 

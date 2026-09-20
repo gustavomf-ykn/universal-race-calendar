@@ -1,0 +1,10 @@
+FROM python:3.12-slim-bookworm
+WORKDIR /app
+COPY apps/openresults-worker/requirements*.txt ./
+RUN pip install --no-cache-dir -r requirements-worker.txt && playwright install --with-deps chromium
+COPY apps/openresults-worker/app ./app
+COPY apps/openresults-worker/worker.py apps/openresults-worker/batch.py apps/openresults-worker/browser_smoke.py ./
+RUN useradd --create-home runner && cp -r /root/.cache /home/runner/.cache && chown -R runner:runner /home/runner/.cache
+USER runner
+ENV PYTHONUNBUFFERED=1
+CMD ["python","-m","worker"]

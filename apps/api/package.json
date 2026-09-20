@@ -18,6 +18,7 @@
     "@race-calendar/sources": "workspace:*",
     "@race-calendar/utils": "workspace:*",
     "fastify": "^5.2.1",
+    "jose": "^6",
     "zod": "^3.24.1"
   },
   "devDependencies": {

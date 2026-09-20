@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Descubra provas e exporte resultados públicos do Open Results.">
+    <meta name="api-base" content="">
+    <title>{{ app_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+</head>
+<body>
+<main class="page-shell">
+    <header class="hero">
+        <div class="hero-mark" aria-hidden="true">OR</div>
+        <div>
+            <p class="eyebrow">SCRAPER-OPENRESULTS</p>
+            <h1>Catálogo e resultados Open Results</h1>
+            <p class="subtitle">Descubra provas desde 2025, consulte metadados e consolide atletas em Excel.</p>
+        </div>
+    </header>
+
+    <nav class="tabs" aria-label="Módulos">
+        <button class="tab-button active" data-tab="events-tab" type="button">Provas</button>
+        <button class="tab-button" data-tab="results-tab" type="button">Resultados</button>
+    </nav>
+
+    <div id="events-tab" class="tab-content">
+        <section class="panel">
+            <div class="section-heading">
+                <div><p class="eyebrow">CATÁLOGO</p><h2>Descobrir provas</h2><p>Busca paginada global com IDs internos e metadados normalizados.</p></div>
+                <div class="button-row">
+                    <a class="secondary-button" href="/api/events/export/simple" id="simple-export">Excel simples</a>
+                    <a class="secondary-button" href="/api/events/export/full" id="full-export">Excel completo</a>
+                </div>
+            </div>
+            <form id="discover-form" class="toolbar">
+                <label><span>Desde</span><input id="events-date-from" type="date" value="2025-01-01"></label>
+                <label><span>Até</span><input id="events-date-to" type="date"></label>
+                <button class="primary-button" type="submit">Atualizar catálogo</button>
+                <button id="metadata-selected" class="secondary-button" type="button">Metadados selecionados</button>
+            </form>
+            <div id="catalog-message" class="alert hidden" role="status"></div>
+        </section>
+
+        <section class="panel results-panel">
+            <div class="section-heading"><div><p class="eyebrow">PROVAS ENCONTRADAS</p><h2>Catálogo local</h2></div><span id="events-count" class="result-count"></span></div>
+            <div class="toolbar">
+                <label class="search-control"><span>Pesquisar</span><input id="events-search" type="search" placeholder="Nome, slug ou ID"></label>
+                <label><span>UF</span><input id="events-state" maxlength="2" placeholder="SC"></label>
+                <label><span>ID</span><select id="events-id-status"><option value="">Todos</option><option value="resolved">Resolvido</option><option value="unavailable">Indisponível</option><option value="error">Erro</option><option value="pending">Pendente</option></select></label>
+                <button id="events-refresh" class="secondary-button" type="button">Recarregar</button>
+            </div>
+            <div class="table-wrap"><table><thead><tr><th class="check-cell">Sel.</th><th>Data</th><th>ID</th><th>Nome</th><th>Cidade/UF</th><th>Status</th><th>Link</th></tr></thead><tbody id="events-body"></tbody></table></div>
+            <div id="events-empty" class="empty-state hidden">Nenhuma prova encontrada. Atualize o catálogo.</div>
+            <nav class="pagination"><button id="events-prev" type="button">Anterior</button><span id="events-page">Página 1</span><button id="events-next" type="button">Próxima</button></nav>
+        </section>
+    </div>
+
+    <div id="results-tab" class="tab-content hidden">
+        <section class="panel input-panel" aria-labelledby="form-title">
+            <div><h2 id="form-title">Escopo da extração</h2><p>Uma prova por URL, as provas marcadas na aba Provas ou todo o período.</p></div>
+            <form id="scrape-form">
+                <div class="scope-row">
+                    <label><span>Escopo</span><select id="result-scope"><option value="single">Uma URL</option><option value="selected">Provas selecionadas</option><option value="all">Todas no período</option></select></label>
+                    <label id="result-date-from-label" class="hidden"><span>Desde</span><input id="result-date-from" type="date" value="2025-01-01"></label>
+                    <label id="result-date-to-label" class="hidden"><span>Até</span><input id="result-date-to" type="date"></label>
+                </div>
+                <label class="sr-only" for="event-url">Link da prova</label>
+                <div id="url-row" class="url-row"><input id="event-url" name="url" type="url" autocomplete="url" placeholder="https://openresults.run/evento/nome-da-prova/"><button id="submit-button" class="primary-button" type="submit">Extrair resultados</button></div>
+                <label id="confirm-all-label" class="confirm-row hidden"><input id="confirm-all" type="checkbox"> Confirmo a extração de todas as provas do período.</label>
+            </form>
+            <div id="form-error" class="alert alert-error hidden" role="alert"></div>
+        </section>
+
+        <section id="progress-panel" class="panel hidden">
+            <div class="section-heading"><div><p class="eyebrow">PROGRESSO</p><h2 id="progress-title">Preparando</h2></div><span id="progress-percent" class="progress-percent">0%</span></div>
+            <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div><p id="progress-status" class="status-line">Na fila</p>
+            <button id="resume-button" class="secondary-button hidden" type="button">Retomar trabalho</button>
+        </section>
+
+        <section id="summary-panel" class="panel hidden">
+            <div class="section-heading summary-heading"><div><p class="eyebrow">RESULTADO</p><h2>Resumo da extração</h2><p id="event-name" class="event-name"></p></div><a id="download-button" class="primary-button hidden" href="#">Baixar arquivo</a></div>
+            <div class="summary-grid"><article><span>Provas concluídas</span><strong id="modality-count">—</strong></article><article><span>Total esperado</span><strong id="expected-total">—</strong></article><article><span>Total extraído</span><strong id="extracted-total">—</strong></article><article><span>Feminino</span><strong id="female-total">—</strong></article><article><span>Masculino</span><strong id="male-total">—</strong></article></div>
+            <div id="warnings" class="alert alert-warning hidden"></div>
+        </section>
+
+        <section id="results-panel" class="panel results-panel hidden">
+            <div class="section-heading"><div><p class="eyebrow">BASE CONSOLIDADA</p><h2>Resultados</h2></div><span id="result-count" class="result-count"></span></div>
+            <div class="toolbar"><label class="search-control"><span>Pesquisar</span><input id="search" type="search" placeholder="Nome, número ou equipe"></label><label><span>Prova</span><select id="event-filter"><option value="">Todas</option></select></label><label><span>Gênero</span><select id="gender-filter"><option value="">Todos</option></select></label><label><span>Modalidade</span><select id="modality-filter"><option value="">Todas</option></select></label><label><span>Categoria</span><select id="category-filter"><option value="">Todas</option></select></label><label><span>Linhas</span><select id="page-size"><option>25</option><option>50</option><option>100</option><option>200</option></select></label></div>
+            <div class="table-wrap"><table id="results-table"><thead><tr id="table-head"></tr></thead><tbody id="table-body"></tbody></table></div><div id="table-empty" class="empty-state hidden">Nenhum resultado corresponde aos filtros.</div>
+            <nav class="pagination"><button id="previous-page" type="button">Anterior</button><span id="page-indicator">Página 1</span><button id="next-page" type="button">Próxima</button></nav>
+        </section>
+    </div>
+</main>
+<script src="{{ url_for('static', path='/app.js') }}" defer></script>
+</body>
+</html>

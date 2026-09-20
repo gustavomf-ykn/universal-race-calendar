@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { buildApp } from "../apps/api/src/app.js";
 import { prisma } from "@race-calendar/database";
-import { importCorridasBREvents, importTicketSportsEvents, processCatalogImportRun } from "@race-calendar/curation";
+import { importCorridasBREvents, importTicketSportsEvents, processCatalogImportRun, runSourceCheck } from "@race-calendar/curation";
 import { CorridasBRAdapter, SourceAdapterRegistry, TicketSportsAdapter } from "@race-calendar/sources";
 
 const ticketsportsFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports-simple.json", "utf-8")) as Record<
@@ -19,6 +19,8 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
   let eventId: string;
 
   beforeAll(async () => {
+    const target=new URL(process.env.DATABASE_URL!);
+    if(!["127.0.0.1","localhost","postgres"].includes(target.hostname)||!target.pathname.endsWith("_test"))throw new Error("An isolated local *_test database is required");
     process.env.AI_PROVIDER = "mock";
     process.env.INTERNAL_API_KEY = "test-internal-key";
     app = await buildApp();
@@ -71,15 +73,9 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     expect(createdSource.statusCode).toBe(201);
     const source = createdSource.json<{ id: string }>();
 
-    const check = await app.inject({
-      method: "POST",
-      url: `/v1/sources/${source.id}/check`,
-      headers: { "x-api-key": "test-internal-key" },
-    });
-    expect(check.statusCode).toBe(200);
-    const job = check.json<{ status: string; eventId: string }>();
+    const job = await runSourceCheck(source.id);
     expect(job.status).toBe("success");
-    eventId = job.eventId;
+    eventId = job.eventId!;
 
     const list = await app.inject({ method: "GET", url: "/v1/events?city=Florianopolis" });
     expect(list.statusCode).toBe(200);
@@ -91,14 +87,9 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     expect(detail.statusCode).toBe(200);
     expect(detail.json<{ id: string }>().id).toBe(eventId);
 
-    const unchanged = await app.inject({
-      method: "POST",
-      url: `/v1/sources/${source.id}/check`,
-      headers: { "x-api-key": "test-internal-key" },
-    });
-    expect(unchanged.statusCode).toBe(200);
-    expect(unchanged.json<{ eventId: string | null; reasons: string[] }>().eventId).toBeNull();
-    expect(unchanged.json<{ reasons: string[] }>().reasons).toContain("unchanged_content");
+    const unchanged = await runSourceCheck(source.id);
+    expect(unchanged.eventId).toBeNull();
+    expect(unchanged.reasons).toContain("unchanged_content");
 
     const duplicateSourceResponse = await app.inject({
       method: "POST",
@@ -119,13 +110,7 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
       },
     });
     const duplicateSource = duplicateSourceResponse.json<{ id: string }>();
-    const duplicateCheck = await app.inject({
-      method: "POST",
-      url: `/v1/sources/${duplicateSource.id}/check`,
-      headers: { "x-api-key": "test-internal-key" },
-    });
-    expect(duplicateCheck.statusCode).toBe(200);
-    const duplicateJob = duplicateCheck.json<{ status: string; eventId: string; reasons: string[] }>();
+    const duplicateJob = await runSourceCheck(duplicateSource.id);
     expect(duplicateJob.status).toBe("success");
     expect(duplicateJob.eventId).toBe(eventId);
     expect(duplicateJob.reasons).not.toContain("possible_duplicate");
@@ -303,6 +288,8 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     expect(await prisma.event.count({ where: { sourceReferences: { some: { sourceType: "corridasbr", sourceExternalId: "98765" } } } })).toBe(1);
 
     const ticketSports = await prisma.event.findFirstOrThrow({ where: { sourceType: "ticketsports", sourceExternalId: "74641" } });
+    // Both fixtures represent the same future edition, independent of the import cutoff.
+    await prisma.event.update({ where: { id: ticketSports.id }, data: { date: new Date("2026-10-18") } });
     const countBeforeLink = await prisma.event.count();
     await importCorridasBREvents({
       registry,
@@ -395,44 +382,14 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     expect(candidate.displayPreview).toBeTruthy();
   });
 
-  it("exposes the internal TicketSports import endpoint as a synchronous job", async () => {
-    let receivedMaxDurationMs: number | undefined;
-    const fakeApp = await buildApp({
-      importTicketSportsEvents: async (options) => {
-        receivedMaxDurationMs = options?.maxDurationMs;
-        return {
-          jobId: "import_test",
-          status: "success",
-          source: "ticketsports",
-          quickFilter: "corrida-de-rua",
-          requestedQuantity: 1,
-          offset: 0,
-          nextOffset: 1,
-          maxDurationMs: 120000,
-          discoveredCount: 1,
-          processedCount: 1,
-          publishedEvents: 1,
-          manualReviewEvents: 0,
-          unchangedEvents: 0,
-          failedCount: 0,
-          failures: [],
-          startedAt: new Date("2026-06-23T00:00:00.000Z").toISOString(),
-          finishedAt: new Date("2026-06-23T00:00:01.000Z").toISOString(),
-        };
-      },
-    });
-    const response = await fakeApp.inject({
-      method: "POST",
-      url: "/v1/imports/ticketsports/run",
-      headers: { "x-api-key": "test-internal-key" },
-      payload: { quantity: 1, delayMs: 0, maxDurationMs: 120000 },
-    });
-    expect(response.statusCode).toBe(200);
-    expect(response.json<{ jobId: string; publishedEvents: number; nextOffset: number }>().jobId).toBe("import_test");
-    expect(response.json<{ publishedEvents: number; nextOffset: number }>().publishedEvents).toBe(1);
-    expect(response.json<{ nextOffset: number }>().nextOffset).toBe(1);
-    expect(receivedMaxDurationMs).toBe(120000);
-    await fakeApp.close();
+  it("accepts the legacy TicketSports route as a durable asynchronous task", async () => {
+    const response = await app.inject({method:"POST",url:"/v1/imports/ticketsports/run",
+      headers:{"x-api-key":"test-internal-key","idempotency-key":"legacy-fixture"},payload:{quantity:1}});
+    expect(response.statusCode).toBe(202);
+    const task=response.json<{id:string;status:string}>();
+    expect(task.status).toBe("queued");
+    expect(await prisma.collectionTask.findUnique({where:{id:task.id}})).toMatchObject({source:"ticketsports",status:"queued"});
+    await prisma.collectionTask.delete({where:{id:task.id}});
   });
 
   it("lists review-pending events through the internal audit endpoint", async () => {

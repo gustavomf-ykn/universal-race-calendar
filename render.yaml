@@ -1,48 +1,34 @@
+# Only a free staging API. No workers, database, disk or automatic deployment.
 services:
   - type: web
-    name: universal-race-calendar-v2
-    runtime: node
+    name: race-platform-staging-api
+    runtime: docker
     plan: free
-    buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm db:generate && pnpm db:migrate && pnpm build
-    startCommand: pnpm start:api
+    dockerfilePath: ./Dockerfile.backend
+    dockerContext: .
+    dockerCommand: node scripts/start-staging-api.mjs
     healthCheckPath: /health
-    autoDeployTrigger: checksPass
+    autoDeployTrigger: off
     envVars:
-      - key: NODE_VERSION
-        value: "22"
       - key: NODE_ENV
         value: production
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=320
+      - key: SUPABASE_URL
+        value: https://sggrijhyblejlgimgzzc.supabase.co
       - key: DATABASE_URL
         sync: false
       - key: DIRECT_URL
         sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
       - key: INTERNAL_API_KEY
-        generateValue: true
+        sync: false
       - key: CORS_ORIGINS
-        value: "*"
+        sync: false
       - key: AI_PROVIDER
         value: mock
       - key: AI_CURATION_ENABLED
-        value: "false"
+        value: 'false'
       - key: AI_CURATION_REQUIRED
-        value: "false"
-      - key: SCRAPER_TIMEOUT_MS
-        value: "15000"
-      - key: SCRAPER_MAX_RETRIES
-        value: "3"
-      - key: SCRAPER_USER_AGENT
-        value: UniversalRaceCalendarBot/0.2
-      - key: TICKETSPORTS_IMPORT_QUANTITY
-        value: "2000"
-      - key: TICKETSPORTS_IMPORT_CONCURRENCY
-        value: "3"
-      - key: TICKETSPORTS_IMPORT_DELAY_MS
-        value: "300"
-      - key: CORRIDASBR_IMPORT_QUANTITY
-        value: "5000"
-      - key: CORRIDASBR_IMPORT_CONCURRENCY
-        value: "2"
-      - key: CORRIDASBR_IMPORT_DELAY_MS
-        value: "500"
-      - key: OFFICIAL_PAGE_ENRICHMENT_ENABLED
-        value: "true"
+        value: 'false'

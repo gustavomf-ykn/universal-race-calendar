@@ -1,0 +1,68 @@
+name: Staging calendar batch
+on:
+  workflow_dispatch:
+# Scheduling intentionally disabled until manual staging validation is approved.
+permissions:
+  contents: read
+concurrency:
+  group: staging-calendar-batch
+  cancel-in-progress: false
+jobs:
+  batch:
+    if: github.repository == 'gustavomf-ykn/universal-race-calendar' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: race-platform-staging
+    env:
+      WORKER_MODE: batch
+      WORKER_MAX_TASKS: '3'
+      WORKER_MAX_SECONDS: '480'
+      WORKER_REPORT_PATH: batch-report.json
+      SUPABASE_URL: https://sggrijhyblejlgimgzzc.supabase.co
+    steps:
+      - name: Start timing
+        run: echo "JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Install and build
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm db:generate
+          pnpm --filter @race-calendar/worker... build
+      - name: Check DIRECT_URL connectivity without migrations
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+        run: |
+          node scripts/check-runner-env.mjs typescript
+          node scripts/check-staging-database.mjs
+      - name: Consume existing tasks
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          NODE_ENV: production
+          AI_PROVIDER: mock
+          AI_CURATION_ENABLED: 'false'
+          AI_CURATION_REQUIRED: 'false'
+        run: |
+          node scripts/check-runner-env.mjs typescript
+          node scripts/check-staging-database.mjs
+          timeout --signal=TERM --kill-after=10s 510s node apps/worker/dist/apps/worker/src/queue.js
+      - name: Sanitized summary
+        if: always()
+        run: node scripts/batch-summary.mjs typescript
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: staging-calendar-summary
+          path: batch-summary.json
+          retention-days: 3
+          if-no-files-found: ignore

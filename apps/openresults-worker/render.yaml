@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: scraper-openresults-gustavomf-ykn
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: OPENRESULTS_ALLOWED_ORIGINS
+        value: https://gustavomf-ykn.github.io
+      - key: OPENRESULTS_MAX_JOBS
+        value: "1"
+      - key: OPENRESULTS_MAX_QUEUED_JOBS
+        value: "10"
+      - key: OPENRESULTS_MAX_RETAINED_JOBS
+        value: "40"
+      - key: OPENRESULTS_CONCURRENCY
+        value: "2"
+      - key: OPENRESULTS_CATALOG_CONCURRENCY
+        value: "2"
+      - key: OPENRESULTS_METADATA_CONCURRENCY
+        value: "2"
+      - key: EVENTS_MIN_DATE
+        value: "2025-01-01"
+      - key: OPENRESULTS_RATE_LIMIT_REQUESTS
+        value: "5"
+      - key: OPENRESULTS_RATE_LIMIT_WINDOW
+        value: "600"
+      - key: OPENRESULTS_TRUST_PROXY_HEADERS
+        value: "1"
+      - key: OPENRESULTS_TEMP_DIR
+        value: /tmp/scraper-openresults
+      - key: OPENRESULTS_DATABASE_PATH
+        value: /tmp/scraper-openresults/scraper-openresults.sqlite3
+      - key: OPENRESULTS_DEBUG
+        value: "0"

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": { "builder": "DOCKERFILE", "dockerfilePath": "Dockerfile.backend" },
+  "deploy": {
+    "startCommand": "node apps/worker/dist/apps/worker/src/queue.js",
+    "numReplicas": 1,
+    "restartPolicyType": "ALWAYS"
+  }
+}

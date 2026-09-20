@@ -1,0 +1,77 @@
+name: race-platform-staging
+
+x-runtime: &runtime
+  restart: unless-stopped
+  init: true
+  stop_grace_period: 40s
+  logging:
+    driver: json-file
+    options:
+      max-size: '10m'
+      max-file: '3'
+
+services:
+  api:
+    <<: *runtime
+    image: race-backend:${DEPLOY_TAG:?Set the reviewed commit SHA}
+    build:
+      context: ../..
+      dockerfile: Dockerfile.backend
+    env_file: ${STAGING_CONFIG_DIR:-/etc/race-platform-staging}/api.env
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      GIT_SHA: ${DEPLOY_TAG}
+    mem_limit: 512m
+    cpus: '0.5'
+    expose: ['3000']
+    healthcheck:
+      test: ['CMD', 'node', '-e', 'fetch("http://127.0.0.1:3000/health").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  calendar-worker:
+    <<: *runtime
+    image: race-backend:${DEPLOY_TAG:?Set the reviewed commit SHA}
+    command: ['node', 'apps/worker/dist/apps/worker/src/queue.js']
+    env_file: ${STAGING_CONFIG_DIR:-/etc/race-platform-staging}/calendar.env
+    mem_limit: 768m
+    cpus: '0.5'
+
+  results-worker:
+    <<: *runtime
+    image: race-openresults:${DEPLOY_TAG:?Set the reviewed commit SHA}
+    build:
+      context: ../..
+      dockerfile: apps/openresults-worker/Dockerfile.worker
+    env_file: ${STAGING_CONFIG_DIR:-/etc/race-platform-staging}/results.env
+    mem_limit: 2g
+    cpus: '1.0'
+    shm_size: 512m
+
+  proxy:
+    <<: *runtime
+    image: caddy:2-alpine
+    env_file: ${STAGING_CONFIG_DIR:-/etc/race-platform-staging}/proxy.env
+    ports: ['80:80', '443:443']
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 128m
+
+  operations:
+    profiles: ['tools']
+    image: race-backend:${DEPLOY_TAG:?Set the reviewed commit SHA}
+    env_file: ${STAGING_CONFIG_DIR:-/etc/race-platform-staging}/operations.env
+    command: ['node', 'scripts/staging-preflight.mjs', 'check', 'sggrijhyblejlgimgzzc']
+    mem_limit: 512m
+
+volumes:
+  caddy_data:
+  caddy_config:
