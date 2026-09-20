@@ -47,6 +47,11 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r apps/openresults-worker/requirements-worker.txt
+      - name: Python read-only database preflight
+        working-directory: apps/openresults-worker
+        env:
+          WORKER_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/race_backend_test
+        run: python database_smoke.py
       - run: pnpm test
       - run: python -m pytest -m "not integration" -q
         working-directory: apps/openresults-worker
