@@ -455,7 +455,16 @@ export function parseCorridasBRDetail(html: string, url: string) {
     const cells = $(row).children("td");
     if (cells.length < 2) return;
     const label = normalizeLabel($(cells[0]).text());
-    const value = cleanText($(cells[1]).clone().find("script,button").remove().end().text());
+    const valueCell = $(cells[1]).clone();
+    valueCell.find("script,button").remove();
+    if (label === "cidade") {
+      // These links navigate to other listings; they are not part of the city name.
+      valueCell.find("a").filter((_, link) => /Corridas?\s+(?:nesta Cidade|nesta Regi[aã]o)/i.test($(link).text())).remove();
+    }
+    const text = cleanText(valueCell.text());
+    const value = label === "cidade"
+      ? text.replace(/\s*\(Corridas?\s+(?:nesta Cidade|nesta Regi[aã]o)\)/gi, "").trim()
+      : text;
     if (label && value && !fields.has(label)) fields.set(label, value);
   });
   const state = stateFromCorridasBRUrl(url);

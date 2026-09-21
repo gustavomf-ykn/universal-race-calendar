@@ -24,6 +24,10 @@ const corridasBRDetailFixture = readFileSync("tests/fixtures/corridasbr-detail.h
 const officialEventFixture = readFileSync("tests/fixtures/official-event.html", "utf-8");
 
 describe("source adapters", () => {
+  it("keeps city names and excludes CorridasBR navigation labels", () => {
+    const html = '<table><tr><td>Cidade:</td><td><a href="por_cidade.asp?id=1">Camboriú</a> <a href="por_cidade.asp?id=1">(Corrida nesta Cidade)</a> <a href="regiao.asp">(Corridas nesta Região)</a></td></tr></table>';
+    expect(parseCorridasBRDetail(html, "https://www.corridasbr.com.br/SC/mostracorrida.asp?escolha=1").city).toBe("Camboriú");
+  });
   it("recognizes TicketSports URLs", () => {
     const adapter = new TicketSportsAdapter();
     expect(adapter.canHandle("https://www.ticketsports.com.br/e/corrida-123456")).toBe(true);
