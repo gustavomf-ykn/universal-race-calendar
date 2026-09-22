@@ -1,6 +1,10 @@
-# Integração do futuro painel
+# Integração do painel
 
-O painel não está implementado. O backend é a autoridade de migrations; **não criar
+Painel de homologação: https://runfinder-rithmy.lovable.app. API:
+https://universal-race-calendar.onrender.com. Evidências e limites da rodada real:
+[homologação de calendário e exportação](STAGING-ROUND-2026-09-21.md).
+
+O backend é a autoridade de migrations; **não criar
 ou modificar tabelas no Lovable**. Consumir HTTP da API, não as tabelas via PostgREST.
 Contrato gerado: [openapi.json](openapi.json); Swagger: `GET /docs`.
 

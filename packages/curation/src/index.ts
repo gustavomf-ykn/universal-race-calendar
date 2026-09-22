@@ -1,4 +1,4 @@
-import { Buffer } from "node:buffer";
+import { repairMojibake, sourceModality } from "./text-normalization.js";
 import { randomUUID } from "node:crypto";
 import { createAIProviderFromEnv, type AIProvider } from "@race-calendar/ai";
 import {
@@ -1365,7 +1365,7 @@ function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtra
     latitude: numberOrNull(record.latitude),
     longitude: numberOrNull(record.longitude),
     modality: modalityFromTicketSportsText(title, text),
-    distances: distancesFromText(text),
+    distances: distancesFromText(text).map((distance) => ({ ...distance, modality: modalityFromTicketSportsText(title, text) })),
     prices,
     lots: prices,
     currentLot: prices[0] ?? null,
@@ -1441,7 +1441,7 @@ function corridasBRExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtract
     latitude: numberOrNull(asRecord(jsonLocation.geo).latitude),
     longitude: numberOrNull(asRecord(jsonLocation.geo).longitude),
     modality: modalityFromTicketSportsText(name, `${name} ${distanceText} ${description}`),
-    distances,
+    distances: distances.map((distance) => ({ ...distance, modality: modalityFromTicketSportsText(name, `${name} ${distanceText} ${description}`) })),
     prices,
     lots: prices,
     currentLot: prices.find((price) => price.isCurrent) ?? null,
@@ -1477,15 +1477,6 @@ function evidence(value: string | null | undefined, confidence: number) {
   };
 }
 
-function repairMojibake(value: string | null | undefined): string | null {
-  if (value == null) return null;
-  if (!/[ÃÂâ€]/.test(value)) return value;
-  try {
-    return Buffer.from(value, "latin1").toString("utf8");
-  } catch {
-    return value;
-  }
-}
 
 function parseTicketSportsLocation(address: string): {
   city: string | null;
@@ -1830,15 +1821,7 @@ function eventStatusFromTicketSports(status: string | null, text: string): RaceE
 }
 
 function modalityFromTicketSportsText(title: string, text: string): RaceEventExtraction["modality"] {
-  const titleText = title.toLowerCase();
-  const fullText = text.toLowerCase();
-  if (titleText.includes("trail")) return "trail";
-  if (/\b(kids?|infantil)\b/.test(titleText)) return "kids";
-  if (titleText.includes("caminhada") && !/(corrida|maratona|meia|desafio|circuito)/.test(titleText)) return "walk";
-  if (/(corrida|maratona|meia|desafio|circuito|run)\b/.test(titleText)) return "road";
-  if (fullText.includes("trail")) return "trail";
-  if (fullText.includes("caminhada") && !/(corrida|maratona|meia)/.test(fullText)) return "walk";
-  return "road";
+  return sourceModality(title, text);
 }
 
 function findRegulationUrl(urls: string[]): string | null {
