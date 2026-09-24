@@ -18,9 +18,10 @@ export async function enqueueTask(
   source: string,
   kind: string,
   payload: Prisma.InputJsonValue,
+  db: Prisma.TransactionClient = prisma,
 ) {
   const requestHash = createHash("sha256").update(stableJson({ source, kind, payload })).digest("hex");
-  const task = await prisma.collectionTask.upsert({
+  const task = await db.collectionTask.upsert({
     where: { ownerId_idempotencyKey: { ownerId, idempotencyKey } },
     create: { ownerId, idempotencyKey, source, kind, payload, requestHash },
     update: {},

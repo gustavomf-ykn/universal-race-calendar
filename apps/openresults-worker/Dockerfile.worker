@@ -4,6 +4,7 @@ COPY apps/openresults-worker/requirements*.txt ./
 RUN pip install --no-cache-dir -r requirements-worker.txt && playwright install --with-deps chromium
 COPY apps/openresults-worker/app ./app
 COPY apps/openresults-worker/worker.py apps/openresults-worker/batch.py apps/openresults-worker/browser_smoke.py ./
+COPY apps/openresults-worker/presence.py apps/openresults-worker/catalog_sync.py apps/openresults-worker/edition_metadata.py apps/openresults-worker/selection_export.py ./
 RUN useradd --create-home runner && cp -r /root/.cache /home/runner/.cache && chown -R runner:runner /home/runner/.cache
 USER runner
 ENV PYTHONUNBUFFERED=1

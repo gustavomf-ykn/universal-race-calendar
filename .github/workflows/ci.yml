@@ -53,6 +53,8 @@ jobs:
           WORKER_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/race_backend_test
         run: python database_smoke.py
       - run: pnpm test
+      - name: Isolated continuous executors lifecycle (no real collections)
+        run: python scripts/test-local-executors.py
       - run: python -m pytest -m "not integration" -q
         working-directory: apps/openresults-worker
       - run: pnpm openapi:export

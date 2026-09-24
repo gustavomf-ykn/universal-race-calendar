@@ -22,6 +22,7 @@ from app.services.openresults.metadata import EventMetadataService
 from app.services.openresults.catalog import EventCatalog
 from app.services.scraper import OpenResultsScraper
 from batch import BatchRun
+from presence import announce, stop_requested
 
 
 def storage_headers():
@@ -76,10 +77,10 @@ def publish(task, result):
         for record in records:
             # Scoped to one source/edition; never creates a person identity from a name.
             digest=hashlib.sha256(json.dumps({k:record.get(k) for k in ['modality','gender','bib','name','category','overall_position']},sort_keys=True).encode()).hexdigest()
-            conn.execute('''INSERT INTO "RaceResult" (id,"resultSetId","recordKey",modality,gender,category,bib,name,team,"overallPosition","categoryPosition",time,pace)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+            conn.execute('''INSERT INTO "RaceResult" (id,"resultSetId","recordKey",modality,gender,category,bib,name,team,"overallPosition","categoryPosition",time,pace,"distanceKm",gap)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
                 (str(uuid.uuid5(uuid.NAMESPACE_URL,result_set+":"+digest)),result_set,digest,str(record.get('modality','')),record.get('gender'),record.get('category'),str(record.get('bib','')),
-                 record.get('name',''),record.get('team'),position(record.get('overall_position')),position(record.get('category_position')),record.get('time'),record.get('pace')))
+                 record.get('name',''),record.get('team'),position(record.get('overall_position')),position(record.get('category_position')),record.get('time'),record.get('pace'),record.get('distance_km'),record.get('gap')))
         conn.execute('UPDATE "EventSourceReference" SET "lastSeenAt"=now(),"updatedAt"=now() WHERE "sourceType"=\'openresults\' AND "sourceExternalId"=%s',(payload['externalId'],))
         conn.execute('SELECT finish_task(%s,%s,\'completed\',%s,NULL)',(task['id'],task['leaseToken'],Jsonb({'processed':len(records),'stage':'published'})))
 
@@ -93,19 +94,18 @@ def position(value):
 
 
 def store_match(task, metadata):
-    if not metadata.event_id:
-        raise ValueError('source_identity_unavailable')
+    external_id=str(metadata.event_id) if metadata.event_id else 'url:'+hashlib.sha256(metadata.source_url.encode()).hexdigest()
     with connection() as conn:
         fenced(conn,task)
         conn.execute('''INSERT INTO "SourceMatch" (id,source,"externalId",url,name,date,city,state,status,"updatedAt")
             VALUES (%s,'openresults',%s,%s,%s,%s,%s,%s,'pending',now()) ON CONFLICT (source,"externalId") DO UPDATE SET
             url=EXCLUDED.url,name=EXCLUDED.name,date=EXCLUDED.date,city=EXCLUDED.city,state=EXCLUDED.state,"updatedAt"=now()''',
-            (str(uuid.uuid4()),str(metadata.event_id),metadata.source_url,metadata.name,metadata.event_date,metadata.city,metadata.state))
+            (str(uuid.uuid4()),external_id,metadata.source_url,metadata.name,metadata.event_date,metadata.city,metadata.state))
         # Only an existing exact source identity is reused automatically. Names are not sufficient.
         conn.execute('''UPDATE "SourceMatch" m SET status='resolved',"eventId"=r."eventId","resolvedBy"='exact_reference'
             FROM "EventSourceReference" r JOIN "Event" e ON e.id=r."eventId"
             WHERE m.source=r."sourceType" AND m."externalId"=r."sourceExternalId" AND (m.date AT TIME ZONE 'UTC')::date=e.date::date
-            AND m.source='openresults' AND m."externalId"=%s''',(str(metadata.event_id),))
+            AND m.source='openresults' AND m."externalId"=%s''',(external_id,))
 
 
 def excel_cell(value):
@@ -137,29 +137,37 @@ def build_workbook(event_id):
 
 
 async def export(task):
-    # Repair the short API enqueue/artifact creation gap after an interrupted request.
-    artifact=query('''INSERT INTO "ExportArtifact" (id,"eventId","ownerId","taskId",status,"expiresAt","createdAt")
-        VALUES (%s,%s,%s,%s,'queued',%s::timestamptz+interval '1 day',%s)
-        ON CONFLICT ("taskId") DO UPDATE SET "taskId"=EXCLUDED."taskId" RETURNING *''',
-        (str(uuid.uuid4()),task['payload']['eventId'],task['ownerId'],task['id'],task['createdAt'],task['createdAt']),one=True)
+    if task['kind']=='export-selection':
+        artifact=query('SELECT * FROM "ExportArtifact" WHERE "taskId"=%s',(task['id'],),one=True)
+        if not artifact:raise ValueError('export_artifact_missing')
+    else:
+        # Repair the short API enqueue/artifact creation gap after an interrupted request.
+        artifact=query('''INSERT INTO "ExportArtifact" (id,"eventId","ownerId","taskId",status,"expiresAt","createdAt")
+            VALUES (%s,%s,%s,%s,'queued',%s::timestamptz+interval '1 day',%s)
+            ON CONFLICT ("taskId") DO UPDATE SET "taskId"=EXCLUDED."taskId" RETURNING *''',
+            (str(uuid.uuid4()),task['payload']['eventId'],task['ownerId'],task['id'],task['createdAt'],task['createdAt']),one=True)
     if artifact['expiresAt'].replace(tzinfo=timezone.utc)<=datetime.now(timezone.utc):
         raise ValueError('export_expired')
-    output=await asyncio.to_thread(build_workbook,artifact['eventId'])
+    from selection_export import build_selection
+    if task['kind']=='export':
+        artifact['selection']={'eventIds':[artifact['eventId']],'layout':'consolidated','administrative':False}
+        artifact['kind']='results'
+    output,extension,content_type,count=await asyncio.to_thread(build_selection,artifact,connection)
     with connection() as conn:
         fenced(conn,task)
     if artifact['expiresAt']<=datetime.now(timezone.utc):
         raise ValueError('export_expired')
-    path=f"{artifact['id']}/{task['leaseToken']}.xlsx"
+    path=f"{artifact['id']}/{task['leaseToken']}.{extension}"
     base=os.environ['SUPABASE_URL'].rstrip('/')
     async with httpx.AsyncClient(timeout=30) as client:
         response=await client.post(f'{base}/storage/v1/object/race-exports/{path}',headers={
             **storage_headers(),
-            'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','x-upsert':'true'},content=output.getvalue())
+            'Content-Type':content_type,'x-upsert':'true'},content=output.getvalue())
         response.raise_for_status()
     with connection() as conn:
         fenced(conn,task)
-        conn.execute('UPDATE "ExportArtifact" SET status=\'completed\',"objectPath"=%s WHERE id=%s',(path,artifact['id']))
-        conn.execute('SELECT finish_task(%s,%s,\'completed\',%s,NULL)',(task['id'],task['leaseToken'],Jsonb({'stage':'exported','exportId':artifact['id']})))
+        conn.execute('UPDATE "ExportArtifact" SET status=\'completed\',"objectPath"=%s,"contentType"=%s WHERE id=%s',(path,content_type,artifact['id']))
+        conn.execute('SELECT finish_task(%s,%s,\'completed\',%s,NULL)',(task['id'],task['leaseToken'],Jsonb({'stage':'exported','exportId':artifact['id'],'processed':count,'format':extension})))
 
 
 _cleanup_cursor = ''
@@ -178,7 +186,7 @@ async def cleanup_exports():
         for item in items:
             response=await client.post(base+'/list/race-exports',headers=headers,json={'prefix':item['id']+'/', 'limit':100,'offset':0})
             response.raise_for_status()
-            names=[row['name'] for row in response.json() if row.get('name','').endswith('.xlsx') and '/' not in row['name']]
+            names=[row['name'] for row in response.json() if row.get('name','').endswith(('.xlsx','.zip')) and '/' not in row['name']]
             paths=[item['id']+'/'+name for name in names]
             if item['objectPath'] and item['objectPath'] not in paths: paths.append(item['objectPath'])
             if paths:
@@ -202,7 +210,10 @@ async def execute(task):
                 raise RuntimeError('lease_lost')
     async def work():
         settings=replace(Settings.from_env(),scrape_concurrency=1,catalog_concurrency=1,metadata_concurrency=1)
-        if task['kind']=='discover':
+        if task['kind']=='catalog-sync':
+            from catalog_sync import sync_catalog
+            await sync_catalog(task,settings,connection,fenced,progress)
+        elif task['kind']=='discover':
             payload=task['payload']
             settings=replace(settings,catalog_max_pages=min(10,int(payload.get('maxPages',1))))
             catalog=await EventCatalog(settings).discover(date_from=date.fromisoformat(payload['from']),date_to=date.fromisoformat(payload['to']) if payload.get('to') else None)
@@ -220,11 +231,16 @@ async def execute(task):
                 await asyncio.to_thread(query,'SELECT finish_task(%s,%s,\'partial\',%s,%s)',(task['id'],task['leaseToken'],Jsonb(progress),'discovery_partial'))
         elif task['kind']=='inspect':
             metadata,_=await EventMetadataService(settings).fetch(task['payload']['url'])
+            from edition_metadata import update_edition
+            await asyncio.to_thread(update_edition,task,metadata,connection,fenced)
             await asyncio.to_thread(store_match,task,metadata)
         elif task['kind']=='extract':
             result=await OpenResultsScraper(settings).scrape(task['payload']['url'],report)
+            if str(task['payload'].get('externalId','')).startswith('url:'):
+                from edition_metadata import update_edition
+                await asyncio.to_thread(update_edition,task,result.metadata,connection,fenced)
             await asyncio.to_thread(publish,task,result)
-        elif task['kind']=='export':
+        elif task['kind'] in ('export','export-selection'):
             await export(task)
         else:
             raise ValueError('unsupported_task')
@@ -241,7 +257,7 @@ async def execute(task):
             with connection() as conn:
                 conn.execute('UPDATE "CollectionTask" SET "maxAttempts"=attempt WHERE id=%s AND "leaseToken"=%s',(task['id'],task['leaseToken']))
         code=('source_access_blocked' if isinstance(exc, AccessBlockedError) else
-              'incomplete_extraction' if isinstance(exc,ValueError) and str(exc)=='incomplete_extraction' else 'collection_failed')
+              str(exc) if isinstance(exc,ValueError) and str(exc) in {'incomplete_extraction','catalog_pagination_not_advancing','catalog_end_unconfirmed','selected_edition_without_results','export_too_large_refine_selection','export_expired','source_identity_already_associated','edition_date_mismatch'} else 'collection_failed')
         outcome='partial' if code=='incomplete_extraction' else 'failed'
         await asyncio.to_thread(query,'SELECT finish_task(%s,%s,%s,%s,%s)',(task['id'],task['leaseToken'],outcome,Jsonb(progress),code))
     finally:
@@ -258,21 +274,39 @@ async def main():
         stopped=True
     signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
     tick=0
+    worker_id=str(uuid.uuid4())
+    async def presence_pulse():
+      nonlocal stopped
+      while not stopped:
+        await asyncio.sleep(20)
+        try:
+          await asyncio.to_thread(announce,query,worker_id,'stopping' if stop_requested() else 'busy' if run.active_task_id else 'available',run.active_task_id)
+        except Exception:
+          stopped=True
+          print('Results: connection lost; stopping before the next task.',flush=True)
+    presence_task=None
     try:
+      await asyncio.to_thread(announce,query,worker_id,'available')
+      presence_task=asyncio.create_task(presence_pulse())
+      print('Results executor connected; waiting for panel requests.',flush=True)
       # Batch runs may finish before the old 60-tick cleanup cadence.
       if run.batch and os.environ.get('SUPABASE_URL'):
         try: await cleanup_exports()
         except (httpx.HTTPError,KeyError): print('Export cleanup pending; verify Storage configuration.',flush=True)
-      while not stopped and run.can_claim():
+      while not stopped and not stop_requested() and run.can_claim():
         task=await asyncio.to_thread(query,'SELECT * FROM claim_task(%s,%s)',(['openresults','exports'],str(uuid.uuid4())),True)
         if task:
             run.claimed += 1
             run.active_task_id = task['id']
+            await asyncio.to_thread(announce,query,worker_id,'busy',task['id'])
+            print(f"Results task {task['id']}: started.",flush=True)
             await execute(task)
             outcome=await asyncio.to_thread(query,'SELECT status FROM "CollectionTask" WHERE id=%s',(task['id'],),True)
             run.tasks.append({'id':task['id'],'status':outcome['status']})
             run.tasks = run.tasks[-100:]
             run.active_task_id = None
+            await asyncio.to_thread(announce,query,worker_id,'available')
+            print(f"Results task {task['id']}: {outcome['status']}.",flush=True)
         else:
             if run.batch:
                 run.reason = 'queue_empty'
@@ -286,6 +320,11 @@ async def main():
         run.reason = 'worker_failed'
         raise RuntimeError('worker_failed') from None
     finally:
+        if presence_task:
+            presence_task.cancel()
+            await asyncio.gather(presence_task,return_exceptions=True)
+        try: await asyncio.to_thread(announce,query,worker_id,'stopped')
+        except Exception: pass
         if watchdog: watchdog.cancel()
         run.report()
 

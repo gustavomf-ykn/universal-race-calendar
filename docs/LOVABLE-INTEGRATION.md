@@ -183,3 +183,27 @@ Render Free suspende a API por inatividade: no primeiro acesso pode haver demora
 Enquanto queued, evitar consultas de poucos segundos durante horas: atualizar sob demanda, ao voltar à tela, ou com backoff durante sessão ativa. Quando running, acompanhar a cada 5–10 s e reduzir frequência se não houver mudança; parar ao fechar a tela ou chegar ao estado terminal. Não usar polling/pings para impedir a suspensão do Render.
 
 Mostrar a última atualização dos dados usando resultSet.updatedAt dos resultados e lastUpdatedAt do evento, sem confundir com updatedAt da tarefa. Resultados válidos anteriores continuam disponíveis se uma nova coleta for parcial/falhar. Exportações também aguardam executor; link assinado dura até 60 s, artefato expira em 24 h e limpeza física aguarda lote Python. Solicitar uma nova exportação pode ser necessário se a anterior expirar antes de ser processada. Configuração/agenda, Secrets por serviço e procedimento manual: [BATCH-HOSTING.md](BATCH-HOSTING.md).
+
+
+## Operação contínua e catálogo administrativo (atualização pendente de publicação)
+
+Consulte [operação pelo painel](PANEL-OPERATIONS.md) para ordem das migrations/deploys, inicializador Windows, limites de cobertura e aceite.
+
+Novos contratos (JWT admin nas rotas administrativas):
+
+| Rota | Uso |
+|---|---|
+| GET `/v1/executors` | Presença resumida autenticada; sem credenciais ou conteúdo das tarefas |
+| GET `/v1/admin/workers` | Diagnóstico administrativo de executores |
+| GET/PATCH `/v1/admin/catalog/events[/:id]` | Listar todas as situações/revisar; PATCH exige `reason` |
+| GET `/v1/admin/catalog/events/:id/audit` | Histórico de revisão |
+| POST `/v1/admin/catalog/events/collect` | `eventIds`, `operation=metadata|results`; uma tarefa por edição |
+| GET/POST `/v1/admin/syncs` | Histórico e início com `source`, `states`, `from`, `to`, `batchSize`, `snapshotLimit` |
+| POST `/v1/admin/syncs/:id/continue` | Próxima etapa do checkpoint |
+| POST `/v1/tasks/:id/retry` | `mode=resume|restart`; nova tarefa preserva histórico |
+| POST `/v1/tasks/:id/cancel` | Cancelar somente pendente |
+| POST `/v1/admin/source-matches/:id/register` | Edição independente pendente de revisão |
+| GET/POST `/v1/exports` | Histórico por usuário/exportação de seleção ou filtro completo |
+| GET `/v1/exports/:id` | Estado real e link assinado renovado no clique |
+
+POSTs que criam tarefas/exportações exigem `Idempotency-Key`. Cadastro independente por identidade e cancelamento são idempotentes sem criar trabalho adicional. Não enviar chave interna do Render ao navegador. Exibir `queued` como espera, `running` como processamento e `partial`/`failed` como resultado incompleto/falha; `completed` de uma etapa de catálogo não significa cobertura total. A exportação admite `kind=catalog-simple|catalog-full|results`, `layout=individual|consolidated` e exatamente um de `eventIds` ou `filter`. Paginação de histórico/listas: `page`, `limit` até 100.

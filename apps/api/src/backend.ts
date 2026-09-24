@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { enqueueTask, prisma, publicTask, TaskConflict } from "@race-calendar/database";
+import { enqueueTask, prisma, publicTask, TaskConflict, listWorkers } from "@race-calendar/database";
 import { authorize, keyHash, requireAdmin } from "./auth.js";
 import { resultSchema, disciplineSchema, matchSchema } from "./contracts.js";
 
@@ -75,6 +75,22 @@ export async function acceptTask(
   }
 }
 export async function registerBackend(app: FastifyInstance) {
+  app.get("/v1/executors", {
+    onRequest: authorize("tasks:read"),
+    schema: { tags: ["Operations"], security, response: { 200: {
+      type: "object", properties: { data: { type: "array", items: { type: "object", additionalProperties: true } } },
+    }, ...errors } },
+  }, async () => ({ data: (await listWorkers()).map(({ id, runtime, capabilities, state, lastSeenAt, ageSeconds }) =>
+    ({ id, runtime, capabilities, state, lastSeenAt, ageSeconds })) }));
+  app.get("/v1/admin/workers", {
+    onRequest: requireAdmin,
+    schema: { tags: ["Operations"], security, response: { 200: {
+      type: "object", properties: {
+        data: { type: "array", items: { type: "object", additionalProperties: true } },
+        staleAfterSeconds: { type: "integer" },
+      },
+    }, ...errors } },
+  }, async () => ({ data: await listWorkers(), staleAfterSeconds: 75 }));
   app.post(
     "/v1/admin/openresults/discover",
     {
@@ -348,8 +364,11 @@ export async function registerBackend(app: FastifyInstance) {
     async (req, reply) => {
       const item = await prisma.exportArtifact.findUnique({ where: { id: (req.params as { id: string }).id } });
       if (!item || !owned(item.ownerId, req)) return reply.code(404).send({ error: "export_not_found" });
-      if (!(await prisma.event.findFirst({ where: { id: item.eventId, publicationStatus: "published" } })))
-        return reply.code(404).send({ error: "event_not_found" });
+      const selection=item.selection as {eventIds?:string[];administrative?:boolean};
+      if(selection.administrative && !req.principal!.admin)return reply.code(403).send({error:"admin_required"});
+      const eventIds=item.eventId?[item.eventId]:selection.eventIds??[];
+      if(!req.principal!.admin && await prisma.event.count({where:{id:{in:eventIds},publicationStatus:"published"}})!==eventIds.length)
+        return reply.code(404).send({error:"event_not_found"});
       const task = await prisma.collectionTask.findUnique({ where: { id: item.taskId }, select: { status: true } });
       const expired = item.expiresAt <= new Date();
       let downloadUrl: string | null = null;

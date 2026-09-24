@@ -1,4 +1,6 @@
-import { claimTask, heartbeatTask, finishTask, prisma, setTaskLease } from "@race-calendar/database";
+import { claimTask, heartbeatTask, finishTask, prisma, setTaskLease, newWorkerId, workerPresence } from "@race-calendar/database";
+import { syncCatalog } from "./catalog.js";
+import { existsSync } from "node:fs";
 import { BatchRun } from "./batch.js";
 import {
   importTicketSportsEvents,
@@ -20,8 +22,15 @@ process.on("SIGINT", () => {
 export async function runQueue() {
   const run = new BatchRun();
   const watchdog = run.watchdog();
+  const workerId = newWorkerId();
+  const shouldStop = () => stopping || Boolean(process.env.WORKER_STOP_FILE && existsSync(process.env.WORKER_STOP_FILE));
+  const announce = () => workerPresence(workerId, shouldStop() ? "stopping" : run.activeTaskId ? "busy" : "available", run.activeTaskId);
+  let presenceTimer: ReturnType<typeof setInterval> | undefined;
   try {
-    while (!stopping && run.canClaim()) {
+    await announce();
+    presenceTimer = setInterval(() => { void announce().catch(() => { stopping = true; console.error("Calendar: connection lost; stopping before the next task."); }); }, 20000);
+    console.log("Calendar executor connected; waiting for panel requests.");
+    while (!shouldStop() && run.canClaim()) {
       const task = await claimTask(["ticketsports", "corridasbr", "maintenance"]);
       if (!task) {
         if (run.options.batch) {
@@ -33,6 +42,8 @@ export async function runQueue() {
       }
       run.claimed++;
       run.activeTaskId = task.id;
+      await announce();
+      console.log(`Calendar task ${task.id}: started.`);
       setTaskLease(task);
       let progress: Record<string, number | string> = { stage: "starting" };
       // Fail closed if the lease is lost: a stale executor must stop doing work.
@@ -47,7 +58,9 @@ export async function runQueue() {
       try {
         const input = task.payload as Record<string, unknown>;
         let status = "completed";
-        if (task.kind === "calendar") {
+        if (task.kind === "catalog-sync") {
+          progress = await syncCatalog(input);
+        } else if (task.kind === "calendar") {
           const importer = task.source === "ticketsports" ? importTicketSportsEvents : importCorridasBREvents;
           const quantity = Math.min(Number(input.quantity ?? 25), 500);
           let processed = 0,
@@ -108,12 +121,16 @@ export async function runQueue() {
       run.tasks.push({ id: task.id, status: outcome?.status ?? "unknown" });
       if (run.tasks.length > 100) run.tasks.shift();
       run.activeTaskId = null;
+      await announce();
+      console.log(`Calendar task ${task.id}: ${outcome?.status ?? "unknown"}.`);
     }
   } catch {
     run.reason = "worker_failed";
     throw new Error("worker_failed");
   } finally {
     if (watchdog) clearTimeout(watchdog);
+    if (presenceTimer) clearInterval(presenceTimer);
+    await workerPresence(workerId, "stopped", null).catch(() => {});
     run.report();
     await prisma.$disconnect();
   }
