@@ -13007,6 +13007,15 @@
                         "cancelled"
                       ]
                     },
+                    "executionHold": {
+                      "type": "boolean"
+                    },
+                    "holdReason": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
                     "progress": {
                       "type": "object",
                       "additionalProperties": true
@@ -13260,6 +13269,15 @@
                         "cancelled"
                       ]
                     },
+                    "executionHold": {
+                      "type": "boolean"
+                    },
+                    "holdReason": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
                     "progress": {
                       "type": "object",
                       "additionalProperties": true
@@ -13477,6 +13495,15 @@
                               "partial",
                               "failed",
                               "cancelled"
+                            ]
+                          },
+                          "executionHold": {
+                            "type": "boolean"
+                          },
+                          "holdReason": {
+                            "type": [
+                              "null",
+                              "string"
                             ]
                           },
                           "progress": {
@@ -13700,6 +13727,15 @@
                         "cancelled"
                       ]
                     },
+                    "executionHold": {
+                      "type": "boolean"
+                    },
+                    "holdReason": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
                     "progress": {
                       "type": "object",
                       "additionalProperties": true
@@ -13899,6 +13935,15 @@
                         "partial",
                         "failed",
                         "cancelled"
+                      ]
+                    },
+                    "executionHold": {
+                      "type": "boolean"
+                    },
+                    "holdReason": {
+                      "type": [
+                        "null",
+                        "string"
                       ]
                     },
                     "progress": {
@@ -14902,6 +14947,15 @@
                         "cancelled"
                       ]
                     },
+                    "executionHold": {
+                      "type": "boolean"
+                    },
+                    "holdReason": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
                     "progress": {
                       "type": "object",
                       "additionalProperties": true
@@ -15820,6 +15874,176 @@
                       "type": "string"
                     }
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tasks/{id}/hold": {
+      "post": {
+        "tags": [
+          "Operations"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "hold": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "hold",
+                  "reason"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "supabaseAuth": []
+          },
+          {
+            "internalKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }

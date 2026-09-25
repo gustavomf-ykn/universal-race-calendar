@@ -30,6 +30,19 @@ def storage_headers():
     return {'apikey':key, **({} if key.startswith('sb_secret_') else {'Authorization':f'Bearer {key}'})}
 
 
+def claim_next_task():
+    file=os.environ.get('WORKER_TASK_SELECTION_FILE')
+    if not file:
+        return query('SELECT * FROM claim_task(%s,%s)',(['openresults','exports'],str(uuid.uuid4())),True)
+    try:
+        from pathlib import Path
+        ids=json.loads(Path(file).read_text(encoding='utf-8'))
+        if not isinstance(ids,list) or len(ids)>100 or any(not isinstance(i,str) or not i or len(i)>100 for i in ids):raise ValueError()
+    except Exception:
+        raise ValueError('task_selection_invalid') from None
+    return query('SELECT * FROM claim_selected_task(%s,%s,%s)',(['openresults','exports'],str(uuid.uuid4()),ids),True)
+
+
 def connection():
     # psycopg uses libpq URI, not Prisma's ?schema=public parameter.
     return psycopg.connect(os.environ["WORKER_DATABASE_URL"], row_factory=dict_row)
@@ -294,7 +307,7 @@ async def main():
         try: await cleanup_exports()
         except (httpx.HTTPError,KeyError): print('Export cleanup pending; verify Storage configuration.',flush=True)
       while not stopped and not stop_requested() and run.can_claim():
-        task=await asyncio.to_thread(query,'SELECT * FROM claim_task(%s,%s)',(['openresults','exports'],str(uuid.uuid4())),True)
+        task=await asyncio.to_thread(claim_next_task)
         if task:
             run.claimed += 1
             run.active_task_id = task['id']

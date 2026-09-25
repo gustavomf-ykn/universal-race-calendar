@@ -45,6 +45,12 @@ def main():
             db = database_guard
             if not db.execute("SELECT pg_try_advisory_lock(72122026)").fetchone()[0]:
                 log('Outro inicializador já controla este banco. Nenhum executor iniciado.'); return 2
+            selection_file = os.environ.get('WORKER_TASK_SELECTION_FILE')
+            selected = None
+            if selection_file:
+                selected = json.loads(Path(selection_file).read_text(encoding='utf-8'))
+                if not isinstance(selected, list) or len(selected)>100 or any(not isinstance(i,str) or not i or len(i)>100 for i in selected):
+                    raise ValueError('task_selection_invalid')
             db.execute('SELECT id FROM "WorkerPresence" LIMIT 0')
             db.execute('SELECT id FROM "CatalogSync" LIMIT 0')
             db.execute('SELECT id FROM "AdminAudit" LIMIT 0')
@@ -52,12 +58,15 @@ def main():
             db.execute('SELECT "distanceKm",gap FROM "RaceResult" LIMIT 0')
             db.execute('SELECT selection,"contentType" FROM "ExportArtifact" LIMIT 0')
             active = db.execute('SELECT count(*) FROM "WorkerPresence" WHERE "lastSeenAt">now()-interval \'75 seconds\' AND state<>\'stopped\'').fetchone()[0]
-            pending = db.execute('SELECT id,kind,source,payload FROM "CollectionTask" WHERE status=\'queued\' OR (status=\'running\' AND \"leaseUntil\"<=now()) ORDER BY "createdAt"').fetchall()
+            protected = db.execute('SELECT count(*) FROM "CollectionTask" WHERE status=\'queued\' AND "executionHold"').fetchone()[0]
+            pending = db.execute('SELECT id,kind,source,payload FROM "CollectionTask" WHERE NOT "executionHold" AND (%s::text[] IS NULL OR id=ANY(%s::text[])) AND (status=\'queued\' OR (status=\'running\' AND "leaseUntil"<=now())) ORDER BY "createdAt"', (selected,selected)).fetchall()
             running = db.execute('SELECT count(*) FROM "CollectionTask" WHERE status=\'running\' AND \"leaseUntil\">now()').fetchone()[0]
         if active or running:
             log('Outro executor recente ou tarefa em execução detectada. Não iniciamos concorrentes; confira o painel e aguarde a presença expirar.')
             return 2
-        log(f'Conexão aprovada. {len(pending)} pedidos aguardando; nenhum executor recente.')
+        log(f'Conexão aprovada. {len(pending)} pedidos elegíveis; {protected} pedidos protegidos; nenhum executor recente.')
+        if selected is not None:
+            log('Modo seletivo: somente IDs do arquivo informado poderão ser adquiridos.')
         for tid, kind, source, payload in pending:
             log(f'Pedido {tid}: {kind}/{source}; quantidade={payload.get("quantity", payload.get("batchSize", "não aplicável"))}.')
         if pending and input('Iniciar e consumir esses pedidos? Digite INICIAR: ').strip() != 'INICIAR':

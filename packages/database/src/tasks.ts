@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { prisma } from "./index.js";
 import type { Prisma, CollectionTask } from "@prisma/client";
@@ -29,9 +30,27 @@ export async function enqueueTask(
   if (task.requestHash !== requestHash) throw new TaskConflict("idempotency_conflict");
   return task;
 }
+export function selectedTaskIds(): string[] | null {
+  const file = process.env.WORKER_TASK_SELECTION_FILE;
+  if (!file) return null;
+  try {
+    const ids: unknown = JSON.parse(readFileSync(file, "utf8"));
+    if (!Array.isArray(ids) || ids.length > 100 || ids.some((id) => typeof id !== "string" || !id || id.length > 100))
+      throw Error();
+    return ids;
+  } catch {
+    throw new Error("task_selection_invalid");
+  }
+}
 export async function claimTask(sources: string[]) {
   const token = randomUUID();
-  const rows = await prisma.$queryRaw<CollectionTask[]>`SELECT * FROM claim_task(${sources}::text[],${token})`;
+  const selected = selectedTaskIds();
+  const rows =
+    selected === null
+      ? await prisma.$queryRaw<CollectionTask[]>`SELECT * FROM claim_task(${sources}::text[],${token})`
+      : await prisma.$queryRaw<
+          CollectionTask[]
+        >`SELECT * FROM claim_selected_task(${sources}::text[],${token},${selected}::text[])`;
   return rows[0] ?? null;
 }
 export async function heartbeatTask(task: CollectionTask, progress: Prisma.InputJsonValue) {
@@ -57,6 +76,8 @@ export function publicTask(task: CollectionTask) {
     source: task.source,
     kind: task.kind,
     status: task.status,
+    executionHold: task.executionHold,
+    holdReason: task.holdReason,
     progress: task.progress,
     attempt: task.attempt,
     maxAttempts: task.maxAttempts,

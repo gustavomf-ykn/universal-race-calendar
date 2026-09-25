@@ -32,6 +32,8 @@ const taskSchema = {
     source: text,
     kind: text,
     status: { enum: ["queued", "running", "completed", "partial", "failed", "cancelled"] },
+    executionHold: { type: "boolean" },
+    holdReason: { type: ["string","null"] },
     progress: { type: "object", additionalProperties: true },
     attempt: { type: "integer" },
     maxAttempts: { type: "integer" },

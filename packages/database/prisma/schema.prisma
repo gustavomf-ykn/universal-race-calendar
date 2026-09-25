@@ -449,6 +449,8 @@ model CollectionTask {
   progress       Json     @default("{}")
   attempt        Int      @default(0)
   maxAttempts    Int      @default(3)
+  executionHold Boolean @default(false)
+  holdReason String?
   leaseToken     String?
   leaseUntil     DateTime? @db.Timestamptz(3)
   availableAt    DateTime @default(now()) @db.Timestamptz(3)

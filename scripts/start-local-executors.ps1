@@ -1,10 +1,12 @@
-﻿param()
+﻿param([string]$SelectedTaskFile)
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 $previousPath=$env:PATH
 $previousVersion=$env:WORKER_CODE_VERSION
+$previousSelection=$env:WORKER_TASK_SELECTION_FILE
 try {
  Push-Location $root
+ if($SelectedTaskFile){$env:WORKER_TASK_SELECTION_FILE=(Resolve-Path -LiteralPath $SelectedTaskFile).Path}
  $python=Join-Path (Split-Path -Parent $root) '.venv\Scripts'
  if(Test-Path (Join-Path $python 'python.exe')){$env:PATH=$python+';'+$env:PATH}
  if(-not (Get-Command python -ErrorAction SilentlyContinue)){throw 'Instale Python e as dependências requirements-worker.txt antes de iniciar.'}
@@ -25,5 +27,6 @@ try {
 } finally {
  $env:PATH=$previousPath
  $env:WORKER_CODE_VERSION=$previousVersion
+ $env:WORKER_TASK_SELECTION_FILE=$previousSelection
  Pop-Location
 }

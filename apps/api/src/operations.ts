@@ -65,6 +65,42 @@ export async function registerOperations(app: FastifyInstance) {
       route.schema.params = object({ id: { type: "string", minLength: 1 } }, ["id"]);
   });
   app.post(
+    "/v1/tasks/:id/hold",
+    {
+      onRequest: requireAdmin,
+      schema: schema(
+        object({ hold: { type: "boolean" }, reason: { type: "string", minLength: 3, maxLength: 500 } }, [
+          "hold",
+          "reason",
+        ]),
+      ),
+    },
+    async (req, reply) => {
+      const { hold, reason } = req.body as { hold: boolean; reason: string };
+      const id = (req.params as { id: string }).id;
+      return prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('race-task-acquisition'))`;
+        const task = await tx.collectionTask.findUnique({ where: { id } });
+        if (!task) return reply.code(404).send({ error: "task_not_found" });
+        if (task.status !== "queued") return reply.code(409).send({ error: "only_queued_tasks_can_be_held" });
+        if (task.executionHold === hold) return publicTask(task);
+        const changed = await tx.collectionTask.update({
+          where: { id },
+          data: { executionHold: hold, holdReason: hold ? reason : null, updatedAt: new Date() },
+        });
+        await tx.adminAudit.create({
+          data: {
+            actorId: req.principal!.id,
+            taskId: id,
+            action: hold ? "hold_task" : "release_task",
+            details: { reason },
+          },
+        });
+        return publicTask(changed);
+      });
+    },
+  );
+  app.post(
     "/v1/admin/source-matches/:id/register",
     { onRequest: requireAdmin, schema: schema() },
     async (req, reply) => {
