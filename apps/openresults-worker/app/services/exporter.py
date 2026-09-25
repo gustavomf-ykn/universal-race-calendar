@@ -185,6 +185,8 @@ def safe_slug(value: str, fallback: str = "resultados") -> str:
 
 
 def _excel_value(value: Any) -> Any:
+    if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")):
+        return "'" + value
     if value is None:
         return None
     try:

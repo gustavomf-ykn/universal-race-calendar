@@ -108,3 +108,8 @@ Os registros ExportArtifact são mantidos para permitir nova varredura de upload
 Backlog parado: verificar processos, conectividade, permissões das funções SQL, lease e availableAt. Falhas repetidas da fonte: interromper novas solicitações, respeitar o prazo da fonte e usar fixture para diagnosticar parser. Não aumentar concorrência para contornar bloqueio.
 
 Rollback de aplicação: parar workers, manter backup, reinstalar imagem anterior **compatível com schema**, verificar versão e leitura antes de retomar. As migrations novas são aditivas; não executar DROP como rollback automático. O código antigo faz importação dentro do HTTP, então não reativar seus cron jobs. Reversão de banco exige restauração ensaiada em outro banco e corte explícito.
+
+
+## Operação contínua e catálogo administrativo (atualização pendente de publicação)
+
+Consulte [operação pelo painel](PANEL-OPERATIONS.md) para ordem das migrations/deploys, inicializador Windows, limites de cobertura e aceite.

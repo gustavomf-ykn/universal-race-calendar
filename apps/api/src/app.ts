@@ -1,3 +1,4 @@
+import { registerOperations } from "./operations.js";
 import { registerBackend, acceptTask } from "./backend.js";
 import { installLegacyContracts } from "./legacy-contracts.js";
 import { installCalendarContracts } from "./contracts.js";
@@ -472,7 +473,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     const body = objectBody(request.body);
     const parsed = publicationStatusSchema.safeParse(body.publicationStatus ?? body.status);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_publication_status" });
-    return updateEventPublicationStatus(id, parsed.data, reply);
+    return updateEventPublicationStatus(id, parsed.data, reply, request.principal!.id);
   });
 
   app.patch("/v1/admin/events/:id/dedupe-status", { preHandler: requireInternalApiKey }, async (request, reply) => {
@@ -499,17 +500,17 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
   app.post("/v1/admin/events/:id/publish", { preHandler: requireInternalApiKey }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    return updateEventPublicationStatus(id, "published", reply);
+    return updateEventPublicationStatus(id, "published", reply, request.principal!.id);
   });
 
   app.post("/v1/admin/events/:id/hide", { preHandler: requireInternalApiKey }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    return updateEventPublicationStatus(id, "hidden", reply);
+    return updateEventPublicationStatus(id, "hidden", reply, request.principal!.id);
   });
 
   app.post("/v1/admin/events/:id/reject", { preHandler: requireInternalApiKey }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    return updateEventPublicationStatus(id, "rejected", reply);
+    return updateEventPublicationStatus(id, "rejected", reply, request.principal!.id);
   });
 
   app.get("/v1/admin/curation/jobs", { preHandler: requireInternalApiKey }, async (request) => {
@@ -652,6 +653,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   });
 
   await registerBackend(app);
+  await registerOperations(app);
   return app;
 }
 
@@ -923,18 +925,15 @@ function adminEventsWhere(query: AdminEventListQuery) {
   return where;
 }
 
-async function updateEventPublicationStatus(id: string, publicationStatus: "draft" | "pending_review" | "published" | "hidden" | "rejected", reply: FastifyReply) {
-  const event = await prisma.event
-    .update({
-      where: { id },
-      data: {
-        publicationStatus,
-        publishedAt: publicationStatus === "published" ? new Date() : null,
-      },
-      include: { distances: true, prices: true, images: { orderBy: { sortOrder: "asc" } }, source: true },
-    })
-    .catch(() => null);
-  if (!event) return reply.code(404).send({ error: "event_not_found" });
+async function updateEventPublicationStatus(id: string, publicationStatus: "draft" | "pending_review" | "published" | "hidden" | "rejected", reply: FastifyReply, actorId:string) {
+  const current=await prisma.event.findUnique({where:{id}});
+  if(!current)return reply.code(404).send({error:"event_not_found"});
+  if(publicationStatus==="published"&&(!current.date||!current.city||!current.state))return reply.code(409).send({error:"publication_requires_date_city_state"});
+  const event=await prisma.$transaction(async tx=>{
+    const row=await tx.event.update({where:{id},data:{publicationStatus,administrativeReview:true,publishedAt:publicationStatus==="published"?new Date():null},include:{distances:true,prices:true,images:{orderBy:{sortOrder:"asc"}},source:true}});
+    await tx.adminAudit.create({data:{actorId,eventId:id,action:"publication_status",details:{before:current.publicationStatus,after:publicationStatus}}});
+    return row;
+  });
   return serializeAdminEventListItem(event);
 }
 

@@ -202,6 +202,7 @@ model Event {
   modality            Modality          @default(unknown)
   eventStatus         EventStatus       @default(unknown)
   publicationStatus   PublicationStatus @default(draft)
+  administrativeReview Boolean @default(false)
   registrationUrl     String?
   officialUrl         String?
   regulationUrl       String?
@@ -424,6 +425,18 @@ model CurationJob {
 }
 
 // Event is an edition, never a global race or athlete identity.
+model WorkerPresence {
+  id           String @id
+  runtime      String
+  capabilities String[]
+  state        String
+  activeTaskId String?
+  version      String
+  startedAt    DateTime @default(now()) @db.Timestamptz(6)
+  lastSeenAt   DateTime @default(now()) @db.Timestamptz(6)
+  @@index([lastSeenAt])
+}
+
 model CollectionTask {
   id             String   @id @default(uuid())
   source         String
@@ -436,6 +449,8 @@ model CollectionTask {
   progress       Json     @default("{}")
   attempt        Int      @default(0)
   maxAttempts    Int      @default(3)
+  executionHold Boolean @default(false)
+  holdReason String?
   leaseToken     String?
   leaseUntil     DateTime? @db.Timestamptz(3)
   availableAt    DateTime @default(now()) @db.Timestamptz(3)
@@ -492,14 +507,19 @@ model RaceResult {
   categoryPosition Int?
   time             String?
   pace             String?
+  distanceKm       Float?
+  gap              String?
   @@unique([resultSetId, recordKey])
   @@index([resultSetId, modality, overallPosition, id])
 }
 
 model ExportArtifact {
   id          String @id @default(uuid())
-  eventId     String
-  event       Event @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  eventId     String?
+  event       Event? @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  kind        String @default("results")
+  selection   Json @default("{}")
+  contentType String?
   ownerId     String
   taskId      String @unique
   status      String @default("queued")
@@ -543,4 +563,30 @@ model ApiUsage {
   window       DateTime @db.Timestamptz(3)
   count        Int @default(0)
   @@id([credentialId, window])
+}
+
+model CatalogSync {
+ id String @id @default(uuid())
+ source String
+ ownerId String
+ options Json
+ snapshot Json @default("[]")
+ cursor Int @default(0)
+ page Int @default(1)
+ status String @default("ready")
+ coverage String @default("not_started")
+ discovered Int @default(0)
+ processed Int @default(0)
+ createdAt DateTime @default(now()) @db.Timestamptz(6)
+ updatedAt DateTime @default(now()) @db.Timestamptz(6)
+}
+model AdminAudit {
+ id String @id @default(uuid())
+ actorId String
+ action String
+ eventId String?
+ taskId String?
+ details Json @default("{}")
+ createdAt DateTime @default(now()) @db.Timestamptz(6)
+ @@index([eventId,createdAt])
 }

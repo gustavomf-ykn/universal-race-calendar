@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { assertTaskLease } from "./lease.js";
-export { setTaskLease } from "./lease.js";
+export { setTaskLease, assertTaskLease } from "./lease.js";
+export { listWorkers, workerPresence, newWorkerId } from "./presence.js";
 export { enqueueTask, claimTask, heartbeatTask, finishTask, publicTask, TaskConflict, stableJson } from "./tasks.js";
 import { PrismaClient } from "@prisma/client";
 import type { CanonicalRaceEvent, CurationJobStatus, CurationStatus, RawSourceExtraction } from "@race-calendar/schemas";
@@ -217,12 +218,15 @@ export async function saveCanonicalEvent(event: CanonicalRaceEvent, options: { c
   if (existingBySource) {
     const saved = await prisma.$transaction(async (tx) => {
       await assertTaskLease(tx);
+      await tx.$queryRaw`SELECT id FROM "Event" WHERE id=${existingBySource.id} FOR UPDATE`;
+      const current=await tx.event.findUniqueOrThrow({where:{id:existingBySource.id}});
+      if(current.administrativeReview || ["hidden","rejected"].includes(current.publicationStatus))canonicalEvent.publicationStatus=current.publicationStatus;
       const updated = await tx.event.update({
         where: { id: existingBySource.id },
         data: {
           ...eventScalarData(canonicalEvent),
           publishedAt:
-            publicationStatus === "published" ? (existingBySource.publishedAt ?? new Date()) : null,
+            canonicalEvent.publicationStatus === "published" ? (existingBySource.publishedAt ?? new Date()) : null,
           versions: {
             create: eventVersionData(canonicalEvent),
           },
