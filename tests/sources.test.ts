@@ -24,6 +24,19 @@ const corridasBRDetailFixture = readFileSync("tests/fixtures/corridasbr-detail.h
 const officialEventFixture = readFileSync("tests/fixtures/official-event.html", "utf-8");
 
 describe("source adapters", () => {
+  it("keeps calendar city and date within the matching event boundary", () => {
+    const html = `<table>
+      <tr><td>01/10/2026</td><td><a href="por_cidade.asp?cidade=A">Cidade A</a></td><td><a href="mostracorrida.asp?escolha=1">Primeira</a></td></tr>
+      <tr><td>02/10/2026</td><td><a href="por_cidade.asp?cidade=B">Cidade B</a></td><td><a href="mostracorrida.asp?escolha=2">Segunda</a></td></tr>
+      <tr><td><a href="mostracorrida.asp?escolha=3">Sem dados</a></td></tr>
+    </table>`;
+    const parsed = parseCorridasBRCalendar(html, "SC");
+    expect(parsed.map(({ city, date }) => ({ city, date }))).toEqual([
+      { city: "Cidade A", date: "2026-10-01" },
+      { city: "Cidade B", date: "2026-10-02" },
+      { city: null, date: null },
+    ]);
+  });
   it("keeps city names and excludes CorridasBR navigation labels", () => {
     const html = '<table><tr><td>Cidade:</td><td><a href="por_cidade.asp?id=1">Camboriú</a> <a href="por_cidade.asp?id=1">(Corrida nesta Cidade)</a> <a href="regiao.asp">(Corridas nesta Região)</a></td></tr></table>';
     expect(parseCorridasBRDetail(html, "https://www.corridasbr.com.br/SC/mostracorrida.asp?escolha=1").city).toBe("Camboriú");
