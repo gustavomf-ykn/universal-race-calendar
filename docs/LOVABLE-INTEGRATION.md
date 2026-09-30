@@ -4,6 +4,12 @@ Painel de homologação: https://runfinder-rithmy.lovable.app. API:
 https://universal-race-calendar.onrender.com. Evidências e limites da rodada real:
 [homologação de calendário e exportação](STAGING-ROUND-2026-09-21.md).
 
+Estado operacional atualizado em 30/09/2026: [PANEL-OPERATIONS.md](PANEL-OPERATIONS.md).
+A revisão administrativa pelo navegador aguarda o deploy da correção de preflight
+PATCH do PR #10; somente ajustar CORS_ORIGINS não corrige os métodos anunciados.
+Não apresentar uma edição como publicada antes da confirmação da API. O diagnóstico
+e os testes estão em [STAGING-CORS-2026-09-30.md](STAGING-CORS-2026-09-30.md).
+
 O backend é a autoridade de migrations; **não criar
 ou modificar tabelas no Lovable**. Consumir HTTP da API, não as tabelas via PostgREST.
 Contrato gerado: [openapi.json](openapi.json); Swagger: `GET /docs`.
@@ -174,7 +180,7 @@ Após existir a URL do painel, validar o preflight a partir dessa origem e fazer
 
 ## API suspensível e execução em lotes
 
-A API responde 202 quando a tarefa foi registrada; isso não significa que já existe executor ativo. Nesta homologação, workers iniciam **manualmente**, no computador ou no GitHub, sem disputar a fila. Agendamentos continuam desativados. Iniciar/encerrar e dependências de cada função: [LOCAL-WORKERS.md](LOCAL-WORKERS.md). Novas exportações exigem o worker Python, mesmo quando os resultados já existem. Não prometer uma próxima execução automática. Para uso operacional fora de desenvolvimento/testes, ver [BATCH-HOSTING.md](BATCH-HOSTING.md).
+A API responde 202 quando a tarefa foi registrada; isso não significa que já existe executor ativo. Nesta rodada de homologação, usar somente os workers locais pelo inicializador único; não iniciar runners GitHub. Agendamentos continuam desativados. Iniciar/encerrar e dependências de cada função: [PANEL-OPERATIONS.md](PANEL-OPERATIONS.md). Novas exportações exigem o worker Python, mesmo quando os resultados já existem. Não prometer uma próxima execução automática. Para uso operacional fora de desenvolvimento/testes, ver [BATCH-HOSTING.md](BATCH-HOSTING.md).
 
 O estado queued deve aparecer como **Aguardando executor ou nova tentativa**, running como **Em processamento**, partial como **Parcial**, completed como **Concluída**, failed como **Falhou** e cancelled como **Cancelada**. Não inventar um estado scheduled nem ETA exato. Uma tarefa em running pode permanecer assim após interrupção até outra execução recuperar seu lease.
 

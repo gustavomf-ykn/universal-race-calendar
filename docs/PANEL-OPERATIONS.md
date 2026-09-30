@@ -2,7 +2,9 @@
 
 ## Estado e limites desta entrega
 
-Alterações em branches `codex/panel-operations-catalog` dos dois repositórios. Não houve merge, publicação, migration no Supabase compartilhado nem execução de pedidos reais nesta rodada. O aceite no painel publicado continua pendente da atualização autorizada abaixo.
+Atualização em 30/09/2026: Backend #8 integrado e API publicada em `481f73b234812f162e43ce0908ee306aeb5e1e49`; Frontend #2 integrado em `49643f893d6e1d046250b6fb022576e02523b34c` e publicação Lovable confirmada. Quatro migrations operacionais foram aplicadas exclusivamente no `race-platform-staging`, após backup. O procedimento abaixo é referência de implantação, não uma solicitação para repetir ações já concluídas.
+
+O aceite integral permanece pendente: a API publicada não permite PATCH no preflight CORS, impedindo revisão/publicação pelo navegador; correção no PR #10, ainda não implantada. CorridasBR tem correção de metadados no PR #9, pendente de integração. Ver [diagnóstico de CORS](STAGING-CORS-2026-09-30.md).
 
 Diagnóstico somente leitura em 24/09/2026: nenhum worker local ativo. Dois pedidos TicketSports aguardavam executor, sem tentativas:
 
@@ -11,16 +13,16 @@ Diagnóstico somente leitura em 24/09/2026: nenhum worker local ativo. Dois pedi
 | `5e8fe9d7-d889-4cd5-b427-972498115f2b` | 120 | 22/09/2026 00:25:13 |
 | `8278a9e1-9eaa-41ea-8e72-856d8b631665` | 15 | 22/09/2026 00:56:40 |
 
-Nenhum deles foi cancelado ou consumido. Quantidade representa provas examinadas, não necessariamente novas provas. Antes de iniciar o executor, revisar esses pedidos no painel: o inicializador contínuo consumirá a fila, incluindo tarefas recuperáveis cujo lease expirou.
+Nenhum deles foi cancelado ou consumido. Ambos permanecem `queued`, com `executionHold=true`, e não são elegíveis para aquisição pelos executores atualizados. Não remover essa proteção. Quantidade representa provas examinadas, não necessariamente novas provas. Antes de iniciar o executor, revisar os demais pedidos elegíveis, incluindo tarefas recuperáveis cujo lease expirou.
 
 ## Ordem de atualização — executar somente quando autorizado
 
 1. Integrar o PR do backend; manter os workers parados. Atualizar o checkout local com `git pull --ff-only` na main, preservando alterações locais.
 2. Instalar dependências (`pnpm install --frozen-lockfile`; Python 3.12+ com `pip install -r apps/openresults-worker/requirements-worker.txt`; `python -m playwright install chromium`). Nesta máquina, reutilizar o Python de `../.venv/Scripts/python.exe`. Gerar cliente com `pnpm db:generate`.
-3. Confirmar exclusivamente `race-platform-staging`, referência `sggrijhyblejlgimgzzc`. Usando as credenciais DPAPI existentes, aplicar as três migrations aditivas pelo script: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/with-staging-secrets.ps1 -Action migrate -ProjectRef sggrijhyblejlgimgzzc`. Não usar reset. Repetir o comando deve informar que não há migrations pendentes. Esta ação NÃO foi executada nesta rodada.
+3. Confirmar exclusivamente `race-platform-staging`, referência `sggrijhyblejlgimgzzc`. As migrations `20260922000000_worker_presence`, `20260922000100_panel_catalog`, `20260922000200_administrative_review` e `20260924000000_selective_execution` já foram aplicadas em 25/09; segunda execução confirmou idempotência. Backup e recuperação: [procedimento de rollout](STAGING-OPERATIONS-ROLLOUT.md). Não usar reset. PRs #9/#10 não exigem migration.
 4. Render: no serviço da API, **Manual Deploy → Deploy latest commit**, após conferir o SHA integrado. Auto deploy continua desligado. Conferir `/v1/version` e `/health`. As novas rotas exigem atualizar a API, além dos workers; não basta atualizar o computador.
 5. Integrar o PR do frontend, conferir a sincronização da Lovable e publicar explicitamente. Merge não comprova atualização do site. Não adicionar secrets ao frontend: somente API base URL, Supabase URL e publishable key; login JWT com `app_metadata.role=admin` validado no backend.
-6. Revisar a fila e decidir o destino dos pedidos de 120 e 15 antes do aceite pequeno. Não iniciar outro runner ou worker em paralelo.
+6. Revisar a fila e preservar a retenção dos pedidos de 120 e 15. Para homologação seletiva, usar `scripts/start-local-executors.ps1 -SelectedTaskFile .secrets/selected-operations.json`: somente os IDs desse arquivo serão consumidos; lista vazia não consome tarefas. Não iniciar outro runner ou worker em paralelo.
 
 ## Uso cotidiano no Windows
 
@@ -58,6 +60,8 @@ Histórico é por usuário no servidor. Storage permanece privado e a API autori
 
 Testes automatizados locais cobrem presença ociosa, desligamento/reconexão, rejeição de duplicidade de inicializador, autorização, cursor transacional, identidade por URL, lease antigo, revisão auditada, idempotência, exportação de filtro com 21 registros, XLSX aberto com openpyxl, cabeçalhos/acentos/IDs/fórmulas e ZIP. São testes controlados, sem coleta real.
 
-Após publicar: entrar como admin; observar executor desligado; iniciar uma vez o inicializador após revisar a fila; solicitar uma descoberta de cinco candidatos; acompanhar tarefa e catálogo; continuar uma etapa e verificar IDs; revisar/publicar uma prova e abrir detalhes; exportar selecionadas e filtro de mais de uma página; baixar e abrir XLSX/ZIP; encerrar com Ctrl+C e confirmar desconexão; reiniciar e confirmar presença. Falha de fonte deve manter os resultados anteriores. O aceite pelo navegador autenticado ainda não foi executado nesta versão.
+Aceite restante após corrigir CORS: revisar/publicar a Garuva e abrir seus detalhes públicos; confirmar filtros de resultados; validar download no navegador e seleção de duas edições em ZIP; conferir início e encerramento do executor em uma janela independente. Não repetir coletas externas já comprovadas apenas para testar interface ou idempotência. Falha de fonte deve manter resultados anteriores.
 
-Versão pública consultada em 24/09/2026: API Render `97f27f7c98fe5a01b0fe676302b14cc97f9b3886` (backendVersion 2.0.0), anterior a esta entrega. A publicação do frontend desta branch não foi realizada nem validada.
+Evidências reais posteriores, até 30/09: catálogo administrativo com 28 provas; dois lotes CorridasBR de cinco com avanço do checkpoint, cinco TicketSports e cinco OpenResults. Resultados: Mountain Do 435 e Garuva Run 387. Exportações simples/completa de 23 provas (antes do lote OpenResults) e resultados de 435 linhas foram geradas e abertas tecnicamente. Cancelamento de uma exportação pendente e novo pedido distinto foram comprovados pelo painel. O download no navegador permanece pendente após ERR_BLOCKED_BY_CLIENT. Publicação administrativa não foi aprovada: o preflight PATCH está bloqueado na versão atualmente implantada.
+
+Em 30/09 os executores estão desligados. O lote TicketSports `67e76b79-7909-4673-b34c-2dc7207457bc`, de cinco candidatos, está aguardando. Não foi consumido nesta verificação. A utilização diária independente da sessão do agente ainda deve ser confirmada com o inicializador aberto pelo usuário.

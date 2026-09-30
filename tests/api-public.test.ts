@@ -47,6 +47,50 @@ describe("API public and guarded routes without database", () => {
     await corsApp.close();
   });
 
+  it("allows administrative PATCH preflight only for configured panel origins", async () => {
+    const previous = process.env.CORS_ORIGINS;
+    const origins = [
+      "https://runfinder-rithmy.lovable.app",
+      "https://id-preview--e21cded7-e20c-4cde-affb-e861bee99b6e.lovable.app",
+    ];
+    process.env.CORS_ORIGINS = origins.join(",");
+    const corsApp = await buildApp();
+    try {
+      for (const origin of origins) {
+        const response = await corsApp.inject({
+          method: "OPTIONS",
+          url: "/v1/admin/catalog/events/test-event",
+          headers: {
+            origin,
+            "access-control-request-method": "PATCH",
+            "access-control-request-headers": "authorization,content-type,idempotency-key",
+          },
+        });
+        expect(response.statusCode).toBe(204);
+        expect(response.headers["access-control-allow-origin"]).toBe(origin);
+        expect(String(response.headers["access-control-allow-methods"]).split(",").map((method) => method.trim())).toContain("PATCH");
+        expect(response.headers["access-control-allow-headers"]).toContain("idempotency-key");
+      }
+      const denied = await corsApp.inject({
+        method: "OPTIONS",
+        url: "/v1/admin/catalog/events/test-event",
+        headers: { origin: "https://untrusted.test", "access-control-request-method": "PATCH" },
+      });
+      expect(denied.headers["access-control-allow-origin"]).toBeUndefined();
+      const unauthorized = await corsApp.inject({
+        method: "PATCH",
+        url: "/v1/admin/catalog/events/test-event",
+        headers: { origin: origins[0] },
+        payload: { publicationStatus: "published", reason: "test review" },
+      });
+      expect(unauthorized.statusCode).toBe(401);
+    } finally {
+      await corsApp.close();
+      if (previous === undefined) delete process.env.CORS_ORIGINS;
+      else process.env.CORS_ORIGINS = previous;
+    }
+  });
+
   it("guards internal routes before they access the database", async () => {
     const unauthorized = await app.inject({ method: "GET", url: "/v1/sources" });
     expect(unauthorized.statusCode).toBe(401);
