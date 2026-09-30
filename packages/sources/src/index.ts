@@ -414,16 +414,20 @@ export function parseCorridasBRCalendar(
     const externalId = corridasBRIdFromUrl(url);
     if (!externalId) return;
     const row = $(anchor).closest("tr");
-    const surroundingRows = row.add(row.prev()).add(row.prev().prev());
+    // A preceding event is never metadata for this one. Some calendars put
+    // metadata in a separate preceding row; inspect nearest rows first and stop
+    // at an event boundary instead of merging rows in document order.
+    const metadataRows = [row];
+    let previous = row.prev();
+    for (let offset = 0; offset < 2 && previous.length; offset++) {
+      if (previous.find('a[href*="mostracorrida.asp?escolha="]').length) break;
+      metadataRows.push(previous);
+      previous = previous.prev();
+    }
     const city =
-      cleanText(
-        surroundingRows
-          .find('a[href*="por_cidade.asp"]')
-          .toArray()
-          .map((item) => $(item).text())
-          .find(Boolean),
-      ) || null;
-    const rowText = cleanText(surroundingRows.text());
+      metadataRows.map((item) => cleanText(item.find('a[href*="por_cidade.asp"]').first().text())).find(Boolean) ||
+      null;
+    const rowText = cleanText(metadataRows.map((item) => item.text()).join(" "));
     const dateText = rowText.match(/(?<!\d)\d{1,2}\/\d{1,2}\/\d{2,4}(?!\d)/)?.[0] ?? null;
     events.push({
       sourceType: "corridasbr",
