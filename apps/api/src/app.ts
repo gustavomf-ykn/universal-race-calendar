@@ -74,6 +74,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   void options; // Deprecated constructor injection retained for source compatibility.
   await app.register(cors, {
     origin: corsOrigins(),
+    methods: ["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
   });
   await app.register(swagger, {
     openapi: {
