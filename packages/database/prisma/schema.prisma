@@ -460,12 +460,36 @@ model CollectionTask {
   createdAt      DateTime @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime @default(now()) @db.Timestamptz(3)
   finishedAt     DateTime? @db.Timestamptz(3)
+  capacityReservations CapacityReservation[]
   @@unique([ownerId, idempotencyKey])
   @@index([source, status, availableAt])
 }
 
 model SourceSlot {
   source String @id
+}
+
+model CatalogCapacity {
+ id Int @id
+ databaseBudgetBytes BigInt?
+ storageBudgetBytes BigInt?
+ databaseHeadroomBytes BigInt @default(16777216)
+ storageHeadroomBytes BigInt @default(1048576)
+ confirmedAt DateTime? @db.Timestamptz(6)
+ databaseBytes BigInt?
+ databaseMeasuredAt DateTime? @db.Timestamptz(6)
+ storageBytes BigInt?
+ storageMeasuredAt DateTime? @db.Timestamptz(6)
+ updatedAt DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model CapacityReservation {
+ taskId String
+ task CollectionTask @relation(fields: [taskId],references: [id],onDelete: Cascade)
+ leaseToken String
+ bytes BigInt
+ expiresAt DateTime @db.Timestamptz(6)
+ @@id([taskId,leaseToken])
 }
 
 model SourceRequestControl {

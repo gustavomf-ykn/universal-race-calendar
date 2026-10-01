@@ -1,6 +1,6 @@
 # Inventário de capacidade antes da carga nacional
 
-Ferramenta `scripts/catalog-capacity.mjs`, somente leitura. Não é um controle automático de capacidade, não autoriza carga e não altera plano, dados, fila ou configurações. O mecanismo que pausará consumidores antes do limite ainda precisa ser implementado.
+Ferramenta `scripts/catalog-capacity.mjs`, somente leitura. Não autoriza carga e não altera plano, dados, fila ou configurações. A branch acrescenta uma barreira separada; ela exige integração e homologação antes de uso no staging.
 
 ## Identidade e uso seguro
 
@@ -24,4 +24,29 @@ Uma medição é uma observação pontual, não cobertura nacional, prontidão d
 
 Documentação oficial consultada em 01/10/2026: [database size](https://supabase.com/docs/guides/platform/database-size) descreve restrição de escrita no Free acima de 500 MB de banco; [Storage size](https://supabase.com/docs/guides/platform/manage-your-usage/storage-size) informa 1 GB no Free e acompanhamento de uso por organização/período. A quota e as restrições não são determinadas apenas pelo tamanho vivo deste projeto. O plano e consumo dos demais projetos da organização não foram confirmados pela ferramenta.
 
-Antes da carga nacional: confirmar quota efetiva e orçamento reservado a staging; definir margens conservadoras, medir crescimento por lote (catálogo separado de resultados), persistir medidas com validade, bloquear trabalho quando a medição estiver ausente/vencida ou atingir margem, e permitir retomada auditada. Verificar também espaço local/memória para Chromium e arquivos temporários. Não aumentar planos, apagar resultados válidos ou alterar spend cap automaticamente. Uma varredura que para por capacidade continua parcial até resolver a causa e retomar o checkpoint.
+Antes da carga nacional: confirmar quota efetiva e orçamento reservado a staging; definir margens conservadoras e medir crescimento por lote (catálogo separado de resultados). Verificar também espaço local/memória para Chromium e arquivos temporários. Não aumentar planos, apagar resultados válidos ou alterar spend cap automaticamente. Uma varredura que para por capacidade continua parcial até resolver a causa e retomar o checkpoint.
+
+## Barreira compartilhada em desenvolvimento
+
+Migration aditiva `20261001000300_catalog_capacity`, aplicada apenas em PostgreSQL local descartável. RLS e revogações impedem acesso de PUBLIC/anon/authenticated às tabelas e funções. API administrativa valida JWT admin; nenhum segredo novo é necessário no frontend.
+
+O orçamento inicial é não confirmado. O administrador registra uma alocação total de banco e Storage que caiba na capacidade reservada ao projeto, considerando os demais projetos/consumo da organização. A confirmação humana não verifica automaticamente a quota do provedor. O sistema não contrata recursos nem altera planos.
+
+Os executores conferem banco antes de começar e antes de cada transporte de fonte. Gravações cercadas por lease medem dentro da transação e mantêm lock compartilhado até o commit; snapshots, fontes, extrações e resultados usam estimativas conservadoras de crescimento. O cálculo soma os bancos do cluster, com margem mínima de 16 MiB. Tamanho físico, índices, WAL e escritores externos não têm crescimento exato previsível: essa proteção reduz risco, mas não substitui acompanhamento da quota do provedor.
+
+Exportações conferem Storage antes de montar o arquivo. Imediatamente antes do upload, reservam seu tamanho exato sob lease válido. Reservas concorrentes são somadas; repetir a reserva do mesmo lease não cobra duas vezes. Publicação concluída remove a reserva na transação final. Upload interrompido/sem resposta mantém a reserva por até 30 minutos, além dos objetos eventualmente medidos, de forma conservadora. O caminho continua vinculado ao lease. Reserva expirada não autoriza publicação por executor vencido.
+
+Toda verificação de execução mede novamente; nunca autoriza pelo cache mostrado no painel. Storage ausente, sem visibilidade completa ou objeto sem tamanho implica medição indisponível. Isso impede novas exportações; não impede trabalho exclusivamente de banco quando este pode ser medido e cabe em sua alocação.
+
+Uma tarefa sem capacidade retorna a `queued` com `executionHold=true`, `holdReason=capacity_wait`, erro específico e recurso em `progress.capacityResource`. Não gasta tentativa e preserva progress/checkpoint. Configurar orçamento e atualizar medições não liberam pedidos. Retomar mede novamente e libera somente a retenção por capacidade do recurso escolhido. Outros holds, bloqueios de fonte e histórico permanecem protegidos. Replay de uma retomada antiga devolve seu resultado original e não libera retenção posterior.
+
+### Contrato e operação
+
+- `GET /v1/admin/capacity`: alocações/margens em strings de bytes, medições e datas; `providerQuotaVerified=false`.
+- `POST /v1/admin/capacity/configure`: `databaseBudgetBytes`, `storageBudgetBytes`, `databaseHeadroomBytes`, `storageHeadroomBytes` (strings inteiras positivas), `allocationConfirmed=true` e `reason` (3–500 caracteres). Margem mínima de banco 16777216 bytes; Storage 1048576 bytes. Orçamentos superam suas margens.
+- `POST /v1/admin/capacity/refresh`: `reason`. Mede recursos e retorna `decisions`, sem liberar tarefas.
+- `POST /v1/admin/capacity/resume`: `reason` e `resource=database|storage`. Retorna `released`. Storage requer banco e Storage disponíveis; banco pode ser retomado independentemente de Storage desconhecido.
+
+POSTs exigem JWT admin e `Idempotency-Key`. Erros 409 distinguem `capacity_unconfigured`, `capacity_measurement_unavailable`, `capacity_database_limit`, `capacity_storage_limit` e conflitos de idempotência. Não divulgar medições operacionais no repositório público; visualizar no painel administrativo e evidências privadas autorizadas.
+
+Integração futura: backup/identidade staging → migration aditiva aprovada → deploy explícito da API → build/atualização dos executores → publicação do frontend → orçamento confirmado e testes seletivos. Não iniciar carga nacional só porque um pequeno arquivo coube. Agenda semanal, limites locais de memória/disco, checkpoint de páginas de resultados e cobertura real continuam requisitos separados.

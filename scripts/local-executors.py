@@ -58,6 +58,8 @@ def main():
             db.execute('SELECT observation,"lastValidatedAt" FROM "EventSourceReference" LIMIT 0')
             db.execute('SELECT source,"blockedAt" FROM "SourceRequestControl" LIMIT 0')
             db.execute("SELECT 'reserve_source_request(text)'::regprocedure, 'defer_source_task(text,text,jsonb,timestamp with time zone,boolean)'::regprocedure")
+            db.execute('SELECT id,"confirmedAt" FROM "CatalogCapacity" LIMIT 0')
+            db.execute("SELECT 'check_catalog_capacity(text,bigint,text,text)'::regprocedure, 'defer_capacity_task(text,text,jsonb,text)'::regprocedure")
             db.execute('SELECT "distanceKm",gap FROM "RaceResult" LIMIT 0')
             db.execute('SELECT selection,"contentType" FROM "ExportArtifact" LIMIT 0')
             active = db.execute('SELECT count(*) FROM "WorkerPresence" WHERE "lastSeenAt">now()-interval \'75 seconds\' AND state<>\'stopped\'').fetchone()[0]

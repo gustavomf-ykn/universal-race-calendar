@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
 from app.services.source_requests import RequestHooks, SourceBudgetDeferred, SourceCircuitOpen
+from capacity import database_capacity
 
 
 def retry_after_at(value: str | None):
@@ -24,6 +25,7 @@ def retry_after_at(value: str | None):
 
 def database_request_hooks(query, source='openresults'):
     async def before():
+        await asyncio.to_thread(database_capacity, query)
         while True:
             row = await asyncio.to_thread(query, 'SELECT * FROM reserve_source_request(%s)', (source,), True)
             if row['decision'] == 'allowed':

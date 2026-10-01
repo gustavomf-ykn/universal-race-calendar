@@ -35,7 +35,7 @@ export async function syncNationalCorridasBR(sync: Sync, discover = discoverCorr
       stateIds: [...new Set([...snapshot.stateIds, ...page.events.map(e => e.externalId)])], rawCount: snapshot.rawCount + page.events.length,
     };
     await prisma.$transaction(async tx => {
-      await assertTaskLease(tx);
+      await assertTaskLease(tx, 65536 + Buffer.byteLength(JSON.stringify(snapshot)) * 8);
       await tx.catalogSync.update({ where: { id: sync.id }, data: {
         snapshot: JSON.parse(JSON.stringify(snapshot)), discovered: { increment: snapshot.candidates.length },
         coverage: "explicit_state_calendar_links", updatedAt: new Date(),
@@ -45,7 +45,7 @@ export async function syncNationalCorridasBR(sync: Sync, discover = discoverCorr
   const batch = snapshot.candidates.slice(sync.cursor, sync.cursor + options.batchSize);
   let created = 0, existing = 0;
   for (const candidate of batch) await prisma.$transaction(async tx => {
-    await assertTaskLease(tx);
+    await assertTaskLease(tx, 65536 + Buffer.byteLength(JSON.stringify(snapshot)) * 8);
     const identity = { sourceType: "corridasbr", sourceExternalId: candidate.externalId };
     const ref = await tx.eventSourceReference.findUnique({ where: { sourceType_sourceExternalId: identity } });
     const source = await tx.source.upsert({ where: { adapter_externalId: { adapter: "corridasbr", externalId: candidate.externalId } },
@@ -81,7 +81,7 @@ export async function syncNationalCorridasBR(sync: Sync, discover = discoverCorr
       ...(nextState ? { pageUrl: corridasBRCalendarUrl(options.states[sync.page]!), pendingUrls: [], visitedUrls: [], stateIds: [], rawCount: 0 } : {}),
     };
     await prisma.$transaction(async tx => {
-      await assertTaskLease(tx);
+      await assertTaskLease(tx, 65536 + Buffer.byteLength(JSON.stringify(snapshot)) * 8);
       await tx.catalogSync.update({ where: { id: sync.id }, data: { snapshot: JSON.parse(JSON.stringify(nextSnapshot)), cursor: 0,
         ...(nextState ? { page: { increment: 1 } } : !nextPage ? { status: "completed" } : {}), updatedAt: new Date() } });
     });

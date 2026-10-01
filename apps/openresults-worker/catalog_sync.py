@@ -46,7 +46,7 @@ async def sync_catalog(task, settings, connection, fenced, progress):
         events, total, more = parse_catalog_payload(payload)
         ledger = record_page(ledger, sync['page'], events, total, more, options, settings.catalog_max_pages)
         with connection() as conn:
-            fenced(conn, task)
+            fenced(conn, task, 65536 + len(json.dumps(ledger, ensure_ascii=False).encode()) * 8)
             conn.execute('''UPDATE "CatalogSync" SET snapshot=%s,coverage=%s,
                 discovered=discovered+%s,"updatedAt"=now() WHERE id=%s''',
                 (Jsonb(ledger), ledger['reason'], len(ledger['rows']), sync_id))

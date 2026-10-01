@@ -21,8 +21,14 @@ import {
   SourceBudgetDeferred,
   SourceCircuitOpen,
   observeSourceResponse,
+  assertCapacity,
+  CapacityDeferred,
+  deferCapacityTask,
 } from "@race-calendar/database";
-setSourceRequestGuard((url, scope) => waitForSourceRequest(requestSource(url, scope)), observeSourceResponse);
+setSourceRequestGuard(async (url, scope) => {
+  await assertCapacity();
+  await waitForSourceRequest(requestSource(url, scope));
+}, observeSourceResponse);
 import {
   importTicketSportsEvents,
   importCorridasBREvents,
@@ -91,6 +97,7 @@ export async function runQueue() {
       }, 20000);
       const deadline = setTimeout(() => process.exit(1), 1800000);
       try {
+        await assertCapacity();
         const input = task.payload as Record<string, unknown>;
         let status = "completed";
         if (task.kind === "catalog-sync") {
@@ -148,7 +155,10 @@ export async function runQueue() {
         } else throw new Error("unsupported_task");
         await finishTask(task, status, progress, status === "failed" ? "collection_failed" : null);
       } catch (error) {
-        if (error instanceof SourceBudgetDeferred || error instanceof SourceCircuitOpen) {
+        if (error instanceof CapacityDeferred) {
+          progress = { ...progress, stage: "capacity_wait" };
+          await deferCapacityTask(task, progress, error);
+        } else if (error instanceof SourceBudgetDeferred || error instanceof SourceCircuitOpen) {
           progress = {
             ...progress,
             stage: error instanceof SourceCircuitOpen ? "source_access_blocked" : "source_budget_wait",

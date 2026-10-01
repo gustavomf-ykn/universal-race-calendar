@@ -30,10 +30,10 @@ async def test_deferred_request_never_opens_transport_and_worker_requeues_withou
     finally:
         request_hooks.reset(token)
     monkeypatch.setattr(worker.OpenResultsScraper,'scrape',AsyncMock(side_effect=error))
-    query=MagicMock()
+    query=MagicMock(return_value={'decision':'allowed'})
     monkeypatch.setattr(worker,'query',query)
     await worker.execute({'id':'test-task','leaseToken':'test-lease','kind':'extract','payload':{'url':'https://openresults.run/evento/test/'}})
-    assert query.call_count==1 and 'defer_source_task' in query.call_args.args[0]
+    assert query.call_count==2 and 'defer_source_task' in query.call_args.args[0]
     assert query.call_args.args[1][-1] is isinstance(error,SourceCircuitOpen)
     assert request_hooks.get() is None
 
@@ -118,10 +118,10 @@ async def test_chromium_route_carries_task_hooks_and_preserves_control_error(mon
 @pytest.mark.asyncio
 async def test_database_protocol_respects_spacing_and_closes_with_retry_after():
     rows=iter([{'decision':'spacing','retryAt':datetime.now(timezone.utc)}, {'decision':'allowed','retryAt':None}])
-    query=MagicMock(side_effect=lambda *_:next(rows))
+    query=MagicMock(side_effect=lambda sql,*_: {'decision':'allowed'} if 'check_catalog_capacity' in sql else next(rows))
     hooks=database_request_hooks(query)
     await hooks.before()
-    assert query.call_count==2
+    assert query.call_count==3
     query.side_effect=None
     await hooks.after(429,'60')
     assert 'block_source_requests' in query.call_args.args[0]

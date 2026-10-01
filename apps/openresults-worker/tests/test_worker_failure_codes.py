@@ -15,7 +15,7 @@ async def test_worker_records_safe_failure_and_does_not_retry_blocked_source(mon
     async def scrape(*args):
         raise error
     monkeypatch.setattr(worker.OpenResultsScraper, 'scrape', scrape)
-    query = MagicMock()
+    query = MagicMock(return_value={'decision':'allowed'})
     connection = MagicMock()
     monkeypatch.setattr(worker, 'query', query)
     monkeypatch.setattr(worker, 'connection', connection)

@@ -46,7 +46,7 @@ O painel mostra controles por fonte e diferencia orçamento esgotado, fonte bloq
 
 ## Integração futura
 
-Migrations aditivas `20261001000100_source_observations` e `20261001000200_source_request_controls` antes da API/workers. Aplicadas apenas em PostgreSQL local isolado, não no Supabase. A tabela de controles tem RLS e os grants de tabela/funções são revogados de PUBLIC, anon e authenticated. Inicializador verifica campos e funções antes de iniciar consumidores. Fazer backup e confirmar identidade de staging antes de aplicar; nunca reset.
+Migrations aditivas `20261001000100_source_observations` e `20261001000200_source_request_controls` e `20261001000300_catalog_capacity` antes da API/workers. Aplicadas apenas em PostgreSQL local isolado, não no Supabase. A tabela de controles tem RLS e os grants de tabela/funções são revogados de PUBLIC, anon e authenticated. Inicializador verifica campos e funções antes de iniciar consumidores. Fazer backup e confirmar identidade de staging antes de aplicar; nunca reset.
 
 API requer deploy explícito para novos parâmetros/rotas; executores requerem build e Prisma atualizados. Frontend requer publicação explícita depois da API compatível. Merge não comprova deploy. Nenhuma agenda foi habilitada.
 
@@ -60,12 +60,12 @@ CI do controle de requisições encontrou módulos de suporte ausentes na imagem
 
 Antes da varredura nacional real faltam:
 
-1. Controle de capacidade de banco/Storage e checkpoint de páginas de resultados para extrações que excedam o orçamento de uma janela.
+1. Homologar a barreira de capacidade de banco/Storage e concluir checkpoint de páginas de resultados para extrações que excedam o orçamento de uma janela.
 2. Validar os recibos e o término OpenResults contra a fonte real, confirmar país/modalidade dos candidatos e testar seu enriquecimento real. Os testes controlados da descoberta não comprovam catálogo completo acessível.
 3. Reconciliação de candidatos inicialmente separados, vínculos com evidência forte e publicação automática estrita rua/trail.
 4. Agenda semanal durável/fuso/ocorrências perdidas, prioridade manual e resultados recentes como etapa separada.
 5. Testes reais progressivos nas três fontes, conciliação de IDs/histórico e aceite pelo navegador após publicação.
 
-Inventário inicial de capacidade implementado e executado em staging somente leitura: [CATALOG-CAPACITY.md](CATALOG-CAPACITY.md). Resultados específicos permanecem em relatório local, fora do repositório público. Medições não confirmam cobertura/país/modalidade nem quota da organização. A ferramenta recusa produção e dados de Storage sem visibilidade completa; medição ausente não vira zero. Controle automático de pausa por capacidade continua pendente.
+Inventário inicial de capacidade implementado e executado em staging somente leitura: [CATALOG-CAPACITY.md](CATALOG-CAPACITY.md). Resultados específicos permanecem em relatório local, fora do repositório público. Medições não confirmam cobertura/país/modalidade nem quota da organização. A ferramenta recusa produção e dados de Storage sem visibilidade completa; medição ausente não vira zero. Barreira de pausa por capacidade implementada na branch e descrita no mesmo documento; integração e validação real continuam pendentes.
 
 Descoberta encerrada não significa metadados validados, publicação concluída ou resultados coletados. A meta de 100% permanece não comprovada.

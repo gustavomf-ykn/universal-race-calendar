@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { assertTaskLease } from "./lease.js";
+import { capacityGrowth } from "./capacity.js";
 export { setTaskLease, assertTaskLease } from "./lease.js";
+export { assertCapacity, CapacityDeferred, capacityReasons, deferCapacityTask, readCapacity, controlCapacity } from "./capacity.js";
 export { listWorkers, workerPresence, newWorkerId } from "./presence.js";
 export { compareSourceObservations, observationOf, comparisonFields } from "./source-comparison.js";
 export type { SourceObservation } from "./source-comparison.js";
@@ -63,7 +65,9 @@ export type CreateSourceInput = {
 };
 
 export async function createSource(input: CreateSourceInput) {
-  return prisma.source.create({
+  return prisma.$transaction(async tx => {
+   await assertTaskLease(tx, capacityGrowth(input));
+   return tx.source.create({
     data: withoutUndefined({
       id: prefixedId("src"),
       name: input.name,
@@ -78,6 +82,7 @@ export async function createSource(input: CreateSourceInput) {
       checkIntervalMinutes: input.checkIntervalMinutes,
     }),
   });
+  });
 }
 
 export async function upsertSourceByAdapterExternalId(
@@ -91,7 +96,9 @@ export async function upsertSourceByAdapterExternalId(
   });
   if (!existing) return createSource(input);
 
-  return prisma.source.update({
+  return prisma.$transaction(async tx => {
+   await assertTaskLease(tx, capacityGrowth(input));
+   return tx.source.update({
     where: { id: existing.id },
     data: withoutUndefined({
       name: input.name,
@@ -106,6 +113,7 @@ export async function upsertSourceByAdapterExternalId(
       checkIntervalMinutes: input.checkIntervalMinutes,
       status: "active",
     }),
+  });
   });
 }
 
@@ -129,7 +137,9 @@ export async function createExtractionJob(sourceId: string) {
 }
 
 export async function saveRawSourceExtraction(raw: RawSourceExtraction) {
-  return prisma.rawSourceExtraction.create({
+  return prisma.$transaction(async tx => {
+   await assertTaskLease(tx, capacityGrowth(raw));
+   return tx.rawSourceExtraction.create({
     data: {
       id: prefixedId("raw"),
       sourceId: raw.sourceId,
@@ -146,6 +156,7 @@ export async function saveRawSourceExtraction(raw: RawSourceExtraction) {
       adapterVersion: raw.adapterVersion,
       fetchedAt: new Date(raw.fetchedAt),
     },
+  });
   });
 }
 
@@ -168,7 +179,9 @@ export type SaveImportRunInput = {
 };
 
 export async function saveImportRun(input: SaveImportRunInput) {
-  return prisma.importRun.create({
+  return prisma.$transaction(async tx => {
+   await assertTaskLease(tx, capacityGrowth(input));
+   return tx.importRun.create({
     data: {
       id: input.id,
       source: input.source,
@@ -186,6 +199,7 @@ export async function saveImportRun(input: SaveImportRunInput) {
       startedAt: new Date(input.startedAt),
       finishedAt: new Date(input.finishedAt),
     },
+  });
   });
 }
 
@@ -262,7 +276,7 @@ export async function saveCanonicalEvent(
 
   if (existingBySource) {
     const saved = await prisma.$transaction(async (tx) => {
-      await assertTaskLease(tx);
+      await assertTaskLease(tx, capacityGrowth(canonicalEvent));
       await tx.$queryRaw`SELECT id FROM "Event" WHERE id=${existingBySource.id} FOR UPDATE`;
       const current = await tx.event.findUniqueOrThrow({
         where: { id: existingBySource.id },
@@ -299,7 +313,7 @@ export async function saveCanonicalEvent(
   }
 
   const saved = await prisma.$transaction(async (tx) => {
-    await assertTaskLease(tx);
+    await assertTaskLease(tx, capacityGrowth(canonicalEvent));
     return tx.event.create({
       data: {
         id: prefixedId("evt"),

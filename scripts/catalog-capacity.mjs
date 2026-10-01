@@ -88,7 +88,7 @@ export async function inspectCatalogCapacity(db) {
   return {
     measuredAt: new Date().toISOString(), currentDatabase, clusterDatabases, publicTables, catalogRecords, queuedWork, storage,
     limitsVerified: false, loadAuthorized: false,
-    limitations: ["project_measurement_not_organization_billing", "wal_and_disk_not_measured", "capacity_guard_pending"],
+    limitations: ["project_measurement_not_organization_billing", "wal_and_disk_not_measured", "inventory_not_capacity_authorization"],
   };
 }
 

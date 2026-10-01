@@ -12,7 +12,7 @@ from app.services.parser import deduplicate_records, parse_event_page, parse_res
 from app.services.url_validation import validate_internal_url
 import httpx
 from app.services.safe_network import public_ip, bounded_get
-from app.services.source_requests import request_hooks, SourceBudgetDeferred, SourceCircuitOpen
+from app.services.source_requests import request_hooks, SourceBudgetDeferred, SourceCircuitOpen, CapacityDeferred
 
 
 ProgressCallback = Callable[[str, int], Awaitable[None] | None]
@@ -87,7 +87,7 @@ async def run_playwright_fallback(
                             raise AccessBlockedError('source_access_blocked')
                         await route.fulfill(status=response.status_code,
                             headers=dict(response.headers), body=response.content)
-                    except (AccessBlockedError,SourceBudgetDeferred,SourceCircuitOpen) as exc:
+                    except (AccessBlockedError,SourceBudgetDeferred,SourceCircuitOpen,CapacityDeferred) as exc:
                         control_error=exc
                         await route.abort()
                     except Exception:
@@ -212,7 +212,7 @@ async def run_playwright_fallback(
                 records=records,
                 warnings=warnings,
             )
-    except (StructureChangedError,AccessBlockedError,SourceBudgetDeferred,SourceCircuitOpen):
+    except (StructureChangedError,AccessBlockedError,SourceBudgetDeferred,SourceCircuitOpen,CapacityDeferred):
         raise
     except PlaywrightTimeoutError as exc:
         if control_error:

@@ -26,6 +26,7 @@ from batch import BatchRun
 from presence import announce, stop_requested
 from app.services.source_requests import request_hooks, SourceBudgetDeferred, SourceCircuitOpen
 from source_requests import database_request_hooks
+from capacity import CapacityDeferred, check_capacity, database_capacity, storage_capacity
 
 
 def storage_headers():
@@ -57,11 +58,12 @@ def query(sql, params=(), one=False):
         return cur.fetchone() if one else cur.fetchall()
 
 
-def fenced(conn, task):
+def fenced(conn, task, growth_bytes=65536):
     row = conn.execute('''SELECT id FROM "CollectionTask" WHERE id=%s AND status='running'
         AND "leaseToken"=%s AND "leaseUntil">now() FOR UPDATE''', (task['id'], task['leaseToken'])).fetchone()
     if not row:
         raise RuntimeError('lease_lost')
+    check_capacity(conn, growth_bytes)
 
 
 def publish(task, result):
@@ -72,7 +74,7 @@ def publish(task, result):
     records = result.records
     canonical = json.dumps(records, sort_keys=True, default=str, ensure_ascii=False)
     with connection() as conn:
-        fenced(conn, task)
+        fenced(conn, task, len(canonical.encode()) * 8 + len(records) * 2048)
         reference = conn.execute('''SELECT r."eventId",e.date FROM "EventSourceReference" r JOIN "Event" e ON e.id=r."eventId"
             WHERE r."sourceType"='openresults' AND r."sourceExternalId"=%s FOR UPDATE OF r''', (payload['externalId'],)).fetchone()
         if not reference or reference['eventId'] != payload['eventId']:
@@ -171,6 +173,7 @@ async def export(task):
     output,extension,content_type,count=await asyncio.to_thread(build_selection,artifact,connection)
     with connection() as conn:
         fenced(conn,task)
+        check_capacity(conn, len(output.getvalue()), 'storage', task)
     if artifact['expiresAt']<=datetime.now(timezone.utc):
         raise ValueError('export_expired')
     path=f"{artifact['id']}/{task['leaseToken']}.{extension}"
@@ -184,6 +187,7 @@ async def export(task):
         fenced(conn,task)
         conn.execute('UPDATE "ExportArtifact" SET status=\'completed\',"objectPath"=%s,"contentType"=%s WHERE id=%s',(path,content_type,artifact['id']))
         conn.execute('SELECT finish_task(%s,%s,\'completed\',%s,NULL)',(task['id'],task['leaseToken'],Jsonb({'stage':'exported','exportId':artifact['id'],'processed':count,'format':extension})))
+        conn.execute('DELETE FROM "CapacityReservation" WHERE "taskId"=%s AND "leaseToken"=%s',(task['id'],task['leaseToken']))
 
 
 _cleanup_cursor = ''
@@ -225,6 +229,7 @@ async def execute(task):
             if not result['ok']:
                 raise RuntimeError('lease_lost')
     async def work():
+        await asyncio.to_thread(database_capacity, query)
         settings=replace(Settings.from_env(),scrape_concurrency=1,catalog_concurrency=1,metadata_concurrency=1)
         if task['kind']=='catalog-sync':
             from catalog_sync import sync_catalog
@@ -238,7 +243,7 @@ async def execute(task):
                 try:
                     metadata,_=await EventMetadataService(settings).fetch(event.event_url)
                     await asyncio.to_thread(store_match,task,metadata)
-                except (AccessBlockedError, SourceBudgetDeferred, SourceCircuitOpen):
+                except (AccessBlockedError, SourceBudgetDeferred, SourceCircuitOpen, CapacityDeferred):
                     raise
                 except Exception:
                     failed+=1
@@ -260,6 +265,7 @@ async def execute(task):
             await asyncio.to_thread(update_edition,task,result.metadata,connection,fenced)
             await asyncio.to_thread(publish,task,result)
         elif task['kind'] in ('export','export-selection'):
+            await asyncio.to_thread(storage_capacity, query)
             await export(task)
         else:
             raise ValueError('unsupported_task')
@@ -272,6 +278,12 @@ async def execute(task):
                 await item
         await asyncio.to_thread(query,'SELECT finish_task(%s,%s,\'completed\',%s,NULL)',(task['id'],task['leaseToken'],Jsonb(progress)))
     except Exception as exc:
+        if isinstance(exc, CapacityDeferred):
+            progress['stage']='capacity_wait'
+            progress['capacityResource']=exc.resource
+            await asyncio.to_thread(query,'SELECT defer_capacity_task(%s,%s,%s,%s)',
+                (task['id'],task['leaseToken'],Jsonb(progress),exc.reason))
+            return
         if isinstance(exc, (SourceBudgetDeferred, SourceCircuitOpen)):
             progress['stage']='source_access_blocked' if isinstance(exc, SourceCircuitOpen) else 'source_budget_wait'
             await asyncio.to_thread(query,'SELECT defer_source_task(%s,%s,%s,%s,%s)',

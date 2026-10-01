@@ -50,7 +50,7 @@ export async function syncNationalTicketSports(sync: CatalogSync, discover = dis
       reason: expansion.reason, rawCount: result.rawCount, receipts: snapshot?.receipts ?? [],
     };
     await prisma.$transaction(async tx => {
-      await assertTaskLease(tx);
+      await assertTaskLease(tx, 65536 + Buffer.byteLength(JSON.stringify(snapshot)) * 8);
       await tx.catalogSync.update({ where: { id: sync.id }, data: {
         snapshot: JSON.parse(JSON.stringify(snapshot)), discovered: { increment: snapshot!.candidates.length },
         coverage: "official_state_and_national_prefixes", updatedAt: new Date(),
@@ -61,7 +61,7 @@ export async function syncNationalTicketSports(sync: CatalogSync, discover = dis
   let created = 0, existing = 0;
   for (const candidate of batch) {
     await prisma.$transaction(async tx => {
-      await assertTaskLease(tx);
+      await assertTaskLease(tx, 65536 + Buffer.byteLength(JSON.stringify(snapshot)) * 8);
       const identity = { sourceType: "ticketsports", sourceExternalId: candidate.externalId };
       const ref = await tx.eventSourceReference.findUnique({ where: { sourceType_sourceExternalId: identity } });
       const digest = createHash("sha256").update(`ticketsports:${candidate.externalId}`).digest("hex");
@@ -102,7 +102,7 @@ export async function syncNationalTicketSports(sync: CatalogSync, discover = dis
     const nextSnapshot: Snapshot = { ...snapshot, candidates: [], receipts,
       ...(nextState ? { seenIds: [], quantity: 25, nextQuantity: 25, status: "ready", reason: "next_state", rawCount: 0 } : {}) };
     await prisma.$transaction(async tx => {
-      await assertTaskLease(tx);
+      await assertTaskLease(tx, 65536 + Buffer.byteLength(JSON.stringify(snapshot)) * 8);
       await tx.catalogSync.update({ where: { id: sync.id }, data: {
         snapshot: JSON.parse(JSON.stringify(nextSnapshot)), cursor: 0,
         ...(nextState ? { page: { increment: 1 } } : snapshot.status !== "ready" ? { status: finalStatus } : {}),

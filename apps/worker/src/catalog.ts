@@ -43,7 +43,7 @@ export async function syncCatalog(input: Record<string, unknown>, discover?: () 
         (!r.date || ((!options.from || r.date >= options.from) && (!options.to || r.date <= options.to))),
     );
     sync = await prisma.$transaction(async (tx) => {
-      await assertTaskLease(tx);
+      await assertTaskLease(tx, 65536 + Buffer.byteLength(JSON.stringify(snapshot)) * 8);
       return tx.catalogSync.update({
         where: { id },
         data: {
@@ -60,7 +60,7 @@ export async function syncCatalog(input: Record<string, unknown>, discover?: () 
   const batch = snapshot.slice(sync.cursor, sync.cursor + options.batchSize);
   for (const row of batch) {
     await prisma.$transaction(async (tx) => {
-      await assertTaskLease(tx);
+      await assertTaskLease(tx, 65536 + Buffer.byteLength(JSON.stringify(sync.snapshot)) * 8);
       const identity = { sourceType: sync.source, sourceExternalId: row.externalId };
       const ref = await tx.eventSourceReference.findUnique({ where: { sourceType_sourceExternalId: identity } });
       let sourceId = ref?.sourceId;
@@ -125,7 +125,7 @@ export async function syncCatalog(input: Record<string, unknown>, discover?: () 
   const finished = next >= snapshot.length;
   const nextState = sync.source === "corridasbr" && sync.page < options.states.length;
   await prisma.$transaction(async (tx) => {
-    await assertTaskLease(tx);
+    await assertTaskLease(tx, 65536 + Buffer.byteLength(JSON.stringify(sync.snapshot)) * 8);
     await tx.catalogSync.update({
       where: { id },
       data: finished

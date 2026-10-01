@@ -8,6 +8,22 @@ import pytest
 from app.models import EventMetadata, ExtractionResult, ModalityInfo
 
 
+@pytest.fixture(scope='session', autouse=True)
+def disposable_database_allocation():
+    import os
+    from urllib.parse import urlsplit
+    import psycopg
+    uri = os.environ.get('DATABASE_URL')
+    if not uri:
+        return
+    parsed = urlsplit(uri)
+    if parsed.hostname not in ('localhost', '127.0.0.1', 'postgres') or not parsed.path.endswith('_test'):
+        raise ValueError('isolated_database_required')
+    with psycopg.connect(uri.split('?')[0]) as conn:
+        conn.execute('''UPDATE "CatalogCapacity" SET "confirmedAt"=now(),
+            "databaseBudgetBytes"=1000000000000,"storageBudgetBytes"=1000000000000 WHERE id=1''')
+
+
 @pytest.fixture
 def fixture_dir() -> Path:
     return Path(__file__).parent / "fixtures"

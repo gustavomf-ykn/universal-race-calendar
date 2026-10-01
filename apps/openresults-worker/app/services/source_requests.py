@@ -6,6 +6,15 @@ from typing import Awaitable, Callable
 
 from app.models import ScraperError
 
+class CapacityDeferred(ScraperError):
+    def __init__(self, reason, resource='database'):
+        if reason not in {'capacity_unconfigured', 'capacity_measurement_unavailable',
+                          'capacity_database_limit', 'capacity_storage_limit'}:
+            raise ValueError('capacity_control_invalid')
+        self.reason = reason
+        self.resource = resource
+        super().__init__(reason)
+
 
 class SourceBudgetDeferred(ScraperError):
     def __init__(self, retry_at: datetime):
