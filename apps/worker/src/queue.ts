@@ -1,7 +1,8 @@
-import { claimTask, heartbeatTask, finishTask, prisma, setTaskLease, newWorkerId, workerPresence } from "@race-calendar/database";
+import { claimTask, heartbeatTask, finishTask, prisma, setTaskLease, newWorkerId, workerPresence, coordinateCatalogSyncs } from "@race-calendar/database";
 import { syncCatalog } from "./catalog.js";
 import { existsSync } from "node:fs";
 import { BatchRun } from "./batch.js";
+import { taskError } from "./task-error.js";
 import {
   importTicketSportsEvents,
   importCorridasBREvents,
@@ -30,7 +31,13 @@ export async function runQueue() {
     await announce();
     presenceTimer = setInterval(() => { void announce().catch(() => { stopping = true; console.error("Calendar: connection lost; stopping before the next task."); }); }, 20000);
     console.log("Calendar executor connected; waiting for panel requests.");
+    let coordinatedAt = 0;
     while (!shouldStop() && run.canClaim()) {
+      // Selective tests must never generate or consume successors outside their approved ID list.
+      if (!process.env.WORKER_TASK_SELECTION_FILE && Date.now() - coordinatedAt >= 5000) {
+        await coordinateCatalogSyncs();
+        coordinatedAt = Date.now();
+      }
       const task = await claimTask(["ticketsports", "corridasbr", "maintenance"]);
       if (!task) {
         if (run.options.batch) {
@@ -102,6 +109,7 @@ export async function runQueue() {
         } else if (task.kind === "check-source") {
           const result = await runSourceCheck(String(input.sourceId));
           progress = { stage: result.status };
+          if (result.reasons.includes("source_access_blocked")) throw Error("source_access_blocked");
           if (result.status.includes("failed")) status = "failed";
         } else if (task.kind === "curate-event") {
           const result = await runAICurationForEvent(String(input.eventId), input);
@@ -111,8 +119,12 @@ export async function runQueue() {
           progress = { stage: result.status };
         } else throw new Error("unsupported_task");
         await finishTask(task, status, progress, status === "failed" ? "collection_failed" : null);
-      } catch {
-        await finishTask(task, "failed", progress, "collection_failed");
+      } catch (error) {
+        const failure = taskError(error);
+        if (!failure.retryable) await prisma.collectionTask.updateMany({ where: {
+          id: task.id, status: "running", leaseToken: task.leaseToken, leaseUntil: { gt: new Date() },
+        }, data: { maxAttempts: task.attempt } });
+        await finishTask(task, "failed", progress, failure.code);
       } finally {
         clearInterval(heartbeat);
         clearTimeout(deadline);

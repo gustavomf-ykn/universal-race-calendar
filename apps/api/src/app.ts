@@ -1,4 +1,5 @@
 import { registerOperations } from "./operations.js";
+import { registerSourceComparison } from "./source-comparison.js";
 import { registerBackend, acceptTask } from "./backend.js";
 import { installLegacyContracts } from "./legacy-contracts.js";
 import { installCalendarContracts } from "./contracts.js";
@@ -655,6 +656,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
   await registerBackend(app);
   await registerOperations(app);
+  await registerSourceComparison(app);
   return app;
 }
 

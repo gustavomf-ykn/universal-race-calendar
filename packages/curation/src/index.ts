@@ -299,11 +299,14 @@ export async function runSourceCheck(
   } catch (error) {
     await markSourceFailed(source.id);
     const failedStatus = error instanceof Error && error.name === "ZodError" ? "validation_failed" : "provider_failed";
+    const blocked = error instanceof Error && (error.message === "source_access_blocked" ||
+      (error.name === "ScraperHttpError" && [401, 403, 429].includes((error as Error & { statusCode?: number }).statusCode ?? 0)));
+    const reasons = [blocked ? "source_access_blocked" : "source_check_failed"];
     const completed = await completeExtractionJob({
       jobId: job.id,
       status: failedStatus,
-      errorMessage: error instanceof Error ? error.message : String(error),
-      reasons: ["source_check_failed"],
+      errorMessage: blocked ? "source_access_blocked" : error instanceof Error ? error.message : String(error),
+      reasons,
     });
     return {
       jobId: completed.id,
@@ -312,7 +315,7 @@ export async function runSourceCheck(
       sourceId: source.id,
       createdAt,
       finishedAt: completed.finishedAt?.toISOString() ?? null,
-      reasons: ["source_check_failed"],
+      reasons,
     };
   }
 }

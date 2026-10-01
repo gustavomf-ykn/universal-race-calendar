@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { prisma, enqueueTask, publicTask, TaskConflict } from "@race-calendar/database";
+import { prisma, enqueueTask, publicTask, TaskConflict, catalogCheckpoint, controlCatalogSync, publicCatalogSync } from "@race-calendar/database";
 import { requireAdmin, authorize } from "./auth.js";
 
 const str = { type: "string" };
@@ -353,15 +353,19 @@ export async function registerOperations(app: FastifyInstance) {
               source: { enum: ["ticketsports", "corridasbr", "openresults"] },
               states: {
                 type: "array",
-                items: { type: "string", pattern: "^[A-Z]{2}$" },
+                items: { enum: ["AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT", "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO"] },
                 minItems: 1,
                 maxItems: 27,
+                uniqueItems: true,
                 default: ["SC"],
               },
               from: { type: "string", format: "date" },
               to: { type: "string", format: "date" },
               batchSize: { type: "integer", minimum: 1, maximum: 25, default: 5 },
               snapshotLimit: { type: "integer", minimum: 5, maximum: 1000, default: 250 },
+              discoveryMode: { enum: ["bounded", "national"], default: "bounded" },
+              prefixLimit: { type: "integer", minimum: 25, maximum: 10000, default: 10000 },
+              autoContinue: { type: "boolean", default: false },
             },
             ["source"],
           ),
@@ -378,7 +382,8 @@ export async function registerOperations(app: FastifyInstance) {
         .digest("hex");
       try {
         const task = await prisma.$transaction(async (tx) => {
-          const item = await enqueueTask(req.principal!.id, key, body.source, "catalog-sync", { syncId, ...body }, tx);
+          const checkpointHash = catalogCheckpoint({ page: 1, cursor: 0, snapshot: [] });
+          const item = await enqueueTask(req.principal!.id, key, body.source, "catalog-sync", { syncId, ...body, checkpointHash }, tx);
           await tx.catalogSync.upsert({
             where: { id: syncId },
             update: {},
@@ -398,24 +403,15 @@ export async function registerOperations(app: FastifyInstance) {
     { onRequest: requireAdmin, schema: { ...schema(), querystring: object(page) } },
     async (req) => {
       const q = req.query as any;
+      const [syncs, total] = await Promise.all([
+        prisma.catalogSync.findMany({ skip: (q.page - 1) * q.limit, take: q.limit, orderBy: { createdAt: "desc" } }),
+        prisma.catalogSync.count(),
+      ]);
       return {
-        data: await prisma.catalogSync.findMany({
-          skip: (q.page - 1) * q.limit,
-          take: q.limit,
-          orderBy: { createdAt: "desc" },
-          select: {
-            id: true,
-            source: true,
-            options: true,
-            cursor: true,
-            page: true,
-            status: true,
-            coverage: true,
-            discovered: true,
-            processed: true,
-            updatedAt: true,
-          },
-        }),
+        data: await Promise.all(syncs.map(async sync => publicCatalogSync(sync,
+          await prisma.collectionTask.findFirst({ where: { kind: "catalog-sync", payload: { path: ["syncId"], equals: sync.id } },
+            orderBy: [{ updatedAt: "desc" }, { id: "desc" }] })))),
+        pagination: { page: q.page, limit: q.limit, total, totalPages: Math.ceil(total / q.limit) },
       };
     },
   );
@@ -436,17 +432,15 @@ export async function registerOperations(app: FastifyInstance) {
               },
             },
           });
-          const payload = { ...(sync.options as object), syncId: sync.id };
-          if (prior)
-            return enqueueTask(
-              req.principal!.id,
-              String(req.headers["idempotency-key"]),
-              sync.source,
-              "catalog-sync",
-              payload,
-              tx,
-            );
+          if (prior) {
+            if (prior.kind !== "catalog-sync" || prior.source !== sync.source ||
+                (prior.payload as { syncId?: string }).syncId !== sync.id) throw new TaskConflict("idempotency_conflict");
+            // Replaying a lost response must return the original task even after its checkpoint advances.
+            return prior;
+          }
           const latest = await tx.catalogSync.findUniqueOrThrow({ where: { id: sync.id } });
+          const payload = { ...(latest.options as object), syncId: latest.id, checkpointHash: catalogCheckpoint(latest) };
+          if ((latest.options as { pauseRequested?: boolean }).pauseRequested) throw new TaskConflict("sync_paused");
           if (latest.status !== "ready") throw new TaskConflict("scope_completed_or_limited");
           if (
             await tx.collectionTask.count({
@@ -470,6 +464,19 @@ export async function registerOperations(app: FastifyInstance) {
         return reply.code(202).send(publicTask(task));
       } catch (e) {
         if (e instanceof TaskConflict) return reply.code(409).send({ error: e.message });
+        throw e;
+      }
+    },
+  );
+  for (const action of ["pause", "resume"] as const) app.post(
+    `/v1/admin/syncs/:id/${action}`,
+    { onRequest: requireAdmin, schema: { ...schema(), headers } },
+    async (req, reply) => {
+      try {
+        return await controlCatalogSync((req.params as { id: string }).id, req.principal!.id,
+          action, String(req.headers["idempotency-key"]));
+      } catch (e) {
+        if (e instanceof TaskConflict) return reply.code(e.message === "sync_not_found" ? 404 : 409).send({ error: e.message });
         throw e;
       }
     },

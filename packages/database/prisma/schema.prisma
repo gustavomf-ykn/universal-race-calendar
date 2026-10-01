@@ -261,6 +261,8 @@ model EventSourceReference {
   role             String   @default("supplemental")
   priority         Int      @default(50)
   contentHash      String?
+  observation      Json              @default("{}")
+  lastValidatedAt  DateTime?          @db.Timestamptz(6)
   lastSeenAt       DateTime @default(now())
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt

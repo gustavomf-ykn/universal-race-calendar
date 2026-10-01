@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { assertTaskLease } from "./lease.js";
 export { setTaskLease, assertTaskLease } from "./lease.js";
 export { listWorkers, workerPresence, newWorkerId } from "./presence.js";
+export { compareSourceObservations, observationOf, comparisonFields } from "./source-comparison.js";
+export type { SourceObservation } from "./source-comparison.js";
+import { observationOf } from "./source-comparison.js";
 export { enqueueTask, claimTask, heartbeatTask, finishTask, publicTask, TaskConflict, stableJson } from "./tasks.js";
+export { catalogCheckpoint, coordinateCatalogSyncs, controlCatalogSync } from "./catalog-continuation.js";
+export { publicCatalogSync } from "./catalog-report.js";
 import { PrismaClient } from "@prisma/client";
 import type { CanonicalRaceEvent, CurationJobStatus, CurationStatus, RawSourceExtraction } from "@race-calendar/schemas";
 
@@ -192,6 +197,12 @@ export async function saveCanonicalEvent(event: CanonicalRaceEvent, options: { c
   if(existingBySource?.date && event.date && existingBySource.date.getUTCFullYear()!==new Date(event.date).getUTCFullYear()) {
     throw new Error("source_identifier_reused_for_different_edition");
   }
+  if (existingBySource && existingBySource.sourceType !== event.sourceType) {
+    const linked = await mergeCrossSourceEvent(existingBySource.id, event);
+    const role = sourcePriority(event.sourceType) > sourcePriority(existingBySource.sourceType) ? "primary" : "supplemental";
+    await upsertEventSourceReference(linked.event.id, event, role, options.contentHash);
+    return linked;
+  }
   const crossSourceMatch = existingBySource ? null : await findCanonicalEventMatch(event);
   if (crossSourceMatch?.automatic) {
     const linked = await mergeCrossSourceEvent(crossSourceMatch.event.id, event);
@@ -219,7 +230,9 @@ export async function saveCanonicalEvent(event: CanonicalRaceEvent, options: { c
     const saved = await prisma.$transaction(async (tx) => {
       await assertTaskLease(tx);
       await tx.$queryRaw`SELECT id FROM "Event" WHERE id=${existingBySource.id} FOR UPDATE`;
-      const current=await tx.event.findUniqueOrThrow({where:{id:existingBySource.id}});
+      const current=await tx.event.findUniqueOrThrow({where:{id:existingBySource.id},
+        include: { distances: true, prices: true, kits: true, kitPickups: true, schedule: true, rules: true, images: true } });
+      await preserveValidatedMetadata(tx, canonicalEvent, current);
       if(current.administrativeReview || ["hidden","rejected"].includes(current.publicationStatus))canonicalEvent.publicationStatus=current.publicationStatus;
       const updated = await tx.event.update({
         where: { id: existingBySource.id },
@@ -236,7 +249,7 @@ export async function saveCanonicalEvent(event: CanonicalRaceEvent, options: { c
       return updated;
     });
     const role = existingBySource.sourceType === canonicalEvent.sourceType ? "primary" : "supplemental";
-    await upsertEventSourceReference(saved.id, canonicalEvent, role, options.contentHash);
+    await upsertEventSourceReference(saved.id, event, role, options.contentHash);
     return { event: saved, canonicalEvent, duplicateOfEventId };
   }
 
@@ -451,6 +464,12 @@ async function mergeCrossSourceEvent(
 
   const updated = await prisma.$transaction(async (tx) => {
     await assertTaskLease(tx);
+    await tx.$queryRaw`SELECT id FROM "Event" WHERE id=${existing.id} FOR UPDATE`;
+    const current = await tx.event.findUniqueOrThrow({ where: { id: existing.id },
+      include: { distances: true, prices: true, kits: true, kitPickups: true, schedule: true, rules: true, images: true } });
+    await preserveValidatedMetadata(tx, canonicalEvent, current);
+    if (current.administrativeReview || ["hidden", "rejected"].includes(current.publicationStatus))
+      canonicalEvent.publicationStatus = current.publicationStatus;
     if (promoteIncoming) {
       const row = await tx.event.update({
         where: { id: existing.id },
@@ -468,22 +487,22 @@ async function mergeCrossSourceEvent(
     const row = await tx.event.update({
       where: { id: existing.id },
       data: {
-        description: existing.description ?? incoming.description,
-        startTime: existing.startTime ?? incoming.startTime,
-        endTime: existing.endTime ?? incoming.endTime,
-        city: existing.city ?? incoming.city,
-        state: existing.state ?? incoming.state,
-        country: existing.country ?? incoming.country,
-        locationName: existing.locationName ?? incoming.locationName,
-        address: existing.address ?? incoming.address,
-        latitude: existing.latitude ?? incoming.latitude,
-        longitude: existing.longitude ?? incoming.longitude,
-        registrationUrl: existing.registrationUrl ?? incoming.registrationUrl,
-        officialUrl: existing.officialUrl ?? incoming.officialUrl,
-        regulationUrl: existing.regulationUrl ?? incoming.regulationUrl,
-        organizerName: existing.organizerName ?? incoming.organizerName,
-        organizerUrl: existing.organizerUrl ?? incoming.organizerUrl,
-        mainImageUrl: existing.mainImageUrl ?? incoming.mainImageUrl,
+        description: canonicalEvent.description,
+        startTime: canonicalEvent.startTime,
+        endTime: canonicalEvent.endTime,
+        city: canonicalEvent.city,
+        state: canonicalEvent.state,
+        country: canonicalEvent.country,
+        locationName: canonicalEvent.locationName,
+        address: canonicalEvent.address,
+        latitude: canonicalEvent.latitude,
+        longitude: canonicalEvent.longitude,
+        registrationUrl: canonicalEvent.registrationUrl,
+        officialUrl: canonicalEvent.officialUrl,
+        regulationUrl: canonicalEvent.regulationUrl,
+        organizerName: canonicalEvent.organizerName,
+        organizerUrl: canonicalEvent.organizerUrl,
+        mainImageUrl: canonicalEvent.mainImageUrl,
         versions: { create: eventVersionData(canonicalEvent) },
       },
     });
@@ -534,6 +553,8 @@ async function upsertEventSourceReference(
       role,
       priority: sourcePriority(event.sourceType!),
       contentHash: contentHash ?? null,
+      observation: json(observationOf(event)),
+      lastValidatedAt: new Date(),
       lastSeenAt: new Date(),
     },
     update: {
@@ -543,10 +564,36 @@ async function upsertEventSourceReference(
       role,
       priority: sourcePriority(event.sourceType!),
       ...(contentHash ? { contentHash } : {}),
+      observation: json(observationOf(event)),
+      lastValidatedAt: new Date(),
       lastSeenAt: new Date(),
     },
     });
   });
+}
+
+async function preserveValidatedMetadata(tx: any, incoming: CanonicalRaceEvent, current: any) {
+  const audits = await tx.adminAudit.findMany({ where: { eventId: current.id, action: "review_event" }, select: { details: true } });
+  const protectedFields = new Set<string>(audits.flatMap((audit: { details: { changes?: object } }) => Object.keys(audit.details?.changes ?? {})));
+  const scalarFields = ["name", "description", "date", "startTime", "endTime", "city", "state", "country", "locationName",
+    "address", "latitude", "longitude", "modality", "eventStatus", "registrationUrl", "officialUrl", "regulationUrl",
+    "organizerName", "organizerUrl", "mainImageUrl"];
+  const target = incoming as unknown as Record<string, unknown>;
+  for (const field of scalarFields) {
+    if (protectedFields.has(field) || target[field] == null || target[field] === "" ||
+        (field === "modality" && target[field] === "unknown" && current.modality !== "unknown")) {
+      if (protectedFields.has(field) || current[field] != null)
+        target[field] = field === "date" ? dateToIsoDate(current.date) : current[field];
+    }
+  }
+  // Missing optional collections are not evidence that previously validated information was removed.
+  if (!incoming.distances.length) incoming.distances = current.distances;
+  if (!incoming.prices.length) incoming.prices = existingPrices(current.prices);
+  if (!incoming.kits.length) incoming.kits = existingKits(current.kits);
+  if (!incoming.schedule.length) incoming.schedule = existingSchedule(current.schedule);
+  if (!incoming.rules.length) incoming.rules = existingRules(current.rules);
+  if (!incoming.kitPickup) incoming.kitPickup = existingKitPickup(current.kitPickups[0]);
+  if (!incoming.images.length) incoming.images = current.images.map((image: { url: string }) => image.url);
 }
 
 function eventScalarData(canonicalEvent: CanonicalRaceEvent) {

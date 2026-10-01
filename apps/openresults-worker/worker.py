@@ -249,9 +249,8 @@ async def execute(task):
             await asyncio.to_thread(store_match,task,metadata)
         elif task['kind']=='extract':
             result=await OpenResultsScraper(settings).scrape(task['payload']['url'],report)
-            if str(task['payload'].get('externalId','')).startswith('url:'):
-                from edition_metadata import update_edition
-                await asyncio.to_thread(update_edition,task,result.metadata,connection,fenced)
+            from edition_metadata import update_edition
+            await asyncio.to_thread(update_edition,task,result.metadata,connection,fenced)
             await asyncio.to_thread(publish,task,result)
         elif task['kind'] in ('export','export-selection'):
             await export(task)

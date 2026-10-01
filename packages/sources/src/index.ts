@@ -1,4 +1,7 @@
 import * as cheerio from "cheerio";
+export { discoverTicketSportsCatalogPage, ticketSportsCatalogUrl, parseTicketSportsCatalogPage, nextTicketSportsPrefix,
+  discoverCorridasBRCatalogPage, parseCorridasBRCatalogPage, corridasBRCatalogUrl } from "./catalog-discovery.js";
+export type { TicketSportsCatalogPage, TicketSportsCatalogOptions, CorridasBRCatalogPage } from "./catalog-discovery.js";
 import { rawSourceExtractionSchema, type RawSourceExtraction } from "@race-calendar/schemas";
 import {
   contentHashFromParts,
@@ -152,7 +155,7 @@ export class CorridasBRAdapter implements SourceAdapter {
   async fetchAndExtract(input: SourceFetchInput): Promise<RawSourceExtraction> {
     const html = await this.client.getText(input.url, { headers: corridasBRHeaders(), delayMs: 300 });
     if (isCorridasBRSecurityChallenge(html)) {
-      throw new Error(`CorridasBR security challenge blocked event detail ${input.sourceExternalId ?? input.url}`);
+      throw new Error("source_access_blocked");
     }
     const parsed = parseCorridasBRDetail(html, input.url);
     const shouldEnrich = input.metadata?.enrichOfficialPages !== false && process.env.OFFICIAL_PAGE_ENRICHMENT_ENABLED !== "false";
@@ -377,7 +380,7 @@ export async function discoverCorridasBREvents(
     const calendarUrl = corridasBRCalendarUrl(state);
     const html = await client.getText(calendarUrl, { headers: corridasBRHeaders(), delayMs: 150 });
     if (isCorridasBRSecurityChallenge(html)) {
-      throw new Error(`CorridasBR security challenge blocked calendar discovery for ${state}`);
+      throw new Error("source_access_blocked");
     }
     return parseCorridasBRCalendar(html, state, calendarUrl);
   });
@@ -614,7 +617,7 @@ function sectionsFromTicketSports(value: unknown): Array<{ title: string; html: 
   });
 }
 
-function parseTicketSportsLocation(value: string | null): { city: string | null; state: string | null; country: string | null } {
+export function parseTicketSportsLocation(value: string | null): { city: string | null; state: string | null; country: string | null } {
   const text = cleanText(value);
   if (!text) return { city: null, state: null, country: "BR" };
   const state = text.match(/,\s*([A-Z]{2})(?:,|\b)/)?.[1]?.toUpperCase() ?? null;

@@ -55,6 +55,7 @@ def main():
             db.execute('SELECT id FROM "CatalogSync" LIMIT 0')
             db.execute('SELECT id FROM "AdminAudit" LIMIT 0')
             db.execute('SELECT "administrativeReview" FROM "Event" LIMIT 0')
+            db.execute('SELECT observation,"lastValidatedAt" FROM "EventSourceReference" LIMIT 0')
             db.execute('SELECT "distanceKm",gap FROM "RaceResult" LIMIT 0')
             db.execute('SELECT selection,"contentType" FROM "ExportArtifact" LIMIT 0')
             active = db.execute('SELECT count(*) FROM "WorkerPresence" WHERE "lastSeenAt">now()-interval \'75 seconds\' AND state<>\'stopped\'').fetchone()[0]

@@ -1,4 +1,6 @@
 """Resolve an existing URL identity without guessing associations from names."""
+from psycopg.types.json import Jsonb
+from source_observation import edition_observation
 
 def update_edition(task, metadata, connection, fenced):
     event_id = task['payload'].get('eventId')
@@ -27,6 +29,8 @@ def update_edition(task, metadata, connection, fenced):
             conn.execute('''UPDATE "Event" SET "sourceExternalId"=%s WHERE id=%s
                 AND "sourceType"='openresults' ''', (new, event_id))
         # Existing canonical fields win; independent editions gain missing metadata.
+        conn.execute('''UPDATE "EventSourceReference" SET observation=%s,"lastValidatedAt"=now(),
+            "lastSeenAt"=now(),"updatedAt"=now() WHERE id=%s''', (Jsonb(edition_observation(metadata)), ref['id']))
         conn.execute('''UPDATE "Event" SET date=coalesce(date,%s),city=coalesce(city,nullif(%s,'')),
             state=coalesce(state,nullif(%s,'')),description=coalesce(description,nullif(%s,'')),
             "mainImageUrl"=coalesce("mainImageUrl",nullif(%s,'')),"locationName"=coalesce("locationName",nullif(%s,'')),

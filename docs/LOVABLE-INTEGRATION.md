@@ -1,5 +1,7 @@
 # Integração do painel
 
+Implementação ainda não publicada de descoberta ampliada, continuidade, pausa/retomada e comparação por fonte: [catálogo nacional](NATIONAL-CATALOG.md). O documento distingue o contrato em desenvolvimento da cobertura realmente comprovada. Não habilitar carga nacional antes dos limites e do circuito por fonte.
+
 Painel de homologação: https://runfinder-rithmy.lovable.app. API:
 https://universal-race-calendar.onrender.com. Evidências e limites da rodada real:
 [homologação de calendário e exportação](STAGING-ROUND-2026-09-21.md).
