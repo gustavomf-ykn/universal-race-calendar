@@ -21,6 +21,21 @@ def checkpoint(snapshot, page: int, cursor: int) -> dict:
             raise ValueError('catalog_checkpoint_incompatible')
         if cursor < 0 or cursor > len(snapshot['rows']):
             raise ValueError('catalog_checkpoint_incompatible')
+        if snapshot.get('currentPage') is None and (cursor or snapshot['rows']):
+            raise ValueError('catalog_checkpoint_incompatible')
+        for field in ('rawCount', 'duplicates', 'outOfScope', 'unknownCountry'):
+            if type(snapshot.get(field)) is not int or snapshot[field] < 0:
+                raise ValueError('catalog_checkpoint_incompatible')
+        if (type(snapshot.get('terminal')) is not bool or
+            type(snapshot.get('legacyEvidenceMissing')) is not bool or
+            not isinstance(snapshot.get('reason'), str) or
+            any(not isinstance(url, str) for url in snapshot['seenURLs']) or
+            any(type(total) is not int or total < 0 for total in snapshot['totals']) or
+            any(not isinstance(value, str) for value in snapshot['pageHashes'])):
+            raise ValueError('catalog_checkpoint_incompatible')
+        if snapshot['terminal'] and (len(snapshot['receipts']) != 1 or
+                                     not isinstance(snapshot['receipts'][0], dict)):
+            raise ValueError('catalog_checkpoint_incompatible')
         return deepcopy(snapshot)
     # Preserve an old partial page; its historical denominator cannot be rebuilt
     # from a processed count. It may finish processing but cannot prove coverage.

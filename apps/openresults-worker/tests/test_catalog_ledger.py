@@ -123,6 +123,17 @@ def test_legacy_checkpoint_preserves_partial_work_but_not_invented_history():
         checkpoint({'openresultsVersion': 2}, 1, 0)
 
 
+def test_invalid_checkpoint_cannot_fetch_next_page_and_skip_unprocessed_candidates():
+    ledger = record_page(checkpoint([], 1, 0), 1, [event(1), event(2)], 10, True, OPTIONS, 1000)
+    ledger['currentPage'] = None
+    with pytest.raises(ValueError, match='catalog_checkpoint_incompatible'):
+        checkpoint(ledger, 1, 1)
+    ledger['currentPage'] = 1
+    ledger['rawCount'] = -1
+    with pytest.raises(ValueError, match='catalog_checkpoint_incompatible'):
+        checkpoint(ledger, 1, 0)
+
+
 @pytest.mark.asyncio
 async def test_date_filter_does_not_end_before_a_later_recent_page(monkeypatch):
     old = event(1)
