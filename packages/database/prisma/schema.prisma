@@ -240,6 +240,7 @@ model Event {
   curationJobs        CurationJob[]
   sourceReferences    EventSourceReference[]
   resultSets          ResultSet[]
+  resultCheckpoints   ResultCheckpoint[]
   exports             ExportArtifact[]
 
   @@index([publicationStatus])
@@ -461,6 +462,8 @@ model CollectionTask {
   updatedAt      DateTime @default(now()) @db.Timestamptz(3)
   finishedAt     DateTime? @db.Timestamptz(3)
   capacityReservations CapacityReservation[]
+  resultCheckpoint ResultCheckpoint? @relation("ResultCheckpointRoot")
+  activeResultCheckpoints ResultCheckpoint[] @relation("ResultCheckpointActive")
   @@unique([ownerId, idempotencyKey])
   @@index([source, status, availableAt])
 }
@@ -490,6 +493,69 @@ model CapacityReservation {
  bytes BigInt
  expiresAt DateTime @db.Timestamptz(6)
  @@id([taskId,leaseToken])
+}
+
+model ResultCheckpoint {
+ rootTaskId String @id
+ rootTask CollectionTask @relation("ResultCheckpointRoot", fields: [rootTaskId], references: [id], onDelete: Cascade)
+ activeTaskId String?
+ activeTask CollectionTask? @relation("ResultCheckpointActive", fields: [activeTaskId], references: [id], onDelete: SetNull)
+ eventId String
+ event Event @relation(fields: [eventId], references: [id], onDelete: Restrict)
+ externalId String
+ sourceUrl String
+ parserVersion Int
+ pageSize Int
+ manifestHash String
+ manifest Json
+ status String @default("collecting")
+ errorCode String?
+ createdAt DateTime @default(now()) @db.Timestamptz(6)
+ updatedAt DateTime @default(now()) @db.Timestamptz(6)
+ expiresAt DateTime @default(dbgenerated("now() + interval '7 days'")) @db.Timestamptz(6)
+ groups ResultCheckpointGroup[]
+ @@index([expiresAt], map: "ResultCheckpoint_expiry")
+}
+
+model ResultCheckpointGroup {
+ rootTaskId String
+ checkpoint ResultCheckpoint @relation(fields: [rootTaskId], references: [rootTaskId], onDelete: Cascade)
+ modalityValue String
+ gender String
+ status String @default("collecting")
+ nextOffset Int @default(0)
+ expectedTotal Int?
+ recordCount Int @default(0)
+ pageCount Int @default(0)
+ pages ResultCheckpointPage[]
+ rows ResultCheckpointRow[]
+ @@id([rootTaskId,modalityValue,gender])
+}
+
+model ResultCheckpointPage {
+ rootTaskId String
+ modalityValue String
+ gender String
+ group ResultCheckpointGroup @relation(fields: [rootTaskId,modalityValue,gender], references: [rootTaskId,modalityValue,gender], onDelete: Cascade)
+ offset Int
+ nextOffset Int
+ hasMore Boolean
+ expectedTotal Int?
+ contentHash String
+ recordCount Int
+ @@id([rootTaskId,modalityValue,gender,offset])
+}
+
+model ResultCheckpointRow {
+ rootTaskId String
+ recordKey String
+ dedupeKey String
+ modalityValue String
+ gender String
+ group ResultCheckpointGroup @relation(fields: [rootTaskId,modalityValue,gender], references: [rootTaskId,modalityValue,gender], onDelete: Cascade)
+ record Json
+ @@id([rootTaskId,recordKey])
+ @@unique([rootTaskId,dedupeKey])
 }
 
 model SourceRequestControl {

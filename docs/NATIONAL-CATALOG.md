@@ -16,7 +16,7 @@ Este documento descreve a branch `codex/national-catalog`. Não constitui aceite
 - Observações por fonte, data de validação e comparação por campo, sem payload bruto. Ausência não aparece como concordância.
 - Campos corrigidos em auditorias `review_event` permanecem protegidos, inclusive nulos intencionais. Extração parcial não apaga escalares/coleções válidas. Referência suplementar não substitui a principal. A observação conserva os dados recebidos da fonte mesmo quando o canônico é preservado.
 - Orçamento compartilhado no PostgreSQL: padrão de 100 tentativas HTTP por hora por fonte e intervalo mínimo de um segundo, reduzíveis pelo administrador. Cada transporte de catálogo, detalhe, retry, redirect e Chromium passa pela reserva. Requisições de páginas relacionadas permitidas contam no orçamento da fonte da tarefa. DNS inválido não abre transporte. HTTP 401/403/429 fecha a fonte no primeiro retorno e 429 não provoca retries insistentes.
-- Orçamento esgotado devolve a tarefa à fila para a próxima janela, sem gastar uma tentativa e sem apagar seu checkpoint. Isso não implementa checkpoint de páginas de resultados: uma extração ainda em memória pode precisar recomeçar; esse caso precisa de persistência intermediária antes de homologar edições muito grandes.
+- Orçamento esgotado devolve a tarefa à fila para a próxima janela, sem gastar uma tentativa e sem apagar seu checkpoint. A extração nativa de resultados passa a persistir páginas intermediárias em PostgreSQL e retomar somente o trecho não confirmado; publicação continua atômica. O fallback DOM ainda não tem retomada por página. Contrato, migration e limites em [RESULT-CHECKPOINTS.md](RESULT-CHECKPOINTS.md).
 - Bloqueio fecha a aquisição por fonte, inclusive de novos pedidos, e retém queued anteriores sem substituir holds preexistentes. Passos de descoberta não geram sucessores enquanto a fonte está bloqueada. A tarefa que encontrou o bloqueio explícito mantém falha e histórico. Pedidos que encontraram o circuito já aberto aguardam retomada.
 - Retomada manual auditada, respeitando `Retry-After` quando observado. Passar o prazo não libera automaticamente uma fonte. A retomada libera somente holds `source_access_blocked`; não repete tarefas com falha nem remove proteções anteriores. Alterar limites não zera uso ou remove bloqueios. Repetir uma chave antiga não reabre uma fonte bloqueada novamente.
 
@@ -46,7 +46,7 @@ O painel mostra controles por fonte e diferencia orçamento esgotado, fonte bloq
 
 ## Integração futura
 
-Migrations aditivas `20261001000100_source_observations` e `20261001000200_source_request_controls` e `20261001000300_catalog_capacity` antes da API/workers. Aplicadas apenas em PostgreSQL local isolado, não no Supabase. A tabela de controles tem RLS e os grants de tabela/funções são revogados de PUBLIC, anon e authenticated. Inicializador verifica campos e funções antes de iniciar consumidores. Fazer backup e confirmar identidade de staging antes de aplicar; nunca reset.
+Migrations aditivas `20261001000100_source_observations`, `20261001000200_source_request_controls`, `20261001000300_catalog_capacity` e `20261001000400_result_checkpoints` antes da API/workers. Aplicadas apenas em PostgreSQL local isolado, não no Supabase. As tabelas operacionais têm RLS e os grants de tabelas/funções são revogados de PUBLIC, anon e authenticated. Inicializador verifica campos e funções antes de iniciar consumidores. Fazer backup e confirmar identidade de staging antes de aplicar; nunca reset.
 
 API requer deploy explícito para novos parâmetros/rotas; executores requerem build e Prisma atualizados. Frontend requer publicação explícita depois da API compatível. Merge não comprova deploy. Nenhuma agenda foi habilitada.
 
@@ -60,7 +60,7 @@ CI do controle de requisições encontrou módulos de suporte ausentes na imagem
 
 Antes da varredura nacional real faltam:
 
-1. Homologar a barreira de capacidade de banco/Storage e concluir checkpoint de páginas de resultados para extrações que excedam o orçamento de uma janela.
+1. Homologar a barreira de capacidade de banco/Storage e os checkpoints nativos de páginas de resultados para extrações que excedam o orçamento de uma janela. Retomada do fallback DOM ainda não implementada.
 2. Validar os recibos e o término OpenResults contra a fonte real, confirmar país/modalidade dos candidatos e testar seu enriquecimento real. Os testes controlados da descoberta não comprovam catálogo completo acessível.
 3. Reconciliação de candidatos inicialmente separados, vínculos com evidência forte e publicação automática estrita rua/trail.
 4. Agenda semanal durável/fuso/ocorrências perdidas, prioridade manual e resultados recentes como etapa separada.

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { prisma, enqueueTask, publicTask, TaskConflict, catalogCheckpoint, controlCatalogSync, publicCatalogSync } from "@race-calendar/database";
 import { requireAdmin, authorize } from "./auth.js";
+import { reserveResultCheckpoint, resultCheckpointRoot } from "@race-calendar/database";
 
 const str = { type: "string" };
 const ids = { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, maxItems: 100, uniqueItems: true };
@@ -283,17 +284,21 @@ export async function registerOperations(app: FastifyInstance) {
         return reply.code(409).send({ error: "only_failed_or_partial_tasks_can_retry" });
       const mode = (req.body as any).mode;
       const payload = old.payload as any;
-      if (mode === "resume" && old.kind !== "catalog-sync")
+      if (mode === "resume" && old.kind !== "catalog-sync" && !(old.source === "openresults" && old.kind === "extract"))
         return reply.code(409).send({ error: "compatible_checkpoint_unavailable" });
       if (old.kind === "catalog-sync" && mode === "restart")
         return reply.code(409).send({ error: "create_new_sync_for_restart" });
       // New task keeps the original immutable, and its own scoped key prevents duplicate retries.
       try {
         const task = await prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('race-task-acquisition'))`;
           const key = String(req.headers["idempotency-key"]);
           const prior = await tx.collectionTask.findUnique({
             where: { ownerId_idempotencyKey: { ownerId: req.principal!.id, idempotencyKey: key } },
           });
+          const rootId = old.source === "openresults" && old.kind === "extract" && mode === "resume"
+            ? resultCheckpointRoot(old) : null;
+          if (rootId && !prior) await reserveResultCheckpoint(old, tx);
           if (old.kind === "catalog-sync" && !prior) {
             const sync = await tx.$queryRaw<
               Array<{ status: string }>
@@ -310,14 +315,23 @@ export async function registerOperations(app: FastifyInstance) {
             )
               throw new TaskConflict("sync_already_queued");
           }
+          const retryPayload = { ...payload, retryOf: old.id, retryMode: mode };
+          if (old.kind === "extract") {
+            delete retryPayload.checkpointOf;
+            if (rootId) retryPayload.checkpointOf = rootId;
+          }
           const task = await enqueueTask(
             req.principal!.id,
             key,
             old.source,
             old.kind,
-            { ...payload, retryOf: old.id, retryMode: mode },
+            retryPayload,
             tx,
           );
+          if (rootId && !prior)
+            await tx.resultCheckpoint.update({ where: { rootTaskId: rootId }, data: { activeTaskId: task.id } });
+          if (!prior) await tx.adminAudit.create({ data: { actorId: req.principal!.id, taskId: task.id,
+            action: "retry_task", details: { retryOf: old.id, mode, ...(rootId ? { checkpointOf: rootId } : {}) } } });
           if (old.kind === "export-selection") {
             const artifact = await tx.exportArtifact.findUnique({ where: { taskId: old.id } });
             if (!artifact) throw new TaskConflict("export_artifact_missing");

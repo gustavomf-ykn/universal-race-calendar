@@ -19,18 +19,17 @@ from app.models import (
 from app.services.openresults_client import (
     OpenResultsClient,
     build_endpoint_url,
-    payload_value,
 )
 from app.services.parser import (
     deduplicate_records,
     normalize_gender,
     parse_event_page,
-    parse_result_rows,
     sort_records,
 )
 from app.services.playwright_fallback import ProgressCallback, run_playwright_fallback
 from app.services.url_validation import validate_event_url, validate_internal_url
 from app.services.source_requests import SourceBudgetDeferred, SourceCircuitOpen, CapacityDeferred
+from app.services.result_pages import parse_result_page
 
 
 class OpenResultsScraper:
@@ -48,10 +47,16 @@ class OpenResultsScraper:
         self,
         url: str,
         progress: ProgressCallback | None = None,
+        *,
+        checkpoint: Any = None,
     ) -> ExtractionResult:
         await self._emit(progress, "Validando URL", 2)
         canonical_url = validate_event_url(url, self.settings.allowed_host)
         extracted_at = datetime.now(timezone.utc)
+        if checkpoint is not None:
+            ready = await asyncio.to_thread(checkpoint.ready)
+            if ready is not None:
+                return ready
 
         async with OpenResultsClient(self.settings) as client:
             await self._emit(progress, "Carregando evento", 7)
@@ -89,6 +94,30 @@ class OpenResultsScraper:
                 self.settings.allowed_host,
                 base_url=canonical_url,
             )
+            if checkpoint is not None:
+                discovery.endpoint_url = endpoint
+                discovery, extracted_at = await asyncio.to_thread(checkpoint.start, discovery, extracted_at)
+                for modality in discovery.modalities:
+                    for gender in ("F", "M"):
+                        group = await asyncio.to_thread(checkpoint.group, modality, gender)
+                        if group is None:
+                            raise StructureChangedError("result_groups_invalid")
+                        if group['status'] == 'completed':
+                            continue
+                        offset = group['nextOffset']
+                        for _ in range(group['pageCount'], self.settings.max_endpoint_pages):
+                            request_url = build_endpoint_url(endpoint, modality=modality.value, gender=gender,
+                                offset=offset, limit=self.settings.endpoint_page_size, allowed_host=self.settings.allowed_host)
+                            payload = await client.get_endpoint_page(request_url, discovery.metadata.source_url)
+                            page = parse_result_page(payload, discovery, modality, gender, offset, extracted_at)
+                            await asyncio.to_thread(checkpoint.save_page, modality, gender, offset, page)
+                            await self._emit(progress, "Página confirmada", 50)
+                            if not page.has_more:
+                                break
+                            offset = page.next_offset
+                        else:
+                            raise StructureChangedError("result_page_limit")
+                return await asyncio.to_thread(checkpoint.finish)
             return await self._scrape_endpoint(
                 client,
                 discovery,
@@ -239,28 +268,18 @@ class OpenResultsScraper:
                 limit=self.settings.endpoint_page_size, allowed_host=self.settings.allowed_host,
             )
             payload = await client.get_endpoint_page(request_url, discovery.metadata.source_url)
-            if payload_value(payload, "ok", True) is False:
-                raise StructureChangedError(str(payload_value(payload, "error", "Erro ao carregar resultados.")))
-            raw_total = payload_value(payload, "recordsTotal")
-            if raw_total is None:
-                raw_total = payload_value(payload, "recordsFiltered")
-            page_total = int(float(raw_total)) if raw_total is not None else None
+            page = parse_result_page(payload, discovery, modality, gender_code, offset, extracted_at)
+            page_total = page.expected
             if expected is None:
                 expected = page_total
             elif page_total is not None and page_total != expected:
-                warnings.append(
-                    f"{modality.name} {normalize_gender(gender_code)}: o total do endpoint mudou de {expected} para {page_total}."
-                )
-                expected = page_total
-            rows = parse_result_rows(
-                str(payload_value(payload, "html", "") or ""), discovery.result_headers,
-                discovery.metadata, modality, gender_code, extracted_at,
-            )
+                raise StructureChangedError("result_total_changed")
+            rows = page.records
             for row in rows:
                 row["event_id"] = event_id
             extracted += await storage.insert_results(job_id, event_id, rows)
-            has_more = bool(payload_value(payload, "hasMore", False))
-            next_offset = int(float(payload_value(payload, "nextOffset", offset + len(rows))))
+            has_more = page.has_more
+            next_offset = page.next_offset
             await storage.upsert_group(
                 job_id, catalog_id, modality.value, modality.name, gender_code,
                 status="processing" if has_more else "completed",
@@ -392,35 +411,16 @@ class OpenResultsScraper:
                 allowed_host=self.settings.allowed_host,
             )
             payload = await client.get_endpoint_page(request_url, discovery.metadata.source_url)
-            ok = payload_value(payload, "ok", True)
-            if ok is False:
-                detail = payload_value(payload, "error", "Erro ao carregar resultados.")
-                raise StructureChangedError(str(detail))
-            html = payload_value(payload, "html", "") or ""
-            page_total_raw = payload_value(payload, "recordsTotal")
-            if page_total_raw is None:
-                page_total_raw = payload_value(payload, "recordsFiltered")
-            page_total = int(float(page_total_raw)) if page_total_raw is not None else None
+            page = parse_result_page(payload, discovery, modality, gender_code, offset, extracted_at)
+            page_total = page.expected
             if expected is None:
                 expected = page_total
             elif page_total is not None and page_total != expected:
-                warnings.append(
-                    f"{modality.name} {normalize_gender(gender_code)}: o total do endpoint mudou de {expected} para {page_total}."
-                )
-                expected = page_total
-
-            page_rows = parse_result_rows(
-                str(html),
-                discovery.result_headers,
-                discovery.metadata,
-                modality,
-                gender_code,
-                extracted_at,
-            )
+                raise StructureChangedError("result_total_changed")
+            page_rows = page.records
             rows.extend(page_rows)
-            has_more = bool(payload_value(payload, "hasMore", False))
-            next_raw = payload_value(payload, "nextOffset", offset + len(page_rows))
-            next_offset = int(float(next_raw))
+            has_more = page.has_more
+            next_offset = page.next_offset
             if not has_more:
                 break
             if not page_rows or next_offset <= offset:

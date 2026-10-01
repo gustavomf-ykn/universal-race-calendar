@@ -10,6 +10,7 @@ import { observationOf } from "./source-comparison.js";
 export { enqueueTask, claimTask, heartbeatTask, finishTask, publicTask, TaskConflict, stableJson } from "./tasks.js";
 export { catalogCheckpoint, coordinateCatalogSyncs, controlCatalogSync } from "./catalog-continuation.js";
 export { publicCatalogSync } from "./catalog-report.js";
+export { readResultCheckpoint, reserveResultCheckpoint, resultCheckpointRoot } from "./result-checkpoints.js";
 export {
   requestSource,
   requestSources,

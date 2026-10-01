@@ -13020,6 +13020,48 @@
                       "type": "object",
                       "additionalProperties": true
                     },
+                    "checkpoint": {
+                      "type": "object",
+                      "properties": {
+                        "available": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "rootId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "parserVersion": {
+                          "type": "integer"
+                        },
+                        "pageSize": {
+                          "type": "integer"
+                        },
+                        "groups": {
+                          "type": "integer"
+                        },
+                        "completedGroups": {
+                          "type": "integer"
+                        },
+                        "pages": {
+                          "type": "integer"
+                        },
+                        "records": {
+                          "type": "integer"
+                        },
+                        "expiresAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    },
                     "attempt": {
                       "type": "integer"
                     },
@@ -13282,6 +13324,48 @@
                       "type": "object",
                       "additionalProperties": true
                     },
+                    "checkpoint": {
+                      "type": "object",
+                      "properties": {
+                        "available": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "rootId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "parserVersion": {
+                          "type": "integer"
+                        },
+                        "pageSize": {
+                          "type": "integer"
+                        },
+                        "groups": {
+                          "type": "integer"
+                        },
+                        "completedGroups": {
+                          "type": "integer"
+                        },
+                        "pages": {
+                          "type": "integer"
+                        },
+                        "records": {
+                          "type": "integer"
+                        },
+                        "expiresAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    },
                     "attempt": {
                       "type": "integer"
                     },
@@ -13509,6 +13593,48 @@
                           "progress": {
                             "type": "object",
                             "additionalProperties": true
+                          },
+                          "checkpoint": {
+                            "type": "object",
+                            "properties": {
+                              "available": {
+                                "type": "boolean"
+                              },
+                              "reason": {
+                                "type": [
+                                  "null",
+                                  "string"
+                                ]
+                              },
+                              "rootId": {
+                                "type": "string"
+                              },
+                              "status": {
+                                "type": "string"
+                              },
+                              "parserVersion": {
+                                "type": "integer"
+                              },
+                              "pageSize": {
+                                "type": "integer"
+                              },
+                              "groups": {
+                                "type": "integer"
+                              },
+                              "completedGroups": {
+                                "type": "integer"
+                              },
+                              "pages": {
+                                "type": "integer"
+                              },
+                              "records": {
+                                "type": "integer"
+                              },
+                              "expiresAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              }
+                            }
                           },
                           "attempt": {
                             "type": "integer"
@@ -13740,6 +13866,48 @@
                       "type": "object",
                       "additionalProperties": true
                     },
+                    "checkpoint": {
+                      "type": "object",
+                      "properties": {
+                        "available": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "rootId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "parserVersion": {
+                          "type": "integer"
+                        },
+                        "pageSize": {
+                          "type": "integer"
+                        },
+                        "groups": {
+                          "type": "integer"
+                        },
+                        "completedGroups": {
+                          "type": "integer"
+                        },
+                        "pages": {
+                          "type": "integer"
+                        },
+                        "records": {
+                          "type": "integer"
+                        },
+                        "expiresAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    },
                     "attempt": {
                       "type": "integer"
                     },
@@ -13949,6 +14117,48 @@
                     "progress": {
                       "type": "object",
                       "additionalProperties": true
+                    },
+                    "checkpoint": {
+                      "type": "object",
+                      "properties": {
+                        "available": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "rootId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "parserVersion": {
+                          "type": "integer"
+                        },
+                        "pageSize": {
+                          "type": "integer"
+                        },
+                        "groups": {
+                          "type": "integer"
+                        },
+                        "completedGroups": {
+                          "type": "integer"
+                        },
+                        "pages": {
+                          "type": "integer"
+                        },
+                        "records": {
+                          "type": "integer"
+                        },
+                        "expiresAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
                     },
                     "attempt": {
                       "type": "integer"
@@ -14959,6 +15169,48 @@
                     "progress": {
                       "type": "object",
                       "additionalProperties": true
+                    },
+                    "checkpoint": {
+                      "type": "object",
+                      "properties": {
+                        "available": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "rootId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "parserVersion": {
+                          "type": "integer"
+                        },
+                        "pageSize": {
+                          "type": "integer"
+                        },
+                        "groups": {
+                          "type": "integer"
+                        },
+                        "completedGroups": {
+                          "type": "integer"
+                        },
+                        "pages": {
+                          "type": "integer"
+                        },
+                        "records": {
+                          "type": "integer"
+                        },
+                        "expiresAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
                     },
                     "attempt": {
                       "type": "integer"

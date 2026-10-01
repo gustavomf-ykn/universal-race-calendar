@@ -27,6 +27,7 @@ from presence import announce, stop_requested
 from app.services.source_requests import request_hooks, SourceBudgetDeferred, SourceCircuitOpen
 from source_requests import database_request_hooks
 from capacity import CapacityDeferred, check_capacity, database_capacity, storage_capacity
+from result_checkpoints import ResultCheckpoints, ResultCheckpointError, cleanup_checkpoints
 
 
 def storage_headers():
@@ -219,6 +220,7 @@ async def cleanup_exports():
 
 async def execute(task):
     progress={'stage':'starting','percent':0}
+    checkpoint=None
     async def report(_stage,percent):
         # Avoid logging event names, URLs or athlete data from upstream messages.
         progress.update(stage='extracting',percent=percent)
@@ -229,6 +231,7 @@ async def execute(task):
             if not result['ok']:
                 raise RuntimeError('lease_lost')
     async def work():
+        nonlocal checkpoint
         await asyncio.to_thread(database_capacity, query)
         settings=replace(Settings.from_env(),scrape_concurrency=1,catalog_concurrency=1,metadata_concurrency=1)
         if task['kind']=='catalog-sync':
@@ -260,10 +263,14 @@ async def execute(task):
             await asyncio.to_thread(update_edition,task,metadata,connection,fenced)
             await asyncio.to_thread(store_match,task,metadata)
         elif task['kind']=='extract':
-            result=await OpenResultsScraper(settings).scrape(task['payload']['url'],report)
+            checkpoint=ResultCheckpoints(task,settings,connection,fenced,progress)
+            result=await OpenResultsScraper(settings).scrape(task['payload']['url'],report,checkpoint=checkpoint)
             from edition_metadata import update_edition
             await asyncio.to_thread(update_edition,task,result.metadata,connection,fenced)
-            await asyncio.to_thread(publish,task,result)
+            if result.checkpoint_root_id:
+                await asyncio.to_thread(checkpoint.publish,result,position)
+            else:
+                await asyncio.to_thread(publish,task,result)
         elif task['kind'] in ('export','export-selection'):
             await asyncio.to_thread(storage_capacity, query)
             await export(task)
@@ -291,11 +298,14 @@ async def execute(task):
             return
         if isinstance(exc, AccessBlockedError):
             await asyncio.to_thread(query,'SELECT block_source_requests(%s,NULL)',('openresults',))
-        if isinstance(exc, (AccessBlockedError, StructureChangedError)):
+        if checkpoint and isinstance(exc, (StructureChangedError, ResultCheckpointError)):
+            await asyncio.to_thread(checkpoint.invalidate,'source_structure_changed' if isinstance(exc,StructureChangedError) else str(exc))
+        if isinstance(exc, (AccessBlockedError, StructureChangedError, ResultCheckpointError)):
             with connection() as conn:
                 conn.execute('UPDATE "CollectionTask" SET "maxAttempts"=attempt WHERE id=%s AND "leaseToken"=%s',(task['id'],task['leaseToken']))
         code=('source_access_blocked' if isinstance(exc, AccessBlockedError) else
               'source_structure_changed' if isinstance(exc, StructureChangedError) else
+              str(exc) if isinstance(exc, ResultCheckpointError) else
               str(exc) if isinstance(exc,ValueError) and str(exc) in {'incomplete_extraction','catalog_checkpoint_incompatible','idempotency_conflict','catalog_pagination_not_advancing','catalog_end_unconfirmed','selected_edition_without_results','export_too_large_refine_selection','export_expired','source_identity_already_associated','edition_date_mismatch'} else 'collection_failed')
         outcome='partial' if code=='incomplete_extraction' else 'failed'
         await asyncio.to_thread(query,'SELECT finish_task(%s,%s,%s,%s,%s)',(task['id'],task['leaseToken'],outcome,Jsonb(progress),code))
@@ -329,6 +339,7 @@ async def main():
       await asyncio.to_thread(announce,query,worker_id,'available')
       presence_task=asyncio.create_task(presence_pulse())
       print('Results executor connected; waiting for panel requests.',flush=True)
+      await asyncio.to_thread(cleanup_checkpoints,connection)
       # Batch runs may finish before the old 60-tick cleanup cadence.
       if run.batch and os.environ.get('SUPABASE_URL'):
         try: await cleanup_exports()
@@ -354,7 +365,9 @@ async def main():
             await asyncio.sleep(1)
         tick+=1
         if tick%60==0:
-            try: await cleanup_exports()
+            try:
+                await asyncio.to_thread(cleanup_checkpoints,connection)
+                await cleanup_exports()
             except (httpx.HTTPError,KeyError): print('Export cleanup pending; verify Storage configuration.',flush=True)
     except Exception:
         run.reason = 'worker_failed'

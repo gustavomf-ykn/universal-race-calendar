@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { enqueueTask, prisma, publicTask, TaskConflict, listWorkers } from "@race-calendar/database";
+import { enqueueTask, prisma, publicTask, TaskConflict, listWorkers, readResultCheckpoint } from "@race-calendar/database";
 import { authorize, keyHash, requireAdmin } from "./auth.js";
 import { resultSchema, disciplineSchema, matchSchema } from "./contracts.js";
 
@@ -35,6 +35,12 @@ const taskSchema = {
     executionHold: { type: "boolean" },
     holdReason: { type: ["string","null"] },
     progress: { type: "object", additionalProperties: true },
+    checkpoint: { type: "object", properties: {
+      available: { type: "boolean" }, reason: { type: ["string", "null"] }, rootId: text, status: text,
+      parserVersion: { type: "integer" }, pageSize: { type: "integer" },
+      groups: { type: "integer" }, completedGroups: { type: "integer" }, pages: { type: "integer" }, records: { type: "integer" },
+      expiresAt: { type: "string", format: "date-time" },
+    } },
     attempt: { type: "integer" },
     maxAttempts: { type: "integer" },
     errorCode: { type: ["string", "null"] },
@@ -205,7 +211,7 @@ export async function registerBackend(app: FastifyInstance) {
     async (req, reply) => {
       const t = await prisma.collectionTask.findUnique({ where: { id: (req.params as { id: string }).id } });
       if (!t || !owned(t.ownerId, req)) return reply.code(404).send({ error: "task_not_found" });
-      return publicTask(t);
+      return { ...publicTask(t), checkpoint: await readResultCheckpoint(t) };
     },
   );
   app.post(

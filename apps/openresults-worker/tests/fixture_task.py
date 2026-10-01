@@ -34,7 +34,7 @@ def metadata():
 async def fetch(self,url):
     return metadata(),[ModalityInfo('5 km','5')]
 
-async def scrape(self,url,progress):
+async def scrape(self,url,progress,**kwargs):
     await progress('fixture',50)
     if mode=='pause':
         print('fixture_claimed',flush=True)

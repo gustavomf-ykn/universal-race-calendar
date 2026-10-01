@@ -116,6 +116,7 @@ class ExtractionResult:
     by_group: dict[str, int]
     warnings: list[str] = field(default_factory=list)
     extracted_at: datetime | None = None
+    checkpoint_root_id: str | None = None
 
 
 @dataclass(slots=True)
