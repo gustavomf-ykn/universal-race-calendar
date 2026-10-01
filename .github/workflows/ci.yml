@@ -27,6 +27,7 @@ jobs:
       DIRECT_URL: postgresql://postgres:postgres@localhost:5432/race_backend_test?schema=public
       AI_PROVIDER: mock
       INTERNAL_API_KEY: test-internal-key
+      TEST_PYTHON: python
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

@@ -12,7 +12,10 @@ Este documento descreve a branch `codex/national-catalog`. Não constitui aceite
 - Pausa/retomada auditadas: reter passos queued desprotegidos, permitir terminar o passo running, liberar somente holds `catalog_sync_paused`. Pedidos protegidos anteriormente não são liberados. Metadados já enfileirados são tarefas separadas; pausar descoberta não os cancela.
 - Observações por fonte, data de validação e comparação por campo, sem payload bruto. Ausência não aparece como concordância.
 - Campos corrigidos em auditorias `review_event` permanecem protegidos, inclusive nulos intencionais. Extração parcial não apaga escalares/coleções válidas. Referência suplementar não substitui a principal. A observação conserva os dados recebidos da fonte mesmo quando o canônico é preservado.
-- Bloqueios reconhecidos encerram tentativas daquela tarefa com código sanitizado. O circuito por fonte para impedir tentativas por outras tarefas ainda está pendente.
+- Orçamento compartilhado no PostgreSQL: padrão de 100 tentativas HTTP por hora por fonte e intervalo mínimo de um segundo, reduzíveis pelo administrador. Cada transporte de catálogo, detalhe, retry, redirect e Chromium passa pela reserva. Requisições de páginas relacionadas permitidas contam no orçamento da fonte da tarefa. DNS inválido não abre transporte. HTTP 401/403/429 fecha a fonte no primeiro retorno e 429 não provoca retries insistentes.
+- Orçamento esgotado devolve a tarefa à fila para a próxima janela, sem gastar uma tentativa e sem apagar seu checkpoint. Isso não implementa checkpoint de páginas de resultados: uma extração ainda em memória pode precisar recomeçar; esse caso precisa de persistência intermediária antes de homologar edições muito grandes.
+- Bloqueio fecha a aquisição por fonte, inclusive de novos pedidos, e retém queued anteriores sem substituir holds preexistentes. Passos de descoberta não geram sucessores enquanto a fonte está bloqueada. A tarefa que encontrou o bloqueio explícito mantém falha e histórico. Pedidos que encontraram o circuito já aberto aguardam retomada.
+- Retomada manual auditada, respeitando `Retry-After` quando observado. Passar o prazo não libera automaticamente uma fonte. A retomada libera somente holds `source_access_blocked`; não repete tarefas com falha nem remove proteções anteriores. Alterar limites não zera uso ou remove bloqueios. Repetir uma chave antiga não reabre uma fonte bloqueada novamente.
 
 ## Contrato administrativo
 
@@ -28,9 +31,17 @@ JWT admin validado pelo backend; chave interna nunca no frontend. POSTs abaixo e
 
 `GET /v1/admin/catalog/events/{id}/comparison` mostra valores canônicos e validados por fonte para nome, data, cidade, UF, país, modalidade e URLs. Compara referências já associadas; reconciliação do catálogo inteiro ainda está pendente.
 
+`GET /v1/admin/source-controls` mostra as três fontes, uso e limite da janela, intervalo, próximo reset, bloqueio e prazo mínimo de retomada. Uma fonte sem histórico utiliza os padrões acima.
+
+`POST /v1/admin/source-controls/{source}/configure`: `limitPerHour` inteiro de 1 a 100, `minDelayMs` inteiro de 1000 a 60000, `reason` de 3 a 500 caracteres. JWT admin e `Idempotency-Key` obrigatórios. Limites são um teto conservador da aplicação; não representam permissão de acesso concedida pela fonte.
+
+`POST /v1/admin/source-controls/{source}/resume`: `reason` e `Idempotency-Key`. Retorna 409 `source_cooldown_active` se o prazo ainda não terminou. A fonte pode continuar inacessível; uma retomada não comprova desbloqueio. Não usar repetidamente para contornar bloqueios.
+
+O painel mostra controles por fonte e diferencia orçamento esgotado, fonte bloqueada, pausa de descoberta e proteção administrativa de pedidos. API e frontend precisam ser publicados para esse contrato ficar disponível em homologação.
+
 ## Integração futura
 
-Migration aditiva `20261001000100_source_observations` antes da API/workers. Aplicada apenas em PostgreSQL local isolado, não no Supabase. Inicializador verifica campos antes de iniciar consumidores. Fazer backup e confirmar identidade de staging antes de aplicar; nunca reset.
+Migrations aditivas `20261001000100_source_observations` e `20261001000200_source_request_controls` antes da API/workers. Aplicadas apenas em PostgreSQL local isolado, não no Supabase. A tabela de controles tem RLS e os grants de tabela/funções são revogados de PUBLIC, anon e authenticated. Inicializador verifica campos e funções antes de iniciar consumidores. Fazer backup e confirmar identidade de staging antes de aplicar; nunca reset.
 
 API requer deploy explícito para novos parâmetros/rotas; executores requerem build e Prisma atualizados. Frontend requer publicação explícita depois da API compatível. Merge não comprova deploy. Nenhuma agenda foi habilitada.
 
@@ -42,7 +53,7 @@ Regressões em PostgreSQL isolado cobrem expansão TicketSports, passagem nacion
 
 Antes da varredura nacional real faltam:
 
-1. Orçamento/circuito durável por fonte, incluindo detalhes, retries, redirects e navegador; controle de capacidade.
+1. Controle de capacidade de banco/Storage e checkpoint de páginas de resultados para extrações que excedam o orçamento de uma janela.
 2. OpenResults: recibos completos, ciclos não consecutivos, país, metadados dos candidatos e término conciliado com totais disponíveis.
 3. Reconciliação de candidatos inicialmente separados, vínculos com evidência forte e publicação automática estrita rua/trail.
 4. Agenda semanal durável/fuso/ocorrências perdidas, prioridade manual e resultados recentes como etapa separada.

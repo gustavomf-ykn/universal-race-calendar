@@ -18,11 +18,14 @@ from psycopg.types.json import Jsonb
 from openpyxl import Workbook
 
 from app.config import Settings
+from app.models import AccessBlockedError
 from app.services.openresults.metadata import EventMetadataService
 from app.services.openresults.catalog import EventCatalog
 from app.services.scraper import OpenResultsScraper
 from batch import BatchRun
 from presence import announce, stop_requested
+from app.services.source_requests import request_hooks, SourceBudgetDeferred, SourceCircuitOpen
+from source_requests import database_request_hooks
 
 
 def storage_headers():
@@ -235,6 +238,8 @@ async def execute(task):
                 try:
                     metadata,_=await EventMetadataService(settings).fetch(event.event_url)
                     await asyncio.to_thread(store_match,task,metadata)
+                except (AccessBlockedError, SourceBudgetDeferred, SourceCircuitOpen):
+                    raise
                 except Exception:
                     failed+=1
                 processed+=1
@@ -256,6 +261,7 @@ async def execute(task):
             await export(task)
         else:
             raise ValueError('unsupported_task')
+    hooks_token=request_hooks.set(database_request_hooks(query))
     pulse=asyncio.create_task(heartbeat());job=asyncio.create_task(work())
     try:
         async with asyncio.timeout(1800):
@@ -264,8 +270,13 @@ async def execute(task):
                 await item
         await asyncio.to_thread(query,'SELECT finish_task(%s,%s,\'completed\',%s,NULL)',(task['id'],task['leaseToken'],Jsonb(progress)))
     except Exception as exc:
-        from app.models import AccessBlockedError
+        if isinstance(exc, (SourceBudgetDeferred, SourceCircuitOpen)):
+            progress['stage']='source_access_blocked' if isinstance(exc, SourceCircuitOpen) else 'source_budget_wait'
+            await asyncio.to_thread(query,'SELECT defer_source_task(%s,%s,%s,%s,%s)',
+                (task['id'],task['leaseToken'],Jsonb(progress),exc.retry_at,isinstance(exc, SourceCircuitOpen)))
+            return
         if isinstance(exc, AccessBlockedError):
+            await asyncio.to_thread(query,'SELECT block_source_requests(%s,NULL)',('openresults',))
             with connection() as conn:
                 conn.execute('UPDATE "CollectionTask" SET "maxAttempts"=attempt WHERE id=%s AND "leaseToken"=%s',(task['id'],task['leaseToken']))
         code=('source_access_blocked' if isinstance(exc, AccessBlockedError) else
@@ -275,6 +286,7 @@ async def execute(task):
     finally:
         pulse.cancel();job.cancel()
         await asyncio.gather(pulse,job,return_exceptions=True)
+        request_hooks.reset(hooks_token)
 
 
 async def main():

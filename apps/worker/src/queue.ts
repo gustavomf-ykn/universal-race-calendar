@@ -1,8 +1,28 @@
-import { claimTask, heartbeatTask, finishTask, prisma, setTaskLease, newWorkerId, workerPresence, coordinateCatalogSyncs } from "@race-calendar/database";
+import {
+  claimTask,
+  heartbeatTask,
+  finishTask,
+  prisma,
+  setTaskLease,
+  newWorkerId,
+  workerPresence,
+  coordinateCatalogSyncs,
+} from "@race-calendar/database";
 import { syncCatalog } from "./catalog.js";
 import { existsSync } from "node:fs";
 import { BatchRun } from "./batch.js";
 import { taskError } from "./task-error.js";
+import { setSourceRequestGuard, enterSourceRequestScope } from "@race-calendar/sources";
+import {
+  requestSource,
+  waitForSourceRequest,
+  blockSourceRequests,
+  deferSourceTask,
+  SourceBudgetDeferred,
+  SourceCircuitOpen,
+  observeSourceResponse,
+} from "@race-calendar/database";
+setSourceRequestGuard((url, scope) => waitForSourceRequest(requestSource(url, scope)), observeSourceResponse);
 import {
   importTicketSportsEvents,
   importCorridasBREvents,
@@ -24,12 +44,19 @@ export async function runQueue() {
   const run = new BatchRun();
   const watchdog = run.watchdog();
   const workerId = newWorkerId();
-  const shouldStop = () => stopping || Boolean(process.env.WORKER_STOP_FILE && existsSync(process.env.WORKER_STOP_FILE));
-  const announce = () => workerPresence(workerId, shouldStop() ? "stopping" : run.activeTaskId ? "busy" : "available", run.activeTaskId);
+  const shouldStop = () =>
+    stopping || Boolean(process.env.WORKER_STOP_FILE && existsSync(process.env.WORKER_STOP_FILE));
+  const announce = () =>
+    workerPresence(workerId, shouldStop() ? "stopping" : run.activeTaskId ? "busy" : "available", run.activeTaskId);
   let presenceTimer: ReturnType<typeof setInterval> | undefined;
   try {
     await announce();
-    presenceTimer = setInterval(() => { void announce().catch(() => { stopping = true; console.error("Calendar: connection lost; stopping before the next task."); }); }, 20000);
+    presenceTimer = setInterval(() => {
+      void announce().catch(() => {
+        stopping = true;
+        console.error("Calendar: connection lost; stopping before the next task.");
+      });
+    }, 20000);
     console.log("Calendar executor connected; waiting for panel requests.");
     let coordinatedAt = 0;
     while (!shouldStop() && run.canClaim()) {
@@ -52,6 +79,7 @@ export async function runQueue() {
       await announce();
       console.log(`Calendar task ${task.id}: started.`);
       setTaskLease(task);
+      enterSourceRequestScope(task.source);
       let progress: Record<string, number | string> = { stage: "starting" };
       // Fail closed if the lease is lost: a stale executor must stop doing work.
       const heartbeat = setInterval(() => {
@@ -120,11 +148,28 @@ export async function runQueue() {
         } else throw new Error("unsupported_task");
         await finishTask(task, status, progress, status === "failed" ? "collection_failed" : null);
       } catch (error) {
-        const failure = taskError(error);
-        if (!failure.retryable) await prisma.collectionTask.updateMany({ where: {
-          id: task.id, status: "running", leaseToken: task.leaseToken, leaseUntil: { gt: new Date() },
-        }, data: { maxAttempts: task.attempt } });
-        await finishTask(task, "failed", progress, failure.code);
+        if (error instanceof SourceBudgetDeferred || error instanceof SourceCircuitOpen) {
+          progress = {
+            ...progress,
+            stage: error instanceof SourceCircuitOpen ? "source_access_blocked" : "source_budget_wait",
+          };
+          await deferSourceTask(task, progress, error);
+        } else {
+          const failure = taskError(error);
+          if (failure.code === "source_access_blocked" && ["ticketsports", "corridasbr"].includes(task.source))
+            await blockSourceRequests(task.source as "ticketsports" | "corridasbr");
+          if (!failure.retryable)
+            await prisma.collectionTask.updateMany({
+              where: {
+                id: task.id,
+                status: "running",
+                leaseToken: task.leaseToken,
+                leaseUntil: { gt: new Date() },
+              },
+              data: { maxAttempts: task.attempt },
+            });
+          await finishTask(task, "failed", progress, failure.code);
+        }
       } finally {
         clearInterval(heartbeat);
         clearTimeout(deadline);

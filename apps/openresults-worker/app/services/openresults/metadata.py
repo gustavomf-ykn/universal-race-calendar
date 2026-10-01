@@ -10,7 +10,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from app.config import Settings
-from app.models import EventMetadata, ModalityInfo, RequestFailedError, URLValidationError
+from app.models import AccessBlockedError, EventMetadata, ModalityInfo, RequestFailedError, URLValidationError
 from app.services.safe_network import bounded_get
 from app.services.openresults_client import OpenResultsClient
 from app.services.parser import clean_text, parse_event_metadata
@@ -204,6 +204,8 @@ class EventMetadataService:
                     location = response.headers.get("location", "")
                     current = _safe_related_url(urljoin(current, location))
                     continue
+                if response.status_code in (401,403,429):
+                    raise AccessBlockedError('source_access_blocked')
                 if response.status_code >= 400:
                     raise RequestFailedError(f"O site relacionado retornou HTTP {response.status_code}.")
                 return response.text

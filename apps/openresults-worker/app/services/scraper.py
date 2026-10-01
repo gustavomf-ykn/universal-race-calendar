@@ -30,6 +30,7 @@ from app.services.parser import (
 )
 from app.services.playwright_fallback import ProgressCallback, run_playwright_fallback
 from app.services.url_validation import validate_event_url, validate_internal_url
+from app.services.source_requests import SourceBudgetDeferred, SourceCircuitOpen
 
 
 class OpenResultsScraper:
@@ -60,7 +61,7 @@ class OpenResultsScraper:
                 html = await client.get_event_page(canonical_url)
                 await self._emit(progress, "Descobrindo modalidades", 10)
                 discovery = parse_event_page(html, canonical_url)
-            except (AccessBlockedError, EventNotFoundError):
+            except (AccessBlockedError, EventNotFoundError, SourceBudgetDeferred, SourceCircuitOpen):
                 raise
             except ScraperError as exc:
                 direct_error = exc
@@ -163,6 +164,8 @@ class OpenResultsScraper:
         endpoint_totals: dict[str, int] = {}
         first_error: BaseException | None = None
         for (modality, gender), response in zip(specs, responses, strict=True):
+            if isinstance(response, (AccessBlockedError, SourceBudgetDeferred, SourceCircuitOpen)):
+                raise response
             name = f"{modality.name} | {normalize_gender(gender)}"
             if isinstance(response, BaseException):
                 first_error = first_error or response
@@ -333,6 +336,8 @@ class OpenResultsScraper:
         warnings: list[str] = []
         first_error: Exception | None = None
         for (modality, gender), response in zip(specs, responses, strict=True):
+            if isinstance(response, (AccessBlockedError, SourceBudgetDeferred, SourceCircuitOpen)):
+                raise response
             group_name = f"{modality.name} | {normalize_gender(gender)}"
             if isinstance(response, BaseException):
                 first_error = first_error or response

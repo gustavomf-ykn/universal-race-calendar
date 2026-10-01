@@ -217,3 +217,11 @@ Novos contratos (JWT admin nas rotas administrativas):
 | GET `/v1/exports/:id` | Estado real e link assinado renovado no clique |
 
 POSTs que criam tarefas/exportações exigem `Idempotency-Key`. Cadastro independente por identidade e cancelamento são idempotentes sem criar trabalho adicional. Não enviar chave interna do Render ao navegador. Exibir `queued` como espera, `running` como processamento e `partial`/`failed` como resultado incompleto/falha; `completed` de uma etapa de catálogo não significa cobertura total. A exportação admite `kind=catalog-simple|catalog-full|results`, `layout=individual|consolidated` e exatamente um de `eventIds` ou `filter`. Paginação de histórico/listas: `page`, `limit` até 100.
+
+### Controles de fonte na branch de catálogo nacional
+
+Contrato em desenvolvimento, ainda sem publicação em homologação: `GET /v1/admin/source-controls` e `POST /v1/admin/source-controls/:source/configure|resume`. Exigem JWT admin; POSTs também exigem `Idempotency-Key` e justificativa. Parâmetros, limites, bloqueios e migrations: [NATIONAL-CATALOG.md](NATIONAL-CATALOG.md).
+
+O orçamento é compartilhado entre API e executores. `source_budget_wait` significa espera pela próxima janela, com tarefa queued e checkpoint preservado, sem consumir uma tentativa. Não apresentar como falha ou atualizar o calendário como se a coleta tivesse terminado. Hold `source_access_blocked` significa bloqueio pela fonte; hold `catalog_sync_paused` significa pausa da descoberta. Holds anteriores de pedidos protegidos continuam separados. Retomar uma fonte não repete automaticamente tarefas failed nem cancela históricos. O backend recusa retomada antecipada com 409 `source_cooldown_active`.
+
+A carga nacional e a agenda semanal permanecem sem aceite. O fallback Chromium respeita o mesmo orçamento; sua proteção foi testada com simulação de transporte, não com uma nova coleta real neste estágio.

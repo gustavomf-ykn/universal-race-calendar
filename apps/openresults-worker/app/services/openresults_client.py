@@ -19,7 +19,7 @@ from app.models import (
 from app.services.url_validation import validate_internal_url, validate_redirect_url
 
 
-RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+RETRYABLE_STATUS = {500, 502, 503, 504}
 
 
 class OpenResultsClient:
@@ -72,10 +72,6 @@ class OpenResultsClient:
                 else:
                     if response.status_code not in RETRYABLE_STATUS:
                         break
-                    if response.status_code == 429 and attempt == self.settings.request_attempts - 1:
-                        raise AccessBlockedError(
-                            "O Open Results limitou temporariamente as requisições. Tente novamente mais tarde."
-                        )
                 if attempt < self.settings.request_attempts - 1:
                     retry_after = response.headers.get("retry-after") if response is not None else None
                     try:

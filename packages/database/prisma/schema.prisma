@@ -468,6 +468,19 @@ model SourceSlot {
   source String @id
 }
 
+model SourceRequestControl {
+  source String @id
+  windowStart DateTime @default(now()) @db.Timestamptz(6)
+  requestCount Int @default(0)
+  limitPerHour Int @default(100)
+  minDelayMs Int @default(1000)
+  nextAllowedAt DateTime @default(now()) @db.Timestamptz(6)
+  blockedAt DateTime? @db.Timestamptz(6)
+  blockedUntil DateTime? @db.Timestamptz(6)
+  blockReason String?
+  updatedAt DateTime @default(now()) @db.Timestamptz(6)
+}
+
 model ResultSet {
   id         String   @id @default(uuid())
   eventId    String

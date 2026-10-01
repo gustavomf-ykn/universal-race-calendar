@@ -18,6 +18,9 @@ import {
   saveCanonicalEvent,
   saveRawSourceExtraction,
   upsertSourceByAdapterExternalId,
+  blockSourceRequests,
+  requestSources,
+  type RequestSource,
 } from "@race-calendar/database";
 import {
   canonicalRaceEventSchema,
@@ -31,6 +34,7 @@ import {
   discoverCorridasBREvents,
   discoverTicketSportsEvents,
   SourceAdapterRegistry,
+  withSourceRequestScope,
   type CorridasBRDiscoveredEvent,
   type DiscoverCorridasBREventsOptions,
   type DiscoverTicketSportsEventsOptions,
@@ -185,12 +189,14 @@ export async function runSourceCheck(
   try {
     const adapter = registry.findForUrl(source.url);
     if (!adapter) throw new Error(`No source adapter can handle URL: ${source.url}`);
-    const raw = await adapter.fetchAndExtract({
-      sourceId: source.id,
-      url: source.url,
-      sourceExternalId: source.externalId,
-      metadata: (source.metadata as Record<string, unknown> | null) ?? {},
-    });
+    const raw = await withSourceRequestScope(source.adapter ?? adapter.sourceType, () =>
+      adapter.fetchAndExtract({
+        sourceId: source.id,
+        url: source.url,
+        sourceExternalId: source.externalId,
+        metadata: (source.metadata as Record<string, unknown> | null) ?? {},
+      }),
+    );
     if (!options.force && source.lastHash === raw.contentHash && (await hasCurrentCurationForRaw(raw))) {
       await markSourceChecked(source.id, raw.contentHash, true);
       const completed = await completeExtractionJob({
@@ -297,10 +303,20 @@ export async function runSourceCheck(
       reasons,
     };
   } catch (error) {
+    if (error instanceof Error && ["SourceBudgetDeferred", "SourceCircuitOpen"].includes(error.name)) {
+      const reason = error.name === "SourceCircuitOpen" ? "source_access_blocked" : "source_budget_wait";
+      await completeExtractionJob({ jobId: job.id, status: "manual_review", errorMessage: reason, reasons: [reason] });
+      throw error;
+    }
     await markSourceFailed(source.id);
     const failedStatus = error instanceof Error && error.name === "ZodError" ? "validation_failed" : "provider_failed";
-    const blocked = error instanceof Error && (error.message === "source_access_blocked" ||
-      (error.name === "ScraperHttpError" && [401, 403, 429].includes((error as Error & { statusCode?: number }).statusCode ?? 0)));
+    const blocked =
+      error instanceof Error &&
+      (error.message === "source_access_blocked" ||
+        (error.name === "ScraperHttpError" &&
+          [401, 403, 429].includes((error as Error & { statusCode?: number }).statusCode ?? 0)));
+    if (blocked && requestSources.includes(source.adapter as RequestSource))
+      await blockSourceRequests(source.adapter as RequestSource);
     const reasons = [blocked ? "source_access_blocked" : "source_check_failed"];
     const completed = await completeExtractionJob({
       jobId: job.id,
@@ -320,12 +336,19 @@ export async function runSourceCheck(
   }
 }
 
-export async function importTicketSportsEvents(options: ImportTicketSportsEventsOptions = {}): Promise<TicketSportsImportResult> {
+export async function importTicketSportsEvents(
+  options: ImportTicketSportsEventsOptions = {},
+): Promise<TicketSportsImportResult> {
   const startedAt = new Date();
-  const quickFilter = cleanText(options.quickFilter ?? process.env.TICKETSPORTS_IMPORT_QUICK_FILTER ?? "corrida-de-rua");
+  const quickFilter = cleanText(
+    options.quickFilter ?? process.env.TICKETSPORTS_IMPORT_QUICK_FILTER ?? "corrida-de-rua",
+  );
   const quantity = positiveInt(options.quantity, Number(process.env.TICKETSPORTS_IMPORT_QUANTITY ?? 1000));
   const offset = nonNegativeInt(options.offset, Number(process.env.TICKETSPORTS_IMPORT_OFFSET ?? 0));
-  const concurrency = Math.max(1, Math.min(positiveInt(options.concurrency, Number(process.env.TICKETSPORTS_IMPORT_CONCURRENCY ?? 3)), 10));
+  const concurrency = Math.max(
+    1,
+    Math.min(positiveInt(options.concurrency, Number(process.env.TICKETSPORTS_IMPORT_CONCURRENCY ?? 3)), 10),
+  );
   const delayMs = nonNegativeInt(options.delayMs, Number(process.env.TICKETSPORTS_IMPORT_DELAY_MS ?? 300));
   const maxDurationMs =
     options.maxDurationMs == null
@@ -334,7 +357,9 @@ export async function importTicketSportsEvents(options: ImportTicketSportsEvents
   const registry = options.registry ?? new SourceAdapterRegistry();
   const discoverOptions: DiscoverTicketSportsEventsOptions = { quantity: quantity + offset, quickFilter };
   if (options.client) discoverOptions.client = options.client;
-  const allDiscovered = options.discoverEvents ? await options.discoverEvents() : await discoverTicketSportsEvents(discoverOptions);
+  const allDiscovered = options.discoverEvents
+    ? await options.discoverEvents()
+    : await discoverTicketSportsEvents(discoverOptions);
   const brazilianDiscovered = allDiscovered.filter((event) => event.country.toUpperCase() === "BR");
   const discovered = brazilianDiscovered.slice(offset, offset + quantity);
   const failures: TicketSportsImportResult["failures"] = [];
@@ -365,6 +390,7 @@ export async function importTicketSportsEvents(options: ImportTicketSportsEvents
         });
         if (delayMs) await wait(delayMs);
         const result = await runSourceCheck(source.id, registry, { force: options.force === true });
+        if (result.reasons.includes("source_access_blocked")) throw Error("source_access_blocked");
         processedCount += 1;
         if (result.status === "provider_failed" || result.status === "validation_failed") {
           failures.push({ externalId: item.externalId, error: result.reasons.join(", ") || result.status });
@@ -374,6 +400,7 @@ export async function importTicketSportsEvents(options: ImportTicketSportsEvents
         if (result.status === "success" && !result.eventId) unchangedEvents += 1;
         if (result.status === "manual_review") manualReviewEvents += 1;
       } catch (error) {
+        if (error instanceof Error && (error.message === "source_access_blocked" || ["SourceBudgetDeferred", "SourceCircuitOpen"].includes(error.name))) throw error;
         failures.push({
           externalId: item.externalId,
           error: error instanceof Error ? error.message : String(error),
@@ -384,7 +411,8 @@ export async function importTicketSportsEvents(options: ImportTicketSportsEvents
 
   await Promise.all(Array.from({ length: Math.min(concurrency, discovered.length) }, () => worker()));
   const nextOffset = offset + Math.min(cursor, discovered.length);
-  const reachedTimeLimit = maxDurationMs != null && processedCount < discovered.length && Date.now() - startedAt.getTime() >= maxDurationMs;
+  const reachedTimeLimit =
+    maxDurationMs != null && processedCount < discovered.length && Date.now() - startedAt.getTime() >= maxDurationMs;
   const result: TicketSportsImportResult = {
     jobId: `import_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
     status: reachedTimeLimit ? "time_limit_reached" : failures.length ? "partial_success" : "success",
@@ -424,11 +452,18 @@ export async function importTicketSportsEvents(options: ImportTicketSportsEvents
   return result;
 }
 
-export async function importCorridasBREvents(options: ImportCorridasBREventsOptions = {}): Promise<CorridasBRImportResult> {
+export async function importCorridasBREvents(
+  options: ImportCorridasBREventsOptions = {},
+): Promise<CorridasBRImportResult> {
   const startedAt = new Date();
-  const states = (options.states?.length
-    ? options.states
-    : (process.env.CORRIDASBR_IMPORT_STATES ?? "AC,AL,AM,AP,BA,CE,DF,ES,GO,MA,MG,MS,MT,PA,PB,PE,PI,PR,RJ,RN,RO,RR,RS,SC,SE,SP,TO").split(","))
+  const states = (
+    options.states?.length
+      ? options.states
+      : (
+          process.env.CORRIDASBR_IMPORT_STATES ??
+          "AC,AL,AM,AP,BA,CE,DF,ES,GO,MA,MG,MS,MT,PA,PB,PE,PI,PR,RJ,RN,RO,RR,RS,SC,SE,SP,TO"
+        ).split(",")
+  )
     .map((state) => cleanText(state).toUpperCase())
     .filter(Boolean);
   const quantity = positiveInt(options.quantity, Number(process.env.CORRIDASBR_IMPORT_QUANTITY ?? 5000));
@@ -445,7 +480,9 @@ export async function importCorridasBREvents(options: ImportCorridasBREventsOpti
   const registry = options.registry ?? new SourceAdapterRegistry();
   const discoverOptions: DiscoverCorridasBREventsOptions = { states, concurrency };
   if (options.client) discoverOptions.client = options.client;
-  const allDiscovered = options.discoverEvents ? await options.discoverEvents() : await discoverCorridasBREvents(discoverOptions);
+  const allDiscovered = options.discoverEvents
+    ? await options.discoverEvents()
+    : await discoverCorridasBREvents(discoverOptions);
   const today = new Date().toISOString().slice(0, 10);
   const futureDiscovered = allDiscovered.filter((event) => !event.date || event.date >= today);
   const discovered = futureDiscovered.slice(offset, offset + quantity);
@@ -477,6 +514,7 @@ export async function importCorridasBREvents(options: ImportCorridasBREventsOpti
         });
         if (delayMs) await wait(delayMs);
         const check = await runSourceCheck(source.id, registry, { force: options.force === true });
+        if (check.reasons.includes("source_access_blocked")) throw Error("source_access_blocked");
         processedCount += 1;
         if (check.status === "provider_failed" || check.status === "validation_failed") {
           failures.push({ externalId: item.externalId, error: check.reasons.join(", ") || check.status });
@@ -486,6 +524,7 @@ export async function importCorridasBREvents(options: ImportCorridasBREventsOpti
         if (check.status === "success" && !check.eventId) unchangedEvents += 1;
         if (check.status === "manual_review") manualReviewEvents += 1;
       } catch (error) {
+        if (error instanceof Error && (error.message === "source_access_blocked" || ["SourceBudgetDeferred", "SourceCircuitOpen"].includes(error.name))) throw error;
         failures.push({ externalId: item.externalId, error: error instanceof Error ? error.message : String(error) });
       }
     }
@@ -551,7 +590,8 @@ export async function createCatalogImportRun(input: CatalogImportRunInput = {}) 
     ? unique(input.sources)
     : ["ticketsports", "corridasbr"];
   const states = input.states?.map((state) => state.toUpperCase()).filter(Boolean) ?? [];
-  const from = input.from === "today" || !input.from ? new Date().toISOString().slice(0, 10) : normalizeDate(input.from);
+  const from =
+    input.from === "today" || !input.from ? new Date().toISOString().slice(0, 10) : normalizeDate(input.from);
   const to = input.to ? normalizeDate(input.to) : null;
   const defaultLimit = mode === "simulate" ? 100 : Number(process.env.CATALOG_IMPORT_QUANTITY ?? 5000);
   const maximumLimit = mode === "simulate" ? Number(process.env.IMPORT_SIMULATION_MAX_CANDIDATES ?? 200) : 10_000;
@@ -682,6 +722,7 @@ export async function processCatalogImportRun(
           checkIntervalMinutes: null,
         });
         const result = await runSourceCheck(source.id, registry, { force: Boolean(asRecord(run.options).force) });
+        if (result.reasons.includes("source_access_blocked")) throw Error("source_access_blocked");
         if (result.status === "provider_failed" || result.status === "validation_failed") {
           const error = result.reasons.join(", ") || result.status;
           failures.push({ externalId: candidate.sourceExternalId, error });
@@ -716,7 +757,12 @@ export async function processCatalogImportRun(
         if (action === "skip") unchangedEvents += 1;
         await prisma.importCandidate.update({
           where: { id: candidate.id },
-          data: { status: "processed", action, matchEventId: result.eventId ?? priorReference?.event.id ?? null, warnings: result.reasons },
+          data: {
+            status: "processed",
+            action,
+            matchEventId: result.eventId ?? priorReference?.event.id ?? null,
+            warnings: result.reasons,
+          },
         });
         continue;
       }
@@ -734,7 +780,13 @@ export async function processCatalogImportRun(
           ? await curateTicketSportsSourceExtraction(raw)
           : await curateCorridasBRSourceExtraction(raw);
       const match = await findCanonicalEventMatch(curated.normalizedEvent);
-      const action = match?.sameSource ? "update" : match?.automatic ? "link" : match?.score && match.score >= 0.8 ? "review" : "create";
+      const action = match?.sameSource
+        ? "update"
+        : match?.automatic
+          ? "link"
+          : match?.score && match.score >= 0.8
+            ? "review"
+            : "create";
       await prisma.importCandidate.update({
         where: { id: candidate.id },
         data: {
@@ -753,6 +805,7 @@ export async function processCatalogImportRun(
         },
       });
     } catch (error) {
+      if (error instanceof Error && (error.message === "source_access_blocked" || ["SourceBudgetDeferred", "SourceCircuitOpen"].includes(error.name))) throw error;
       const message = error instanceof Error ? error.message : String(error);
       failures.push({ externalId: candidate.sourceExternalId, error: message });
       await prisma.importCandidate.update({
@@ -763,7 +816,9 @@ export async function processCatalogImportRun(
   }
 
   const remaining = await prisma.importCandidate.count({ where: { importRunId: runId, status: "pending" } });
-  const processedCount = await prisma.importCandidate.count({ where: { importRunId: runId, status: { in: ["processed", "failed"] } } });
+  const processedCount = await prisma.importCandidate.count({
+    where: { importRunId: runId, status: { in: ["processed", "failed"] } },
+  });
   const failedCount = await prisma.importCandidate.count({ where: { importRunId: runId, status: "failed" } });
   await prisma.importRun.update({
     where: { id: runId },
@@ -775,10 +830,7 @@ export async function processCatalogImportRun(
       manualReviewEvents: { increment: manualReviewEvents },
       unchangedEvents: { increment: unchangedEvents },
       failedCount,
-      failures: jsonValue([
-        ...(Array.isArray(run.failures) ? run.failures : []),
-        ...failures,
-      ]),
+      failures: jsonValue([...(Array.isArray(run.failures) ? run.failures : []), ...failures]),
       finishedAt: new Date(),
     },
   });
@@ -872,7 +924,15 @@ export async function curateRawExtractionWithAI(
       confidence: result.normalizedEvent.confidence,
       isDryRun: false,
     });
-    return { ...result, schemaVersion, curationVersion, providerName: provider.name, providerModel: provider.model, curationJobId: job.id, curationJobStatus: "skipped_cached" };
+    return {
+      ...result,
+      schemaVersion,
+      curationVersion,
+      providerName: provider.name,
+      providerModel: provider.model,
+      curationJobId: job.id,
+      curationJobStatus: "skipped_cached",
+    };
   }
 
   try {
@@ -902,7 +962,15 @@ export async function curateRawExtractionWithAI(
       confidence: result.normalizedEvent.confidence,
       isDryRun: dryRun,
     });
-    return { ...result, schemaVersion, curationVersion, providerName: provider.name, providerModel: provider.model, curationJobId: job.id, curationJobStatus: status };
+    return {
+      ...result,
+      schemaVersion,
+      curationVersion,
+      providerName: provider.name,
+      providerModel: provider.model,
+      curationJobId: job.id,
+      curationJobStatus: status,
+    };
   } catch (error) {
     const status = error instanceof Error && error.name === "ZodError" ? "validation_failed" : "provider_failed";
     const job = await saveCurationJob({
@@ -923,7 +991,9 @@ export async function curateRawExtractionWithAI(
     const fallback = await curateTicketSportsSourceExtraction(raw, ["ai_curation_failed"]);
     if (isAICurationRequired()) {
       fallback.normalizedEvent.publicationStatus = "pending_review";
-      fallback.normalizedEvent.publishabilityReasons = [...new Set([...fallback.normalizedEvent.publishabilityReasons, "ai_curation_required"])];
+      fallback.normalizedEvent.publishabilityReasons = [
+        ...new Set([...fallback.normalizedEvent.publishabilityReasons, "ai_curation_required"]),
+      ];
       fallback.normalizedEvent.curationStatus = "failed";
     }
     return {
@@ -940,10 +1010,18 @@ export async function curateRawExtractionWithAI(
 export function applyRaceEventExtraction(
   raw: RawSourceExtraction,
   extraction: RaceEventExtraction,
-  options: { providerName: string; providerModel: string; curationStatus: "curated" | "skipped_cached"; currentEvent?: unknown },
+  options: {
+    providerName: string;
+    providerModel: string;
+    curationStatus: "curated" | "skipped_cached";
+    currentEvent?: unknown;
+  },
 ): CurateSourceExtractionResult & { appliedChanges: CurationDiff[] } {
   const aiParsed = raceEventExtractionSchema.parse(withCompatibleLots(extraction));
-  const parsed = raw.sourceType === "ticketsports" ? mergeRaceEventExtractionFallbacks(aiParsed, ticketSportsExtractionFromRaw(raw)) : aiParsed;
+  const parsed =
+    raw.sourceType === "ticketsports"
+      ? mergeRaceEventExtractionFallbacks(aiParsed, ticketSportsExtractionFromRaw(raw))
+      : aiParsed;
   const normalizedEvent = normalizeRaceEventExtraction(parsed, raw);
   const publishability = evaluatePublishability(normalizedEvent);
   const finalEvent = canonicalRaceEventSchema.parse({
@@ -968,7 +1046,10 @@ export function applyRaceEventExtraction(
   };
 }
 
-export async function curateTicketSportsSourceExtraction(raw: RawSourceExtraction, extraWarnings: string[] = []): Promise<CurateSourceExtractionResult> {
+export async function curateTicketSportsSourceExtraction(
+  raw: RawSourceExtraction,
+  extraWarnings: string[] = [],
+): Promise<CurateSourceExtractionResult> {
   const extraction = ticketSportsExtractionFromRaw(raw);
   if (extraWarnings.length) extraction.warnings = [...new Set([...extraction.warnings, ...extraWarnings])];
   const normalizedEvent = normalizeRaceEventExtraction(extraction, raw);
@@ -1019,7 +1100,10 @@ export async function curateCorridasBRSourceExtraction(
   };
 }
 
-export async function runAICurationForEvent(eventId: string, options: RunAICurationOptions = {}): Promise<AICurationRunResult> {
+export async function runAICurationForEvent(
+  eventId: string,
+  options: RunAICurationOptions = {},
+): Promise<AICurationRunResult> {
   const event = await prisma.event.findUnique({
     where: { id: eventId },
     include: { distances: true, prices: true, images: true },
@@ -1038,7 +1122,8 @@ export async function runAICurationForEvent(eventId: string, options: RunAICurat
   });
   if (!options.dryRun && shouldPersistCanonicalEvent(result.normalizedEvent)) {
     const saved = await saveCanonicalEvent(result.normalizedEvent, { contentHash: raw.contentHash });
-    if (result.curationJobId) await prisma.curationJob.update({ where: { id: result.curationJobId }, data: { eventId: saved.event.id } });
+    if (result.curationJobId)
+      await prisma.curationJob.update({ where: { id: result.curationJobId }, data: { eventId: saved.event.id } });
   }
   const warnings = shouldPersistCanonicalEvent(result.normalizedEvent)
     ? result.normalizedEvent.warnings
@@ -1048,7 +1133,9 @@ export async function runAICurationForEvent(eventId: string, options: RunAICurat
     curationJobId: result.curationJobId ?? null,
     provider: result.providerName ?? null,
     model: result.providerModel ?? null,
-    status: shouldPersistCanonicalEvent(result.normalizedEvent) ? (result.curationJobStatus ?? "success") : "manual_review",
+    status: shouldPersistCanonicalEvent(result.normalizedEvent)
+      ? (result.curationJobStatus ?? "success")
+      : "manual_review",
     dryRun: options.dryRun === true,
     appliedChanges: result.appliedChanges ?? [],
     warnings,
@@ -1083,7 +1170,10 @@ export async function auditCuration() {
   return getCurationSummary();
 }
 
-export function normalizeRaceEventExtraction(extraction: RaceEventExtraction, raw: RawSourceExtraction): CanonicalRaceEvent {
+export function normalizeRaceEventExtraction(
+  extraction: RaceEventExtraction,
+  raw: RawSourceExtraction,
+): CanonicalRaceEvent {
   const name = cleanText(extraction.name.value) || raw.title || "Evento sem nome";
   const date = normalizeDate(extraction.date.value);
   const city = cleanText(extraction.city.value) || null;
@@ -1178,10 +1268,21 @@ export function normalizeRaceEventExtraction(extraction: RaceEventExtraction, ra
   });
 }
 
-export function evaluatePublishability(normalizedEvent: Pick<
-  CanonicalRaceEvent,
-  "name" | "date" | "city" | "state" | "country" | "locationName" | "registrationUrl" | "officialUrl" | "confidence" | "warnings"
->): PublishabilityResult {
+export function evaluatePublishability(
+  normalizedEvent: Pick<
+    CanonicalRaceEvent,
+    | "name"
+    | "date"
+    | "city"
+    | "state"
+    | "country"
+    | "locationName"
+    | "registrationUrl"
+    | "officialUrl"
+    | "confidence"
+    | "warnings"
+  >,
+): PublishabilityResult {
   const reasons: string[] = [];
   const autoPublishMinConfidence = Number(process.env.AUTO_PUBLISH_MIN_CONFIDENCE ?? 0.85);
   const reviewMinConfidence = Number(process.env.REVIEW_MIN_CONFIDENCE ?? 0.6);
@@ -1191,12 +1292,14 @@ export function evaluatePublishability(normalizedEvent: Pick<
   if (!hasPublishableLocation(normalizedEvent)) {
     reasons.push("missing_location");
   }
-  if (!normalizedEvent.registrationUrl && !normalizedEvent.officialUrl) reasons.push("missing_registration_or_official_url");
+  if (!normalizedEvent.registrationUrl && !normalizedEvent.officialUrl)
+    reasons.push("missing_registration_or_official_url");
   if (normalizedEvent.confidence < autoPublishMinConfidence) reasons.push("low_confidence");
   if (normalizedEvent.warnings.some((warning) => criticalWarnings.has(warning))) reasons.push("critical_warning");
 
   if (!reasons.length) return { canPublish: true, publicationStatus: "published", reasons };
-  if (normalizedEvent.confidence < reviewMinConfidence) return { canPublish: false, publicationStatus: "pending_review", reasons };
+  if (normalizedEvent.confidence < reviewMinConfidence)
+    return { canPublish: false, publicationStatus: "pending_review", reasons };
   return { canPublish: false, publicationStatus: "pending_review", reasons };
 }
 
@@ -1216,11 +1319,7 @@ async function hasCurrentCurationForRaw(raw: RawSourceExtraction): Promise<boole
       : [];
   const existing = await prisma.event.findFirst({
     where: {
-      OR: [
-        ...externalIdentity,
-        { sourceId: raw.sourceId },
-        { sourceReferences: { some: { sourceId: raw.sourceId } } },
-      ],
+      OR: [...externalIdentity, { sourceId: raw.sourceId }, { sourceReferences: { some: { sourceId: raw.sourceId } } }],
     },
     select: {
       curatedAt: true,
@@ -1230,9 +1329,9 @@ async function hasCurrentCurationForRaw(raw: RawSourceExtraction): Promise<boole
   });
   return Boolean(
     existing?.curatedAt &&
-      existing.curationVersion === CURATION_PIPELINE_VERSION &&
-      existing.curationStatus &&
-      existing.curationStatus !== "not_curated",
+    existing.curationVersion === CURATION_PIPELINE_VERSION &&
+    existing.curationStatus &&
+    existing.curationStatus !== "not_curated",
   );
 }
 
@@ -1250,7 +1349,8 @@ function normalizeCurationWarnings(
 ): string[] {
   const country = location.country?.toUpperCase() ?? null;
   return unique(warnings).filter((warning) => {
-    if (warning === "missing_state" && country && country !== "BR" && (location.city || location.locationName)) return false;
+    if (warning === "missing_state" && country && country !== "BR" && (location.city || location.locationName))
+      return false;
     return true;
   });
 }
@@ -1276,17 +1376,25 @@ function normalizeCurationConfidence(
     extraction.registrationUrl?.confidence,
     extraction.officialUrl?.confidence,
   ].filter((value): value is number => typeof value === "number" && value > 0);
-  const evidenceAverage = evidenceScores.length ? evidenceScores.reduce((sum, value) => sum + value, 0) / evidenceScores.length : 0;
+  const evidenceAverage = evidenceScores.length
+    ? evidenceScores.reduce((sum, value) => sum + value, 0) / evidenceScores.length
+    : 0;
   const essentialScore =
     (context.name ? 0.18 : 0) +
     (context.date ? 0.18 : 0) +
     (context.city || context.country ? 0.18 : 0) +
     (context.registrationUrl || context.officialUrl ? 0.18 : 0);
   const warningPenalty = context.warnings.some((warning) => criticalWarnings.has(warning)) ? 0.2 : 0;
-  return Math.max(0, Math.min(0.82, Number(Math.max(evidenceAverage, essentialScore + 0.1 - warningPenalty).toFixed(2))));
+  return Math.max(
+    0,
+    Math.min(0.82, Number(Math.max(evidenceAverage, essentialScore + 0.1 - warningPenalty).toFixed(2))),
+  );
 }
 
-function mergeRaceEventExtractionFallbacks(primary: RaceEventExtraction, fallback: RaceEventExtraction): RaceEventExtraction {
+function mergeRaceEventExtractionFallbacks(
+  primary: RaceEventExtraction,
+  fallback: RaceEventExtraction,
+): RaceEventExtraction {
   const merged = raceEventExtractionSchema.parse({
     ...primary,
     description: mergeEvidence(primary.description, fallback.description),
@@ -1340,11 +1448,23 @@ function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtra
   const realDate = stringValue(record.realDate);
   const date = realDate ?? stringValue(record.date);
   const registrationUrl = stringValue(record.uri) ?? raw.url;
-  const images = unique([stringValue(record.headerImageSource), stringValue(record.logoImageSource)].filter(isStringUrl));
-  const text = cleanText([title, date, address, repairMojibake(stringValue(record.organizer)), stringValue(record.status), importantText].filter(Boolean).join(" "));
+  const images = unique(
+    [stringValue(record.headerImageSource), stringValue(record.logoImageSource)].filter(isStringUrl),
+  );
+  const text = cleanText(
+    [title, date, address, repairMojibake(stringValue(record.organizer)), stringValue(record.status), importantText]
+      .filter(Boolean)
+      .join(" "),
+  );
   const prices = pricesFromText(text, { endDate: stringValue(record.signUpDeadLine) });
   const kitPickup = kitPickupFromText(text, { date, locationName: location.locationName, address });
-  const schedule = scheduleFromText(text, { date, startTime: realDate, locationName: location.locationName, address, kitPickup });
+  const schedule = scheduleFromText(text, {
+    date,
+    startTime: realDate,
+    locationName: location.locationName,
+    address,
+    kitPickup,
+  });
   const rules = enhancedRulesFromTicketSports(record, text);
   const warnings: string[] = [];
   if (!normalizeDate(date)) warnings.push("missing_date");
@@ -1368,7 +1488,10 @@ function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtra
     latitude: numberOrNull(record.latitude),
     longitude: numberOrNull(record.longitude),
     modality: modalityFromTicketSportsText(title, text),
-    distances: distancesFromText(text).map((distance) => ({ ...distance, modality: modalityFromTicketSportsText(title, text) })),
+    distances: distancesFromText(text).map((distance) => ({
+      ...distance,
+      modality: modalityFromTicketSportsText(title, text),
+    })),
     prices,
     lots: prices,
     currentLot: prices[0] ?? null,
@@ -1440,11 +1563,17 @@ function corridasBRExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtract
     state: evidence(state, state ? 0.98 : 0),
     country: evidence("BR", 1),
     locationName: evidence(locationName, locationName ? 0.9 : 0),
-    address: evidence(nestedAddress(jsonLd.location) ?? locationName, jsonAddress.streetAddress ? 0.85 : locationName ? 0.72 : 0),
+    address: evidence(
+      nestedAddress(jsonLd.location) ?? locationName,
+      jsonAddress.streetAddress ? 0.85 : locationName ? 0.72 : 0,
+    ),
     latitude: numberOrNull(asRecord(jsonLocation.geo).latitude),
     longitude: numberOrNull(asRecord(jsonLocation.geo).longitude),
     modality: modalityFromTicketSportsText(name, `${name} ${distanceText} ${description}`),
-    distances: distances.map((distance) => ({ ...distance, modality: modalityFromTicketSportsText(name, `${name} ${distanceText} ${description}`) })),
+    distances: distances.map((distance) => ({
+      ...distance,
+      modality: modalityFromTicketSportsText(name, `${name} ${distanceText} ${description}`),
+    })),
     prices,
     lots: prices,
     currentLot: prices.find((price) => price.isCurrent) ?? null,
@@ -1479,7 +1608,6 @@ function evidence(value: string | null | undefined, confidence: number) {
     sourceText: cleanText(repairMojibake(value)) || null,
   };
 }
-
 
 function parseTicketSportsLocation(address: string): {
   city: string | null;
@@ -1652,8 +1780,14 @@ function pricesFromText(text: string, options: { endDate?: string | null } = {})
     const context = cleanText(text.slice(Math.max(0, index - 120), Math.min(text.length, index + 120)));
     const normalizedContext = stripDiacritics(context.toLowerCase());
     if (!/(inscric|lote|a partir|valor|vagas)/.test(normalizedContext)) continue;
-    if (/(retirada de kit|entrega de kit|domicilio|taxa)/.test(normalizedContext) && !/(inscric|lote)/.test(normalizedContext)) continue;
-    const lotName = context.match(/(?:\b\d{1,2}[ºo]?\s*lote|lote\s*\d{1,2})/i)?.[0] ?? (prices.length === 0 ? "Inscricao" : `Lote ${prices.length + 1}`);
+    if (
+      /(retirada de kit|entrega de kit|domicilio|taxa)/.test(normalizedContext) &&
+      !/(inscric|lote)/.test(normalizedContext)
+    )
+      continue;
+    const lotName =
+      context.match(/(?:\b\d{1,2}[ºo]?\s*lote|lote\s*\d{1,2})/i)?.[0] ??
+      (prices.length === 0 ? "Inscricao" : `Lote ${prices.length + 1}`);
     if (prices.some((price) => price.price === normalizePrice(rawPrice))) continue;
     prices.push({
       name: cleanText(lotName),
@@ -1672,17 +1806,24 @@ function pricesFromText(text: string, options: { endDate?: string | null } = {})
 
 function kitsFromTicketSportsText(text: string): RaceEventExtraction["kits"] {
   const section =
-    textSection(text, /\bO QUE TE ESPERA\b/i, [/\bMODALIDADES?\b/i, /\bDIFERENCIAIS\b/i, /\bRETIRADA DE KIT\b/i], 900) ??
+    textSection(
+      text,
+      /\bO QUE TE ESPERA\b/i,
+      [/\bMODALIDADES?\b/i, /\bDIFERENCIAIS\b/i, /\bRETIRADA DE KIT\b/i],
+      900,
+    ) ??
     textSection(text, /\bKIT\b/i, [/\bRETIRADA\b/i, /\bREGULAMENTO\b/i, /\bINFORMA/i], 700) ??
     text;
   const normalized = stripDiacritics(section.toLowerCase());
-  const items = unique([
-    normalized.includes("medalha") ? "Medalha para concluintes" : null,
-    normalized.includes("camiseta") ? "Camiseta" : null,
-    normalized.includes("numero de peito") ? "Numero de peito" : null,
-    normalized.includes("chip") ? "Chip de cronometragem" : null,
-    normalized.includes("cerveja") ? "Cerveja ao final da prova" : null,
-  ].filter((item): item is string => Boolean(item)));
+  const items = unique(
+    [
+      normalized.includes("medalha") ? "Medalha para concluintes" : null,
+      normalized.includes("camiseta") ? "Camiseta" : null,
+      normalized.includes("numero de peito") ? "Numero de peito" : null,
+      normalized.includes("chip") ? "Chip de cronometragem" : null,
+      normalized.includes("cerveja") ? "Cerveja ao final da prova" : null,
+    ].filter((item): item is string => Boolean(item)),
+  );
   if (!items.length) return [];
   return [
     {
@@ -1729,7 +1870,9 @@ function scheduleFromText(
 ): RaceEventExtraction["schedule"] {
   const schedule: RaceEventExtraction["schedule"] = [];
   const eventDate = normalizeDate(event.date);
-  const startTime = normalizeTime(event.startTime) ?? normalizeTime(text.match(/largada(?:\s+a partir)?\s+d(?:as|e)\s+(\d{1,2}h(?:\d{2})?)/i)?.[1]);
+  const startTime =
+    normalizeTime(event.startTime) ??
+    normalizeTime(text.match(/largada(?:\s+a partir)?\s+d(?:as|e)\s+(\d{1,2}h(?:\d{2})?)/i)?.[1]);
   if (eventDate || startTime) {
     schedule.push({
       date: eventDate,
@@ -1774,7 +1917,11 @@ function rulesFromTicketSports(record: Record<string, unknown>, text: string): R
 function enhancedRulesFromTicketSports(record: Record<string, unknown>, text: string): RaceEventExtraction["rules"] {
   const rules = rulesFromTicketSports(record, text);
   const normalizedText = stripDiacritics(text.toLowerCase());
-  const addRule = (category: RaceEventExtraction["rules"][number]["category"], value: string | null | undefined, confidence: number) => {
+  const addRule = (
+    category: RaceEventExtraction["rules"][number]["category"],
+    value: string | null | undefined,
+    confidence: number,
+  ) => {
     const cleaned = cleanText(value);
     if (!cleaned) return;
     if (rules.some((rule) => rule.category === category && rule.text === cleaned)) return;
@@ -1799,7 +1946,9 @@ function linksFromTicketSportsRecord(record: Record<string, unknown>): string[] 
   const links = [
     stringValue(record.uri),
     stringValue(record.regulationDocument),
-    ...asRecordArray(record.eventContents).flatMap((content) => extractLinksFromHtml(stringValue(content.description) ?? "")),
+    ...asRecordArray(record.eventContents).flatMap((content) =>
+      extractLinksFromHtml(stringValue(content.description) ?? ""),
+    ),
   ];
   return unique(links.filter(isStringUrl));
 }
@@ -1855,11 +2004,13 @@ function nestedAddress(value: unknown): string | null {
   const location = asRecord(value);
   const address = asRecord(location.address);
   if (typeof location.address === "string") return location.address;
-  return cleanText(
-    [address.streetAddress, address.addressLocality, address.addressRegion, address.postalCode]
-      .filter((part): part is string => typeof part === "string")
-      .join(", "),
-  ) || null;
+  return (
+    cleanText(
+      [address.streetAddress, address.addressLocality, address.addressRegion, address.postalCode]
+        .filter((part): part is string => typeof part === "string")
+        .join(", "),
+    ) || null
+  );
 }
 
 function looksLikeRegistrationUrl(value: string | null): boolean {
@@ -1876,7 +2027,11 @@ function looksLikeRegistrationUrl(value: string | null): boolean {
 }
 
 function pricesFromJsonLdOffers(value: unknown): RaceEventExtraction["prices"] {
-  const offers = Array.isArray(value) ? value.map(asRecord) : Object.keys(asRecord(value)).length ? [asRecord(value)] : [];
+  const offers = Array.isArray(value)
+    ? value.map(asRecord)
+    : Object.keys(asRecord(value)).length
+      ? [asRecord(value)]
+      : [];
   return offers.flatMap((offer) => {
     const rawPrice = offer.price ?? offer.lowPrice;
     const price = normalizePrice(typeof rawPrice === "string" || typeof rawPrice === "number" ? rawPrice : null);
@@ -1893,25 +2048,29 @@ function pricesFromJsonLdOffers(value: unknown): RaceEventExtraction["prices"] {
     const sourceText = cleanText(
       `Oferta de inscrição: ${name}; valor ${currency} ${price}; ${stringValue(offer.availability) ?? "disponibilidade não informada"}`,
     );
-    return [{
-      name,
-      price,
-      currency,
-      startDate: normalizeDate(stringValue(offer.validFrom)),
-      endDate: normalizeDate(stringValue(offer.priceValidUntil) ?? stringValue(offer.validThrough)),
-      status,
-      isCurrent: status === "open",
-      sourceText,
-      confidence: 0.84,
-    }];
+    return [
+      {
+        name,
+        price,
+        currency,
+        startDate: normalizeDate(stringValue(offer.validFrom)),
+        endDate: normalizeDate(stringValue(offer.priceValidUntil) ?? stringValue(offer.validThrough)),
+        status,
+        isCurrent: status === "open",
+        sourceText,
+        confidence: 0.84,
+      },
+    ];
   });
 }
 
 function registrationUrlFromJsonLdOffers(value: unknown): string | null {
-  const offers = Array.isArray(value) ? value.map(asRecord) : Object.keys(asRecord(value)).length ? [asRecord(value)] : [];
-  return offers
-    .map((offer) => stringValue(offer.url))
-    .find((url): url is string => isStringUrl(url)) ?? null;
+  const offers = Array.isArray(value)
+    ? value.map(asRecord)
+    : Object.keys(asRecord(value)).length
+      ? [asRecord(value)]
+      : [];
+  return offers.map((offer) => stringValue(offer.url)).find((url): url is string => isStringUrl(url)) ?? null;
 }
 
 function numberOrNull(value: unknown): number | null {
@@ -1955,7 +2114,9 @@ function withCompatibleLots(extraction: RaceEventExtraction): RaceEventExtractio
   const parsed = raceEventExtractionSchema.parse(extraction);
   const merged = new Map<string, RaceEventExtraction["prices"][number]>();
   for (const price of [...parsed.prices, ...parsed.lots, ...(parsed.currentLot ? [parsed.currentLot] : [])]) {
-    const key = [price.name ?? "", price.price ?? "", price.currency, price.startDate ?? "", price.endDate ?? ""].join("|");
+    const key = [price.name ?? "", price.price ?? "", price.currency, price.startDate ?? "", price.endDate ?? ""].join(
+      "|",
+    );
     const existing = merged.get(key);
     merged.set(key, existing ? { ...existing, isCurrent: existing.isCurrent || price.isCurrent } : price);
   }
@@ -2013,7 +2174,9 @@ function serializeComparable(value: unknown): unknown {
   return value ?? null;
 }
 
-function rawSourceExtractionFromRecord(record: NonNullable<Awaited<ReturnType<typeof getLatestRawExtractionForEvent>>>): RawSourceExtraction {
+function rawSourceExtractionFromRecord(
+  record: NonNullable<Awaited<ReturnType<typeof getLatestRawExtractionForEvent>>>,
+): RawSourceExtraction {
   return {
     sourceType: record.sourceType,
     sourceId: record.sourceId,
@@ -2023,7 +2186,9 @@ function rawSourceExtractionFromRecord(record: NonNullable<Awaited<ReturnType<ty
     importantHtml: record.importantHtml,
     importantText: record.importantText,
     rawSourceData: asRecord(record.rawSourceData),
-    extractedLinks: Array.isArray(record.extractedLinks) ? record.extractedLinks.filter((value): value is string => typeof value === "string") : [],
+    extractedLinks: Array.isArray(record.extractedLinks)
+      ? record.extractedLinks.filter((value): value is string => typeof value === "string")
+      : [],
     fetchedAt: record.fetchedAt.toISOString(),
     contentHash: record.contentHash,
     adapter: record.adapter,
@@ -2053,7 +2218,8 @@ function catalogDisplayPreview(event: CanonicalRaceEvent) {
       price.price <= 1000 &&
       price.confidence >= 0.65 &&
       /(inscric|lote|valor|preco|a partir|vagas|participacao)/i.test(evidence) &&
-      (!/(retirada de kit|entrega de kit|domicilio|frete|estacionamento|doacao|multa)/i.test(evidence) || /(inscric|lote)/i.test(evidence))
+      (!/(retirada de kit|entrega de kit|domicilio|frete|estacionamento|doacao|multa)/i.test(evidence) ||
+        /(inscric|lote)/i.test(evidence))
     );
   });
   const currentLot = prices.find((price) => price.isCurrent) ?? prices[0] ?? null;
@@ -2074,7 +2240,12 @@ function catalogDisplayPreview(event: CanonicalRaceEvent) {
     primaryAction: primaryUrl
       ? {
           type: primaryType,
-          label: primaryType === "registration" ? "Inscrever-se" : primaryType === "official" ? "Ver informacoes" : "Ver fonte",
+          label:
+            primaryType === "registration"
+              ? "Inscrever-se"
+              : primaryType === "official"
+                ? "Ver informacoes"
+                : "Ver fonte",
           url: primaryUrl,
         }
       : null,

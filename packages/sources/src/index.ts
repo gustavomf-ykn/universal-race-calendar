@@ -1,7 +1,19 @@
 import * as cheerio from "cheerio";
-export { discoverTicketSportsCatalogPage, ticketSportsCatalogUrl, parseTicketSportsCatalogPage, nextTicketSportsPrefix,
-  discoverCorridasBRCatalogPage, parseCorridasBRCatalogPage, corridasBRCatalogUrl } from "./catalog-discovery.js";
-export type { TicketSportsCatalogPage, TicketSportsCatalogOptions, CorridasBRCatalogPage } from "./catalog-discovery.js";
+export { setSourceRequestGuard, enterSourceRequestScope, withSourceRequestScope } from "@race-calendar/scraper";
+export {
+  discoverTicketSportsCatalogPage,
+  ticketSportsCatalogUrl,
+  parseTicketSportsCatalogPage,
+  nextTicketSportsPrefix,
+  discoverCorridasBRCatalogPage,
+  parseCorridasBRCatalogPage,
+  corridasBRCatalogUrl,
+} from "./catalog-discovery.js";
+export type {
+  TicketSportsCatalogPage,
+  TicketSportsCatalogOptions,
+  CorridasBRCatalogPage,
+} from "./catalog-discovery.js";
 import { rawSourceExtractionSchema, type RawSourceExtraction } from "@race-calendar/schemas";
 import {
   contentHashFromParts,
@@ -158,7 +170,8 @@ export class CorridasBRAdapter implements SourceAdapter {
       throw new Error("source_access_blocked");
     }
     const parsed = parseCorridasBRDetail(html, input.url);
-    const shouldEnrich = input.metadata?.enrichOfficialPages !== false && process.env.OFFICIAL_PAGE_ENRICHMENT_ENABLED !== "false";
+    const shouldEnrich =
+      input.metadata?.enrichOfficialPages !== false && process.env.OFFICIAL_PAGE_ENRICHMENT_ENABLED !== "false";
     const officialPage =
       shouldEnrich && parsed.officialUrl && isAllowedOfficialTarget(parsed.officialUrl)
         ? await fetchOfficialEventPage(parsed.officialUrl, this.client).catch(() => null)
@@ -235,7 +248,9 @@ export class MockSourceAdapter implements SourceAdapter {
       input.metadata?.importantText ??
         "Corrida Mock Florianopolis. Data 16/08/2026. Florianopolis, SC, Brasil. Distancias 5 km e 10 km. Inscricoes em https://example.test/inscricao.",
     );
-    const importantHtml = sanitizeImportantHtml(`<main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(importantText)}</p></main>`);
+    const importantHtml = sanitizeImportantHtml(
+      `<main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(importantText)}</p></main>`,
+    );
     return rawSourceExtractionSchema.parse({
       sourceType: this.sourceType,
       sourceId: input.sourceId,
@@ -276,11 +291,17 @@ export class TicketSportsAdapter implements SourceAdapter {
       ? await this.client.getJson(sourceUrl, { headers: ticketSportsHeaders(), delayMs: 300 })
       : await this.fetchGenericPagePayload(input.url);
     const record = asRecord(payload);
-    const title = cleanText(stringValue(record.title) ?? stringValue(record.name) ?? stringValue(record.eventName)) || null;
+    const title =
+      cleanText(stringValue(record.title) ?? stringValue(record.name) ?? stringValue(record.eventName)) || null;
     const sections = sectionsFromTicketSports(record.eventContents);
-    const htmlFromSections = sections.map((section) => section.html).filter(Boolean).join("\n");
+    const htmlFromSections = sections
+      .map((section) => section.html)
+      .filter(Boolean)
+      .join("\n");
     const fallbackHtml = typeof record.description === "string" ? record.description : "";
-    const importantHtml = sanitizeImportantHtml(htmlFromSections || fallbackHtml || `<h1>${escapeHtml(title ?? "TicketSports")}</h1>`);
+    const importantHtml = sanitizeImportantHtml(
+      htmlFromSections || fallbackHtml || `<h1>${escapeHtml(title ?? "TicketSports")}</h1>`,
+    );
     const importantText = cleanText(
       [
         title,
@@ -330,7 +351,9 @@ export async function discoverTicketSportsEvents(
   options: DiscoverTicketSportsEventsOptions = {},
 ): Promise<TicketSportsDiscoveredEvent[]> {
   const quantity = positiveInt(options.quantity, Number(process.env.TICKETSPORTS_IMPORT_QUANTITY ?? 1000));
-  const quickFilter = cleanText(options.quickFilter ?? process.env.TICKETSPORTS_IMPORT_QUICK_FILTER ?? "corrida-de-rua");
+  const quickFilter = cleanText(
+    options.quickFilter ?? process.env.TICKETSPORTS_IMPORT_QUICK_FILTER ?? "corrida-de-rua",
+  );
   const client = options.client ?? new ScraperHttpClient();
   const payload = await client.getJson(ticketSportsListUrl({ quantity, quickFilter }), {
     headers: ticketSportsHeaders(),
@@ -466,19 +489,19 @@ export function parseCorridasBRDetail(html: string, url: string) {
     valueCell.find("script,button").remove();
     if (label === "cidade") {
       // These links navigate to other listings; they are not part of the city name.
-      valueCell.find("a").filter((_, link) => /Corridas?\s+(?:nesta Cidade|nesta Regi[aã]o)/i.test($(link).text())).remove();
+      valueCell
+        .find("a")
+        .filter((_, link) => /Corridas?\s+(?:nesta Cidade|nesta Regi[aã]o)/i.test($(link).text()))
+        .remove();
     }
     const text = cleanText(valueCell.text());
-    const value = label === "cidade"
-      ? text.replace(/\s*\(Corridas?\s+(?:nesta Cidade|nesta Regi[aã]o)\)/gi, "").trim()
-      : text;
+    const value =
+      label === "cidade" ? text.replace(/\s*\(Corridas?\s+(?:nesta Cidade|nesta Regi[aã]o)\)/gi, "").trim() : text;
     if (label && value && !fields.has(label)) fields.set(label, value);
   });
   const state = stateFromCorridasBRUrl(url);
   const name = cleanText($(".tipo7 strong").first().text()) || cleanText($("title").first().text()) || null;
-  const officialRedirect = html.match(
-    /function\s+paraonde\s*\(\)\s*\{\s*window\.open\(['"]([^'"]+)['"]\)/i,
-  )?.[1];
+  const officialRedirect = html.match(/function\s+paraonde\s*\(\)\s*\{\s*window\.open\(['"]([^'"]+)['"]\)/i)?.[1];
   const officialUrl = officialRedirect ? officialTargetFromCorridasBRRedirect(officialRedirect) : null;
   return {
     name,
@@ -617,7 +640,11 @@ function sectionsFromTicketSports(value: unknown): Array<{ title: string; html: 
   });
 }
 
-export function parseTicketSportsLocation(value: string | null): { city: string | null; state: string | null; country: string | null } {
+export function parseTicketSportsLocation(value: string | null): {
+  city: string | null;
+  state: string | null;
+  country: string | null;
+} {
   const text = cleanText(value);
   if (!text) return { city: null, state: null, country: "BR" };
   const state = text.match(/,\s*([A-Z]{2})(?:,|\b)/)?.[1]?.toUpperCase() ?? null;
@@ -700,14 +727,18 @@ function positiveInt(value: unknown, fallback: number): number {
 }
 
 function uniqueUrls(urls: string[]): string[] {
-  return [...new Set(urls.filter((url) => {
-    try {
-      new URL(url);
-      return true;
-    } catch {
-      return false;
-    }
-  }))];
+  return [
+    ...new Set(
+      urls.filter((url) => {
+        try {
+          new URL(url);
+          return true;
+        } catch {
+          return false;
+        }
+      }),
+    ),
+  ];
 }
 
 function corridasBRHeaders(): Record<string, string> {

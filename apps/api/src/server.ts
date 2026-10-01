@@ -1,6 +1,9 @@
 import { buildApp } from "./app.js";
 
 import { prisma } from "@race-calendar/database";
+import { requestSource, waitForSourceRequest, observeSourceResponse } from "@race-calendar/database";
+import { setSourceRequestGuard } from "@race-calendar/sources";
+setSourceRequestGuard((url, scope) => waitForSourceRequest(requestSource(url, scope)), observeSourceResponse);
 
 const port = Number(process.env.PORT ?? 3000);
 const app = await buildApp();
