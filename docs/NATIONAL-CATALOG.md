@@ -66,4 +66,6 @@ Antes da varredura nacional real faltam:
 4. Agenda semanal durável/fuso/ocorrências perdidas, prioridade manual e resultados recentes como etapa separada.
 5. Testes reais progressivos nas três fontes, conciliação de IDs/histórico e aceite pelo navegador após publicação.
 
+Inventário inicial de capacidade implementado e executado em staging somente leitura: [CATALOG-CAPACITY.md](CATALOG-CAPACITY.md). Resultados específicos permanecem em relatório local, fora do repositório público. Medições não confirmam cobertura/país/modalidade nem quota da organização. A ferramenta recusa produção e dados de Storage sem visibilidade completa; medição ausente não vira zero. Controle automático de pausa por capacidade continua pendente.
+
 Descoberta encerrada não significa metadados validados, publicação concluída ou resultados coletados. A meta de 100% permanece não comprovada.
