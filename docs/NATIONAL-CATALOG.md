@@ -51,6 +51,8 @@ Consulta limitada CorridasBR/AC em 01/10: dez candidatos, nenhuma próxima pági
 
 Regressões em PostgreSQL isolado cobrem expansão TicketSports, passagem nacional sem UF, deduplicação/navegação CorridasBR, recuperação, concorrência, holds, pausa/retomada, resposta perdida e proteção dos metadados. Não são carga nacional real.
 
+CI do controle de requisições encontrou módulos de suporte ausentes na imagem Python (`source_requests` e o import adiado `source_observation`). O Dockerfile inclui esses módulos e verifica os imports de inicialização, inspeção e exportação durante o build, sem acessar serviços. A execução dos três processos e o smoke de Chromium continuam como verificações separadas do CI.
+
 Antes da varredura nacional real faltam:
 
 1. Controle de capacidade de banco/Storage e checkpoint de páginas de resultados para extrações que excedam o orçamento de uma janela.
