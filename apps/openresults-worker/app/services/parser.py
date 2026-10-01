@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 from bs4 import BeautifulSoup, Tag
+from app.services.country import country_from_card
 
 from app.models import (
     EventDiscovery,
@@ -148,6 +149,7 @@ def _extract_metadata(soup: BeautifulSoup, canonical_url: str) -> EventMetadata:
         name=name,
         event_date=_parse_event_date(card),
         city=city,
+        country=country_from_card(card),
         state=state,
         source_url=canonical_url,
         slug=slug,

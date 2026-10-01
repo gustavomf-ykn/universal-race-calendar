@@ -1,5 +1,6 @@
 """Resolve an existing URL identity without guessing associations from names."""
 from psycopg.types.json import Jsonb
+from psycopg import sql
 from source_observation import edition_observation
 
 def update_edition(task, metadata, connection, fenced):
@@ -28,13 +29,32 @@ def update_edition(task, metadata, connection, fenced):
             conn.execute('UPDATE "EventSourceReference" SET "sourceExternalId"=%s,"updatedAt"=now() WHERE id=%s', (new, ref['id']))
             conn.execute('''UPDATE "Event" SET "sourceExternalId"=%s WHERE id=%s
                 AND "sourceType"='openresults' ''', (new, event_id))
-        # Existing canonical fields win; independent editions gain missing metadata.
+        # Only the canonical primary source can refresh populated values.
+        # Supplemental references fill gaps and retain their own observation.
+        audits = conn.execute('''SELECT details FROM "AdminAudit" WHERE "eventId"=%s AND action='review_event' ''', (event_id,)).fetchall()
+        protected = {field for audit in audits for field in (audit['details'].get('changes') or {})}
+        incoming = {
+            'name': metadata.name, 'date': metadata.event_date, 'city': metadata.city, 'state': metadata.state,
+            'country': metadata.country, 'description': metadata.description,
+            'mainImageUrl': metadata.image_url, 'locationName': metadata.location_name, 'address': metadata.address,
+        }
+        # A deliberately cleared administrative field must stay null as well.
+        for field in protected:
+            if field in incoming:
+                incoming[field] = None
         conn.execute('''UPDATE "EventSourceReference" SET observation=%s,"lastValidatedAt"=now(),
             "lastSeenAt"=now(),"updatedAt"=now() WHERE id=%s''', (Jsonb(edition_observation(metadata)), ref['id']))
-        conn.execute('''UPDATE "Event" SET date=coalesce(date,%s),city=coalesce(city,nullif(%s,'')),
-            state=coalesce(state,nullif(%s,'')),description=coalesce(description,nullif(%s,'')),
-            "mainImageUrl"=coalesce("mainImageUrl",nullif(%s,'')),"locationName"=coalesce("locationName",nullif(%s,'')),
-            address=coalesce(address,nullif(%s,'')),"updatedAt"=now() WHERE id=%s''',
-            (metadata.event_date, metadata.city, metadata.state, metadata.description,
-             metadata.image_url, metadata.location_name, metadata.address, event_id))
+        primary = event['sourceType'] == 'openresults' and event['sourceId'] == ref['sourceId']
+        assignments, values = [], []
+        for field, value in incoming.items():
+            if value is None or value == '':
+                continue
+            column = sql.Identifier(field)
+            assignments.append(sql.SQL('{}=%s').format(column) if primary else
+                               sql.SQL('{}=coalesce({},%s)').format(column, column))
+            values.append(value)
+        if assignments:
+            assignments.append(sql.SQL('"updatedAt"=now()'))
+            statement = sql.SQL('UPDATE "Event" SET {} WHERE id=%s').format(sql.SQL(',').join(assignments))
+            conn.execute(statement, (*values, event_id))
         task['payload']['externalId'] = new

@@ -11,8 +11,16 @@ export function publicCatalogSync(sync: CatalogSync, latestTask: CollectionTask 
         !["completed", "limited"].includes(String(r.status)) ||
         typeof r.reason !== "string" || !/^[a-z_]{1,80}$/.test(r.reason) ||
         ![r.requested, r.rawCount, r.unique].every(n => Number.isSafeInteger(n) && Number(n) >= 0)) return [];
+    const details: Record<string, number | null | string> = {};
+    if (r.scope === "source_catalog") {
+      details.scope = "source_catalog";
+      for (const key of ["duplicates", "outOfScope", "unknownCountry", "advertisedTotal"]) {
+        if (Number.isSafeInteger(r[key]) && Number(r[key]) >= 0) details[key] = Number(r[key]);
+        else if (key === "advertisedTotal" && r[key] === null) details[key] = null;
+      }
+    }
     return [{ state: r.state, status: r.status, reason: r.reason,
-      requested: r.requested, rawCount: r.rawCount, unique: r.unique }];
+      requested: r.requested, rawCount: r.rawCount, unique: r.unique, ...details }];
   }) : [];
   const options = sync.options as { autoContinue?: boolean; pauseRequested?: boolean; states?: string[] };
   return {

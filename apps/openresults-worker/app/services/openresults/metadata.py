@@ -15,6 +15,7 @@ from app.services.safe_network import bounded_get
 from app.services.openresults_client import OpenResultsClient
 from app.services.parser import clean_text, parse_event_metadata
 from app.services.url_validation import validate_event_url
+from app.services.country import normalize_country
 
 
 FORBIDDEN_RAW_KEYS = {
@@ -129,7 +130,7 @@ def apply_related_metadata(metadata: EventMetadata, raw: dict[str, Any]) -> None
     metadata.address = clean_text(address.get("streetAddress"))
     metadata.city = clean_text(address.get("addressLocality")) or metadata.city
     metadata.state = clean_text(address.get("addressRegion")) or metadata.state
-    metadata.country = clean_text(address.get("addressCountry")) or metadata.country
+    metadata.country = normalize_country(address.get("addressCountry")) or metadata.country
     geo = location.get("geo") if isinstance(location.get("geo"), dict) else {}
     try:
         metadata.latitude = float(geo.get("latitude")) if geo.get("latitude") is not None else None

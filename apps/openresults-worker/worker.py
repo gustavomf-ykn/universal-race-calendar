@@ -18,7 +18,7 @@ from psycopg.types.json import Jsonb
 from openpyxl import Workbook
 
 from app.config import Settings
-from app.models import AccessBlockedError
+from app.models import AccessBlockedError, StructureChangedError
 from app.services.openresults.metadata import EventMetadataService
 from app.services.openresults.catalog import EventCatalog
 from app.services.scraper import OpenResultsScraper
@@ -248,7 +248,9 @@ async def execute(task):
             if failed or catalog.warnings or len(catalog.events)>int(payload.get('limit',25)):
                 await asyncio.to_thread(query,'SELECT finish_task(%s,%s,\'partial\',%s,%s)',(task['id'],task['leaseToken'],Jsonb(progress),'discovery_partial'))
         elif task['kind']=='inspect':
-            metadata,_=await EventMetadataService(settings).fetch(task['payload']['url'])
+            service=EventMetadataService(settings)
+            metadata,_=(await service.fetch(task['payload']['url'],enrich_roadrunners=True)
+                if task['payload'].get('syncId') else await service.fetch(task['payload']['url']))
             from edition_metadata import update_edition
             await asyncio.to_thread(update_edition,task,metadata,connection,fenced)
             await asyncio.to_thread(store_match,task,metadata)
@@ -277,10 +279,12 @@ async def execute(task):
             return
         if isinstance(exc, AccessBlockedError):
             await asyncio.to_thread(query,'SELECT block_source_requests(%s,NULL)',('openresults',))
+        if isinstance(exc, (AccessBlockedError, StructureChangedError)):
             with connection() as conn:
                 conn.execute('UPDATE "CollectionTask" SET "maxAttempts"=attempt WHERE id=%s AND "leaseToken"=%s',(task['id'],task['leaseToken']))
         code=('source_access_blocked' if isinstance(exc, AccessBlockedError) else
-              str(exc) if isinstance(exc,ValueError) and str(exc) in {'incomplete_extraction','catalog_pagination_not_advancing','catalog_end_unconfirmed','selected_edition_without_results','export_too_large_refine_selection','export_expired','source_identity_already_associated','edition_date_mismatch'} else 'collection_failed')
+              'source_structure_changed' if isinstance(exc, StructureChangedError) else
+              str(exc) if isinstance(exc,ValueError) and str(exc) in {'incomplete_extraction','catalog_checkpoint_incompatible','idempotency_conflict','catalog_pagination_not_advancing','catalog_end_unconfirmed','selected_edition_without_results','export_too_large_refine_selection','export_expired','source_identity_already_associated','edition_date_mismatch'} else 'collection_failed')
         outcome='partial' if code=='incomplete_extraction' else 'failed'
         await asyncio.to_thread(query,'SELECT finish_task(%s,%s,%s,%s,%s)',(task['id'],task['leaseToken'],outcome,Jsonb(progress),code))
     finally:

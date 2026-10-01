@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import hashlib
+import json
 from datetime import date, datetime, timezone
 from inspect import isawaitable
 from typing import Any, Callable
@@ -13,6 +15,7 @@ from app.models import CatalogDiscoveryResult, EventSummary, StructureChangedErr
 from app.services.openresults_client import OpenResultsClient, payload_value
 from app.services.parser import MONTHS_PT, clean_text, normalized_key
 from app.services.url_validation import validate_event_url
+from app.services.country import country_from_card
 
 
 CatalogProgress = Callable[[str, int, dict[str, int]], Any]
@@ -73,7 +76,7 @@ def parse_catalog_html(html: str, base_url: str = "https://openresults.run/") ->
         title = card.select_one(".or-event-card-title, .event-title, h2, h3, h4") if isinstance(card, Tag) else None
         name = clean_text(title.get_text(" ", strip=True) if title else link.get_text(" ", strip=True))
         if not name:
-            continue
+            raise StructureChangedError('O catálogo contém uma referência de evento sem identificação.')
         text = clean_text(card.get_text(" ", strip=True))
         location_node = card.select_one(".or-event-card-meta span")
         location_text = clean_text(location_node.get_text(" ", strip=True)) if location_node else text
@@ -102,6 +105,7 @@ def parse_catalog_html(html: str, base_url: str = "https://openresults.run/") ->
                 event_date=_event_date(card),
                 city=city,
                 state=state,
+                country=country_from_card(card),
                 event_url=event_url,
                 event_slug=slug,
                 expected_total=int(total_match.group(1).replace(".", "")) if total_match else None,
@@ -117,13 +121,31 @@ def parse_catalog_payload(payload: dict[str, Any] | str) -> tuple[list[EventSumm
     if isinstance(payload, str):
         total_match = re.search(r"totalEventos\s*=\s*(\d+)", payload)
         return parse_catalog_html(payload), int(total_match.group(1)) if total_match else None, None
-    html = payload_value(payload, "html", "") or payload_value(payload, "eventos", "") or ""
+    if not isinstance(payload, dict):
+        raise StructureChangedError('O catálogo retornou uma estrutura inesperada.')
+    html = payload_value(payload, 'html')
+    if html is None:
+        html = payload_value(payload, 'eventos')
+    if not isinstance(html, str):
+        raise StructureChangedError('O catálogo não contém o HTML esperado.')
     total = payload_value(payload, "totalEventos")
     if total is None:
         total = payload_value(payload, "recordsTotal")
-    total_value = int(float(total)) if total is not None else None
+    # Never truncate a fractional total or interpret "false" as true.
+    if total is not None and (isinstance(total, bool) or not re.fullmatch(r'\d+', str(total).strip())):
+        raise StructureChangedError('O total do catálogo é inválido.')
+    total_value = int(str(total).strip()) if total is not None else None
     has_more = payload_value(payload, "hasMore")
-    return parse_catalog_html(str(html)), total_value, bool(has_more) if has_more is not None else None
+    if isinstance(has_more, str):
+        if has_more.strip().lower() not in {'true', 'false', '0', '1'}:
+            raise StructureChangedError('O indicador de paginação é inválido.')
+        has_more = has_more.strip().lower() in {'true', '1'}
+    elif has_more is not None and not isinstance(has_more, bool):
+        if type(has_more) is int and has_more in (0, 1):
+            has_more = bool(has_more)
+        else:
+            raise StructureChangedError('O indicador de paginação é inválido.')
+    return parse_catalog_html(html), total_value, has_more
 
 
 class EventCatalog:
@@ -147,7 +169,9 @@ class EventCatalog:
         events: list[EventSummary] = []
         warnings: list[str] = []
         advertised_total: int | None = None
-        previous_oldest: date | None = None
+        page_hashes: set[str] = set()
+        observed_urls: set[str] = set()
+        totals: set[int] = set()
         pages_loaded = 0
         async with OpenResultsClient(self.settings) as client:
             for page in range(1, self.settings.catalog_max_pages + 1):
@@ -155,14 +179,15 @@ class EventCatalog:
                 page_events, total, has_more = parse_catalog_payload(payload)
                 pages_loaded = page
                 advertised_total = total if total is not None else advertised_total
-                dated = [item.event_date for item in page_events if item.event_date]
-                newest = max(dated) if dated else None
-                oldest = min(dated) if dated else None
-                if previous_oldest and newest and newest > previous_oldest:
-                    warnings.append("A ordenação do catálogo mudou durante a coleta; a busca continuou até o limite seguro.")
-                monotonic = not (previous_oldest and newest and newest > previous_oldest)
-                if oldest:
-                    previous_oldest = oldest
+                if total is not None:
+                    totals.add(total)
+                identities = {item.event_url.rstrip('/') for item in page_events}
+                fingerprint = hashlib.sha256(json.dumps(sorted(identities)).encode()).hexdigest()
+                if identities and (fingerprint in page_hashes or not identities - observed_urls):
+                    warnings.append('catalog_pagination_not_advancing')
+                    break
+                page_hashes.add(fingerprint)
+                observed_urls.update(identities)
                 events.extend(
                     item
                     for item in page_events
@@ -175,11 +200,20 @@ class EventCatalog:
                     min(75, 2 + page),
                     {"pages_loaded": page, "events_found": len(events)},
                 )
-                if not page_events or has_more is False:
+                if has_more is False or not page_events:
+                    if len(totals) > 1:
+                        warnings.append('catalog_total_changed')
+                    elif advertised_total is not None and len(observed_urls) != advertised_total:
+                        warnings.append('catalog_total_mismatch')
+                    elif has_more is not False and advertised_total is None:
+                        warnings.append('catalog_end_unconfirmed')
+                    if has_more is True:
+                        warnings.append('catalog_empty_page_with_more')
                     break
-                if monotonic and oldest and oldest < date_from and all(
-                    item.event_date is not None and item.event_date < date_from for item in page_events
-                ):
+                # A recent event can appear after an old page; dates are filters, not end evidence.
+                if len(totals) == 1 and advertised_total == len(observed_urls):
+                    if has_more is True:
+                        warnings.append('catalog_pagination_conflict')
                     break
             else:
                 warnings.append("O catálogo atingiu o limite máximo de páginas configurado.")

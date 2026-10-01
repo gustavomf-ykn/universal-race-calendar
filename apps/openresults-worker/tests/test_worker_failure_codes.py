@@ -1,12 +1,13 @@
 from unittest.mock import MagicMock
 import pytest
 import worker
-from app.models import AccessBlockedError
+from app.models import AccessBlockedError, StructureChangedError
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('error,expected,outcome,disable_retry', [
     (AccessBlockedError('upstream-private-detail'), 'source_access_blocked', 'failed', True),
+    (StructureChangedError('upstream-private-detail'), 'source_structure_changed', 'failed', True),
     (ValueError('incomplete_extraction'), 'incomplete_extraction', 'partial', False),
     (RuntimeError('upstream-private-detail'), 'collection_failed', 'failed', False),
 ])
