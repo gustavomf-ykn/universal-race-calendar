@@ -14,6 +14,15 @@ export async function checkStagingStorage(env = process.env, request = fetch) {
     if (!response.ok) throw new Error();
     const bucket = await response.json();
     if (bucket.id !== "race-exports" || bucket.public !== false) throw new Error();
+    const requiredTypes = ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/zip"];
+    // Null means unrestricted MIME types in Storage. A restricted bucket must
+    // accept both formats produced by the worker, including multi-edition ZIPs.
+    if (
+      bucket.allowed_mime_types != null &&
+      (!Array.isArray(bucket.allowed_mime_types) ||
+        !requiredTypes.every((type) => bucket.allowed_mime_types.includes(type)))
+    )
+      throw new Error();
   } catch {
     throw new Error("staging_storage_check_failed");
   }
