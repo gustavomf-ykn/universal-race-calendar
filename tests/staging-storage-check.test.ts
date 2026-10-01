@@ -6,6 +6,21 @@ const env = {
   SUPABASE_SECRET_KEY: "sb_secret_test_only",
 };
 describe("manual staging Storage preflight", () => {
+  it("accepts XLSX and ZIP and rejects the legacy XLSX-only restriction", async () => {
+    const xlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    for (const allowed_mime_types of [null, [xlsx, "application/zip"]]) {
+      const request = vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify({ id: "race-exports", public: false, allowed_mime_types })));
+      await expect(checkStagingStorage(env, request)).resolves.toBeUndefined();
+    }
+    for (const allowed_mime_types of [[xlsx], ["application/zip"], [], "application/zip"]) {
+      const request = vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify({ id: "race-exports", public: false, allowed_mime_types })));
+      await expect(checkStagingStorage(env, request)).rejects.toThrow(/^staging_storage_check_failed$/);
+    }
+  });
   it("checks the private bucket without uploading or downloading results", async () => {
     const request = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "race-exports", public: false })));
     await expect(checkStagingStorage(env, request)).resolves.toBeUndefined();

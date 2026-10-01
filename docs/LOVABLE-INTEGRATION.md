@@ -191,9 +191,11 @@ Enquanto queued, evitar consultas de poucos segundos durante horas: atualizar so
 Mostrar a última atualização dos dados usando resultSet.updatedAt dos resultados e lastUpdatedAt do evento, sem confundir com updatedAt da tarefa. Resultados válidos anteriores continuam disponíveis se uma nova coleta for parcial/falhar. Exportações também aguardam executor; link assinado dura até 60 s, artefato expira em 24 h e limpeza física aguarda lote Python. Solicitar uma nova exportação pode ser necessário se a anterior expirar antes de ser processada. Configuração/agenda, Secrets por serviço e procedimento manual: [BATCH-HOSTING.md](BATCH-HOSTING.md).
 
 
-## Operação contínua e catálogo administrativo (atualização pendente de publicação)
+## Operação contínua e catálogo administrativo (publicados em homologação)
 
 Consulte [operação pelo painel](PANEL-OPERATIONS.md) para ordem das migrations/deploys, inicializador Windows, limites de cobertura e aceite.
+
+API validada em `91e9941c91ac7a4230ddd55ae3e11876aeb3c1d1`; frontend publicado em `49643f893d6e1d046250b6fb022576e02523b34c`. Revisão/publicação por JWT admin e filtros de resultados foram exercitados no navegador. ZIP de duas edições foi solicitado pelo painel e concluído pelo executor local iniciado pelo usuário: 822 linhas no total. Download assinado e conteúdo foram validados tecnicamente; a observação final desse ZIP no navegador aguarda sessão autenticada. O bucket precisa permitir XLSX e `application/zip`, permanecendo privado; essa configuração não pertence ao frontend.
 
 Novos contratos (JWT admin nas rotas administrativas):
 
