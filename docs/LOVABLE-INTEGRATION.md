@@ -195,7 +195,7 @@ Mostrar a última atualização dos dados usando resultSet.updatedAt dos resulta
 
 Consulte [operação pelo painel](PANEL-OPERATIONS.md) para ordem das migrations/deploys, inicializador Windows, limites de cobertura e aceite.
 
-API validada em `91e9941c91ac7a4230ddd55ae3e11876aeb3c1d1`; frontend publicado em `49643f893d6e1d046250b6fb022576e02523b34c`. Revisão/publicação por JWT admin e filtros de resultados foram exercitados no navegador. ZIP de duas edições foi solicitado pelo painel e concluído pelo executor local iniciado pelo usuário: 822 linhas no total. Download assinado e conteúdo foram validados tecnicamente; a observação final desse ZIP no navegador aguarda sessão autenticada. O bucket precisa permitir XLSX e `application/zip`, permanecendo privado; essa configuração não pertence ao frontend.
+API validada em `91e9941c91ac7a4230ddd55ae3e11876aeb3c1d1`; frontend publicado em `49643f893d6e1d046250b6fb022576e02523b34c`. Revisão/publicação por JWT admin e filtros de resultados foram exercitados no navegador. ZIP de duas edições foi solicitado pelo painel e concluído pelo executor local iniciado pelo usuário: 822 linhas no total. O botão Baixar concluiu o download no Chrome, e o arquivo foi aberto/validado (435 e 387 linhas). Nove atualizações de metadados e uma continuação de cinco itens pelo painel também concluíram sem comando por tarefa. O bucket precisa permitir XLSX e `application/zip`, permanecendo privado; essa configuração não pertence ao frontend.
 
 Novos contratos (JWT admin nas rotas administrativas):
 
