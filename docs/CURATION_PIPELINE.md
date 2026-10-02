@@ -23,12 +23,15 @@ Publica automaticamente se:
 - tem data;
 - tem país BR confirmado na extração;
 - tem modalidade road/trail comprovada no título/texto da fonte;
-- tem cidade/estado/pais ou localizacao clara;
+- tem cidade não vazia, UF entre as 27 brasileiras e país BR; nome do local não substitui cidade/UF;
 - tem `registrationUrl` ou `officialUrl`;
+- tem referência reconhecida da edição em TicketSports, CorridasBR ou OpenResults, com identidade e UF compatíveis quando verificáveis;
 - `confidence >= AUTO_PUBLISH_MIN_CONFIDENCE`;
 - nao tem warning critico.
 
 Caso contrario, `publicationStatus = pending_review`.
+
+Curadoria 1.6.0 aplica os requisitos estruturais compartilhados com a publicação administrativa. Data impossível, cidade com navegação/caracteres corrompidos, UF inválida, homepage e URL de edição incompatível não permitem publicação. PATCH e rota antiga de publicação relêem edição e referências sob lock. Revisão manual pode confirmar modalidades fora do escopo automático com motivo e auditoria, mas não pode ignorar esses requisitos estruturais. Os campos propostos pelo modelo ainda precisam de validação completa de proveniência de data/localização; não tratar estrutura válida como prova de extração correta.
 
 Curadoria 1.4.0 não classifica nomes genéricos (corrida, run, maratona), endereços com Rua/asfalto ou links de navegação como corrida de rua. Texto gerado pelo modelo não é evidência de modalidade. Rua+trail vira mixed para revisão; kids/walk/unknown também permanecem candidatos em revisão. Em edições mistas, modalidade de distância precisa de trecho presente na fonte com a quilometragem correspondente. Esses controles não completam a política de localização/referência nem os caminhos Python ainda em desenvolvimento. Não corrigem registros históricos em massa.
 
@@ -46,7 +49,7 @@ Valores iniciais:
 
 - `ADAPTER_VERSION_TICKETSPORTS=1.0.0`
 - `CANONICAL_SCHEMA_VERSION=1.0.0`
-- `CURATION_PIPELINE_VERSION=1.5.0`
+- `CURATION_PIPELINE_VERSION=1.6.0`
 
 ## Dry-run e batch
 

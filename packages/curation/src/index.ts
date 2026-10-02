@@ -8,6 +8,10 @@ import {
   findSuccessfulCurationJob,
   findCanonicalEventMatch,
   editionFailureCode,
+  hasPublicationReference,
+  validPublicationDate,
+  validPublicationCity,
+  validBrazilianPublicationLocation,
   getCurationSummary,
   getLatestRawExtractionForEvent,
   getSource,
@@ -1316,14 +1320,14 @@ export function evaluatePublishability(
     | "officialUrl"
     | "confidence"
     | "warnings"
-  >,
+  > & Partial<Pick<CanonicalRaceEvent, "sourceType" | "sourceExternalId" | "sourceUrl">>,
 ): PublishabilityResult {
   const reasons: string[] = [];
   const autoPublishMinConfidence = Number(process.env.AUTO_PUBLISH_MIN_CONFIDENCE ?? 0.85);
   const reviewMinConfidence = Number(process.env.REVIEW_MIN_CONFIDENCE ?? 0.6);
 
   if (!cleanText(normalizedEvent.name)) reasons.push("missing_name");
-  if (!normalizedEvent.date) reasons.push("missing_date");
+  if (!validPublicationDate(normalizedEvent.date)) reasons.push("missing_date");
   if (!normalizedEvent.country) reasons.push("country_unconfirmed");
   else if (normalizedEvent.country.toUpperCase() !== "BR") reasons.push("non_brazil_event");
   if (normalizedEvent.modality === "unknown") reasons.push("modality_unconfirmed");
@@ -1333,6 +1337,7 @@ export function evaluatePublishability(
   }
   if (!normalizedEvent.registrationUrl && !normalizedEvent.officialUrl)
     reasons.push("missing_registration_or_official_url");
+  if (!hasPublicationReference(normalizedEvent)) reasons.push("invalid_source_reference");
   if (normalizedEvent.confidence < autoPublishMinConfidence) reasons.push("low_confidence");
   if (normalizedEvent.warnings.some((warning) => criticalWarnings.has(warning))) reasons.push("critical_warning");
 
@@ -1377,9 +1382,8 @@ async function hasCurrentCurationForRaw(raw: RawSourceExtraction): Promise<boole
 function hasPublishableLocation(
   event: Pick<CanonicalRaceEvent, "city" | "state" | "country" | "locationName">,
 ): boolean {
-  if (cleanText(event.locationName)) return true;
-  if (!(cleanText(event.city) && cleanText(event.country))) return false;
-  return event.country?.toUpperCase() !== "BR" || Boolean(cleanText(event.state));
+  if (!(validPublicationCity(event.city) && cleanText(event.country))) return false;
+  return event.country?.toUpperCase() !== "BR" || validBrazilianPublicationLocation(event);
 }
 
 function normalizeCurationWarnings(

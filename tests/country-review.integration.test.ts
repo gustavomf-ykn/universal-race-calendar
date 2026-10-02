@@ -47,8 +47,8 @@ describe.skipIf(!process.env.DATABASE_URL)("country confirmation through authent
     const id = prefix + ids.length;
     ids.push(id);
     return prisma.event.create({ data: { id, slug: id, name: id, date: new Date("2040-10-10"),
-      city: "Garuva", state: "SC", country, sourceType: "ticketsports", sourceExternalId: id,
-      sourceUrl: "https://www.ticketsports.com.br/e/test-123", canonicalFingerprint: id,
+      city: "Garuva", state: "SC", country, sourceType: "openresults", sourceExternalId: "url:" + id,
+      sourceUrl: "https://openresults.run/evento/" + id + "/", canonicalFingerprint: id,
       warnings: ["country_unconfirmed"], publishabilityReasons: ["country_unconfirmed"],
       publicationStatus: "pending_review", modality: "road" } });
   }
@@ -116,6 +116,44 @@ describe.skipIf(!process.env.DATABASE_URL)("country confirmation through authent
     expect((await patch(event.id, adminToken, { modality: "asphalt", reason: "Confirmar rua" })).statusCode).toBe(400);
     expect((await patch(event.id, adminToken, { modality: "trail" })).statusCode).toBe(400);
     expect(await prisma.adminAudit.count({ where: { eventId: event.id } })).toBe(0);
+  });
+  it("rejects invalid UF, navigation text and missing source reference on both publication paths", async () => {
+    for (const changes of [{ state: "ZZ" }, { city: "Camboriú (Corrida nesta Cidade)" },
+      { sourceUrl: "https://openresults.run/" }, { name: "  " }]) {
+      const event = await edition("BR");
+      await prisma.event.update({ where: { id: event.id }, data: changes });
+      const expected = "sourceUrl" in changes ? "publication_requires_valid_source_reference"
+        : "name" in changes ? "publication_requires_name" : "publication_requires_date_city_state";
+      const response = await patch(event.id, adminToken, { publicationStatus: "published", reason: "Conferir publicação" });
+      expect(response.statusCode, response.body).toBe(409);
+      expect(response.json().error).toBe(expected);
+      const legacy = await app.inject({ method: "POST", url: `/v1/admin/events/${event.id}/publish`,
+        headers: { authorization: `Bearer ${adminToken}` } });
+      expect(legacy.statusCode, legacy.body).toBe(409);
+      expect(legacy.json().error).toBe(expected);
+      expect(await prisma.adminAudit.count({ where: { eventId: event.id } })).toBe(0);
+    }
+  });
+  it("uses registered references under lock and prevents removal of a published edition's valid location", async () => {
+    const event = await edition("BR");
+    const url = event.sourceUrl!;
+    await prisma.event.update({ where: { id: event.id }, data: { sourceUrl: "https://openresults.run/" } });
+    const source = await prisma.source.create({ data: { name: event.name, url, adapter: "openresults",
+      externalId: event.sourceExternalId, type: "official_page" } });
+    const reference = await prisma.eventSourceReference.create({ data: { eventId: event.id,
+      sourceId: source.id, sourceType: "openresults", sourceExternalId: event.sourceExternalId!, url } });
+    try {
+      const published = await patch(event.id, adminToken, { publicationStatus: "published", reason: "Referência conferida" });
+      expect(published.statusCode, published.body).toBe(200);
+      const invalid = await patch(event.id, adminToken, { state: "ZZ", reason: "Alterar UF" });
+      expect(invalid.statusCode, invalid.body).toBe(409);
+      expect((await prisma.event.findUniqueOrThrow({ where: { id: event.id } })).state).toBe("SC");
+      const hidden = await patch(event.id, adminToken, { state: null, publicationStatus: "hidden", reason: "Local em revisão" });
+      expect(hidden.statusCode, hidden.body).toBe(200);
+    } finally {
+      await prisma.eventSourceReference.delete({ where: { id: reference.id } });
+      await prisma.source.delete({ where: { id: source.id } });
+    }
   });
   it("audits confirmation, prevents erasing published modality and preserves country review together", async () => {
     const event = await edition(null);

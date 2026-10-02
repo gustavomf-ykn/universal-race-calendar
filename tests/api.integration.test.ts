@@ -83,8 +83,21 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     const source = createdSource.json<{ id: string }>();
 
     const job = await runSourceCheck(source.id);
-    expect(job.status).toBe("success");
+    expect(job.status).toBe("manual_review");
+    expect(job.reasons).toContain("invalid_source_reference");
     eventId = job.eventId!;
+
+    // A mock:// transport does not identify an approved edition. Keep that
+    // candidate in review, then exercise explicit audited publication using a
+    // registered controlled OpenResults URL identity, without fetching it.
+    expect((await app.inject({ method: "GET", url: `/v1/events/${eventId}` })).statusCode).toBe(404);
+    const reviewedSource = await prisma.source.create({ data: { name: "Referência controlada", adapter: "openresults",
+      externalId: "url:api-publication-fixture", url: "https://openresults.run/evento/api-publication-fixture/", type: "official_page" } });
+    await prisma.eventSourceReference.create({ data: { eventId, sourceId: reviewedSource.id, sourceType: "openresults",
+      sourceExternalId: reviewedSource.externalId!, url: reviewedSource.url } });
+    const publish = await app.inject({ method: "POST", url: `/v1/admin/events/${eventId}/publish`,
+      headers: { "x-api-key": "test-internal-key" } });
+    expect(publish.statusCode, publish.body).toBe(200);
 
     const list = await app.inject({ method: "GET", url: "/v1/events?city=Florianopolis" });
     expect(list.statusCode).toBe(200);

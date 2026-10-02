@@ -29,6 +29,7 @@ import {
   prisma,
   resolveEventId,
   resolveEventSlug,
+  eventPublicationError,
 } from "@race-calendar/database";
 import {
   curationJobStatusSchema,
@@ -1021,21 +1022,11 @@ async function updateEventPublicationStatus(
   id = await resolveEventId(id);
   const current = await prisma.event.findUnique({ where: { id } });
   if (!current) return reply.code(404).send({ error: "event_not_found" });
-  if (publicationStatus === "published" && (!current.date || !current.city || !current.state))
-    return reply.code(409).send({ error: "publication_requires_date_city_state" });
-  if (publicationStatus === "published" && current.country !== "BR")
-    return reply.code(409).send({ error: "publication_requires_brazil_country" });
-  if (publicationStatus === "published" && current.modality === "unknown")
-    return reply.code(409).send({ error: "publication_requires_confirmed_modality" });
   const event = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Event" WHERE id=${id} FOR UPDATE`;
-    const latest = await tx.event.findUniqueOrThrow({ where: { id } });
-    if (publicationStatus === "published" && (!latest.date || !latest.city?.trim() || !latest.state))
-      throw Object.assign(new Error("publication_requires_date_city_state"), { statusCode: 409 });
-    if (publicationStatus === "published" && latest.country !== "BR")
-      throw Object.assign(new Error("publication_requires_brazil_country"), { statusCode: 409 });
-    if (publicationStatus === "published" && latest.modality === "unknown")
-      throw Object.assign(new Error("publication_requires_confirmed_modality"), { statusCode: 409 });
+    const latest = await tx.event.findUniqueOrThrow({ where: { id }, include: { sourceReferences: true } });
+    const publicationError = publicationStatus === "published" ? eventPublicationError(latest) : null;
+    if (publicationError) throw Object.assign(new Error(publicationError), { statusCode: 409 });
     const row = await tx.event.update({
       where: { id },
       data: {

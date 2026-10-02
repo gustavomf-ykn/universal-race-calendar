@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { prisma, enqueueTask, publicTask, TaskConflict, catalogCheckpoint, controlCatalogSync, publicCatalogSync, resolveEventId, resolveEventIds } from "@race-calendar/database";
 import { requireAdmin, authorize } from "./auth.js";
 import { reserveResultCheckpoint, resultCheckpointRoot } from "@race-calendar/database";
+import { eventPublicationError, brazilianStateCodes } from "@race-calendar/database";
 
 const str = { type: "string" };
 const ids = { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, maxItems: 100, uniqueItems: true };
@@ -57,7 +58,8 @@ export function adminEventFilter(q: Record<string, any>) {
       },
     });
   if (q.incomplete)
-    AND.push({ OR: [{ date: null }, { city: null }, { state: null }, { country: null }, { modality: "unknown" },
+    AND.push({ OR: [{ date: null }, { city: null }, { city: "" }, { state: null },
+      { state: { notIn: [...brazilianStateCodes] } }, { country: null }, { modality: "unknown" },
       { sourceExternalId: { startsWith: "url:" } }] });
   return { AND };
 }
@@ -218,23 +220,12 @@ export async function registerOperations(app: FastifyInstance) {
       if (!current) return reply.code(404).send({ error: "event_not_found" });
       const { reason, ...changes } = body;
       if ("date" in changes) changes.date = changes.date ? new Date(changes.date) : null;
-      const merged = { ...current, ...changes };
-      if (merged.publicationStatus === "published" && (!merged.date || !merged.city?.trim() || !merged.state))
-        return reply.code(409).send({ error: "publication_requires_date_city_state" });
-      if (merged.publicationStatus === "published" && merged.country !== "BR")
-        return reply.code(409).send({ error: "publication_requires_brazil_country" });
-      if (merged.publicationStatus === "published" && merged.modality === "unknown")
-        return reply.code(409).send({ error: "publication_requires_confirmed_modality" });
       return prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Event" WHERE id=${id} FOR UPDATE`;
-        const latest = await tx.event.findUniqueOrThrow({ where: { id } });
+        const latest = await tx.event.findUniqueOrThrow({ where: { id }, include: { sourceReferences: true } });
         const next = { ...latest, ...changes };
-        if (next.publicationStatus === "published" && (!next.date || !next.city?.trim() || !next.state))
-          throw Object.assign(new Error("publication_requires_date_city_state"), { statusCode: 409 });
-        if (next.publicationStatus === "published" && next.country !== "BR")
-          throw Object.assign(new Error("publication_requires_brazil_country"), { statusCode: 409 });
-        if (next.publicationStatus === "published" && next.modality === "unknown")
-          throw Object.assign(new Error("publication_requires_confirmed_modality"), { statusCode: 409 });
+        const publicationError = next.publicationStatus === "published" ? eventPublicationError(next) : null;
+        if (publicationError) throw Object.assign(new Error(publicationError), { statusCode: 409 });
         const countryReview = "country" in changes ? {
           warnings: [...new Set([
             ...(Array.isArray(latest.warnings) ? latest.warnings as string[] : [])

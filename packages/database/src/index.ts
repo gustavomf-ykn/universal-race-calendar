@@ -5,6 +5,8 @@ import { capacityGrowth } from "./capacity.js";
 import { editionLinks, editionUrlVariants, crossSourceEditionReason } from "./edition-evidence.js";
 import { resolveEventId, resolveEventSlug } from "./event-reconciliation.js";
 export { editionIdentity, editionLinks, editionLocationEvidence, editionFailureCode } from "./edition-evidence.js";
+export { eventPublicationError, hasPublicationReference, validPublicationDate, validPublicationCity,
+  validBrazilianPublicationLocation, validPublicationReference, brazilianStateCodes } from "./publication-policy.js";
 export { setTaskLease, assertTaskLease } from "./lease.js";
 export { assertCapacity, CapacityDeferred, capacityReasons, deferCapacityTask, readCapacity, controlCapacity } from "./capacity.js";
 export { listWorkers, workerPresence, newWorkerId } from "./presence.js";
