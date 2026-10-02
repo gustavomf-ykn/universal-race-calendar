@@ -4,7 +4,7 @@ export const ADAPTER_VERSION_TICKETSPORTS = process.env.ADAPTER_VERSION_TICKETSP
 export const ADAPTER_VERSION_CORRIDASBR = process.env.ADAPTER_VERSION_CORRIDASBR ?? "1.0.0";
 export const ADAPTER_VERSION_OFFICIAL_PAGE = process.env.ADAPTER_VERSION_OFFICIAL_PAGE ?? "1.0.0";
 export const CANONICAL_SCHEMA_VERSION = process.env.CANONICAL_SCHEMA_VERSION ?? "1.0.0";
-export const CURATION_PIPELINE_VERSION = atLeastSemver(process.env.CURATION_PIPELINE_VERSION, "1.2.0");
+export const CURATION_PIPELINE_VERSION = atLeastSemver(process.env.CURATION_PIPELINE_VERSION, "1.3.0");
 
 export function cleanText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
@@ -12,6 +12,32 @@ export function cleanText(value: string | null | undefined): string {
 
 export function stripAccents(value: string): string {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+/** Only explicit country components in a location; a UF, domain or request filter is not evidence. */
+export function countryFromLocationText(value: string | null | undefined): {
+  country: string | null;
+  sourceText: string | null;
+  conflicting: boolean;
+} {
+  const names: Record<string, string> = {
+    brasil: "BR", brazil: "BR", br: "BR", portugal: "PT", pt: "PT", argentina: "AR",
+    chile: "CL", uruguai: "UY", uruguay: "UY", paraguai: "PY", paraguay: "PY",
+    bolivia: "BO", peru: "PE", colombia: "CO", mexico: "MX", "estados unidos": "US",
+    eua: "US", usa: "US", "united states": "US", espanha: "ES", spain: "ES",
+  };
+  const components: Array<{ country: string; sourceText: string }> = [];
+  for (const component of (value ?? "").split(/[,;\n]/).reverse()) {
+    const sourceText = cleanText(component).replace(/[.]+$/, "");
+    if (!sourceText) continue;
+    const key = stripAccents(sourceText.toLowerCase());
+    const country = Object.hasOwn(names, key) ? names[key] : undefined;
+    if (!country) break;
+    components.unshift({ country, sourceText });
+  }
+  const distinct = new Set(components.map(component => component.country));
+  if (distinct.size !== 1) return { country: null, sourceText: null, conflicting: distinct.size > 1 };
+  return { country: components[0]!.country, sourceText: components[0]!.sourceText, conflicting: false };
 }
 
 export function normalizeKey(value: string | null | undefined): string {

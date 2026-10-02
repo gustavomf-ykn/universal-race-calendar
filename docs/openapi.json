@@ -16731,6 +16731,13 @@
                     ],
                     "pattern": "^[A-Z]{2}$"
                   },
+                  "country": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "pattern": "^[A-Z]{2}$"
+                  },
                   "publicationStatus": {
                     "enum": [
                       "draft",

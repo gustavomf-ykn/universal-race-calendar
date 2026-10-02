@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma, setTaskLease, heartbeatTask } from "@race-calendar/database";
-import { syncNationalTicketSports } from "../apps/worker/src/national-catalog.js";
+import { syncNationalTicketSports, nationalSnapshot } from "../apps/worker/src/national-catalog.js";
 import { syncNationalCorridasBR } from "../apps/worker/src/corridas-catalog.js";
 import type { TicketSportsCatalogPage } from "@race-calendar/sources";
 
@@ -29,7 +29,8 @@ describe.skipIf(!enabled)("national prefix checkpoint on isolated PostgreSQL", (
       country: "BR", date: "2026-10-01", metadata: {},
     }));
     return { requested: quantity, rawCount: events.length, rawIds: events.map(e => e.externalId),
-      invalidCount: 0, excludedCountryCount: 0, events, terminal: events.length < quantity };
+      invalidCount: 0, excludedCountryCount: 0, excludedCountryIds: [], unknownCountryCount: 0,
+      events, terminal: events.length < quantity };
   };
   async function fixture(id: string, states: string[], source = "ticketsports") {
     const sync = await prisma.catalogSync.create({ data: { id: prefix + id, ownerId: prefix, source,
@@ -117,5 +118,34 @@ describe.skipIf(!enabled)("national prefix checkpoint on isolated PostgreSQL", (
     await prisma.collectionTask.update({ where: { id: task.id }, data: { leaseUntil: new Date(Date.now() - 1000) } });
     await expect(syncNationalTicketSports(sync, async ({ quantity }) => page(quantity, 1))).rejects.toThrow("lease_lost");
     expect((await prisma.catalogSync.findUniqueOrThrow({ where: { id: sync.id } })).discovered).toBe(0);
+  });
+  it("retains unknown-country candidates, deduplicates coverage receipts and never invents BR", async () => {
+    const { sync, task } = await fixture("unknown-country", ["SC"]);
+    setTaskLease(task);
+    const regional = page(25, 1);
+    const unknown = { ...regional.events[0]!, externalId: prefix + "unknown-country", country: null };
+    const response = { ...regional, events: [unknown], unknownCountryCount: 1,
+      excludedCountryIds: [prefix + "foreign"], excludedCountryCount: 1,
+      rawIds: [unknown.externalId, prefix + "foreign"], rawCount: 2 };
+    await syncNationalTicketSports(sync, async () => response);
+    const resumed = await prisma.catalogSync.findUniqueOrThrow({ where: { id: sync.id } });
+    await syncNationalTicketSports(resumed, async () => response);
+    const final = await prisma.catalogSync.findUniqueOrThrow({ where: { id: sync.id } });
+    expect(final).toMatchObject({ status: "completed", discovered: 1, processed: 1 });
+    expect((final.snapshot as { receipts: unknown[] }).receipts).toEqual([
+      expect.objectContaining({ state: "SC", scope: "source_partition", unique: 2, unknownCountry: 1, outOfScope: 1 }),
+      expect.objectContaining({ state: "BR", scope: "source_partition", unique: 2, unknownCountry: 1, outOfScope: 1 }),
+    ]);
+    expect(await prisma.event.findUniqueOrThrow({ where: { sourceType_sourceExternalId: {
+      sourceType: "ticketsports", sourceExternalId: unknown.externalId } } })).toMatchObject({
+        country: null, state: "SC", publicationStatus: "pending_review", warnings: ["country_unconfirmed"],
+        publishabilityReasons: ["metadata_validation_required", "country_unconfirmed"],
+      });
+    expect(await prisma.collectionTask.count({ where: { ownerId: prefix, kind: "check-source",
+      payload: { path: ["syncId"], equals: sync.id } } })).toBe(1);
+  });
+  it("refuses old checkpoints whose countries may have been presumed", () => {
+    expect(() => nationalSnapshot({ nationalVersion: 1, candidates: [], seenIds: [], receipts: [] }))
+      .toThrow("catalog_checkpoint_incompatible");
   });
 });

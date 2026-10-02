@@ -57,7 +57,8 @@ export function adminEventFilter(q: Record<string, any>) {
       },
     });
   if (q.incomplete)
-    AND.push({ OR: [{ date: null }, { city: null }, { state: null }, { sourceExternalId: { startsWith: "url:" } }] });
+    AND.push({ OR: [{ date: null }, { city: null }, { state: null }, { country: null },
+      { sourceExternalId: { startsWith: "url:" } }] });
   return { AND };
 }
 export async function registerOperations(app: FastifyInstance) {
@@ -201,6 +202,7 @@ export async function registerOperations(app: FastifyInstance) {
             date: { type: ["string", "null"], format: "date" },
             city: { type: ["string", "null"] },
             state: { type: ["string", "null"], pattern: "^[A-Z]{2}$" },
+            country: { type: ["string", "null"], pattern: "^[A-Z]{2}$" },
             publicationStatus: filter.publicationStatus,
             reason: { type: "string", minLength: 3, maxLength: 500 },
           },
@@ -218,16 +220,33 @@ export async function registerOperations(app: FastifyInstance) {
       const merged = { ...current, ...changes };
       if (merged.publicationStatus === "published" && (!merged.date || !merged.city?.trim() || !merged.state))
         return reply.code(409).send({ error: "publication_requires_date_city_state" });
+      if (merged.publicationStatus === "published" && merged.country !== "BR")
+        return reply.code(409).send({ error: "publication_requires_brazil_country" });
       return prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Event" WHERE id=${id} FOR UPDATE`;
         const latest = await tx.event.findUniqueOrThrow({ where: { id } });
         const next = { ...latest, ...changes };
         if (next.publicationStatus === "published" && (!next.date || !next.city?.trim() || !next.state))
           throw Object.assign(new Error("publication_requires_date_city_state"), { statusCode: 409 });
+        if (next.publicationStatus === "published" && next.country !== "BR")
+          throw Object.assign(new Error("publication_requires_brazil_country"), { statusCode: 409 });
+        const countryReview = "country" in changes ? {
+          warnings: [...new Set([
+            ...(Array.isArray(latest.warnings) ? latest.warnings as string[] : [])
+              .filter(value => !["country_unconfirmed", "conflicting_country"].includes(value)),
+            ...(!changes.country ? ["country_unconfirmed"] : []),
+          ])],
+          publishabilityReasons: [...new Set([
+            ...(Array.isArray(latest.publishabilityReasons) ? latest.publishabilityReasons as string[] : [])
+              .filter(value => !["country_unconfirmed", "non_brazil_event"].includes(value)),
+            ...(!changes.country ? ["country_unconfirmed"] : changes.country !== "BR" ? ["non_brazil_event"] : []),
+          ])],
+        } : {};
         const event = await tx.event.update({
           where: { id },
           data: {
             ...changes,
+            ...countryReview,
             administrativeReview: true,
             ...("publicationStatus" in changes
               ? { publishedAt: changes.publicationStatus === "published" ? (latest.publishedAt ?? new Date()) : null }
@@ -247,6 +266,7 @@ export async function registerOperations(app: FastifyInstance) {
                   date: latest.date,
                   city: latest.city,
                   state: latest.state,
+                  country: latest.country,
                   publicationStatus: latest.publicationStatus,
                 },
                 changes,

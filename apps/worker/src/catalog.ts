@@ -11,6 +11,7 @@ type Candidate = {
   date?: string | null;
   city?: string | null;
   state?: string | null;
+  country?: string | null;
   metadata?: unknown;
 };
 export async function syncCatalog(input: Record<string, unknown>, discover?: () => Promise<Candidate[]>) {
@@ -39,6 +40,7 @@ export async function syncCatalog(input: Record<string, unknown>, discover?: () 
     // Preserve unknown dates for review; never infer a date from the event name.
     snapshot = rows.filter(
       (r) =>
+        (!r.country || r.country === "BR") &&
         (!r.state || options.states.includes(r.state)) &&
         (!r.date || ((!options.from || r.date >= options.from) && (!options.to || r.date <= options.to))),
     );
@@ -94,13 +96,13 @@ export async function syncCatalog(input: Record<string, unknown>, discover?: () 
             date: row.date ? new Date(row.date) : null,
             city: row.city || null,
             state: row.state || null,
-            country: "BR",
+            country: row.country || null,
             sourceId: source.id,
             ...identity,
             sourceUrl: row.url,
             canonicalFingerprint: digest,
-            warnings: [],
-            publishabilityReasons: ["administrative_review_required"],
+            warnings: row.country ? [] : ["country_unconfirmed"],
+            publishabilityReasons: ["administrative_review_required", ...(!row.country ? ["country_unconfirmed"] : [])],
             publicationStatus: "pending_review",
             administrativeReview: options.discoveryMode !== "national",
           },

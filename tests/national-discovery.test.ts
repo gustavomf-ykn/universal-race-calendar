@@ -4,6 +4,21 @@ import { nextTicketSportsPrefix, parseTicketSportsCatalogPage, ticketSportsCatal
 const row = (id: number, extra: object = {}) => ({ eventId: id, title: "Corrida", uri: `https://www.ticketsports.com.br/e/prova-${id}`,
   address: "Garuva, SC", date: "01/10/2026", ...extra });
 describe("official national TicketSports discovery", () => {
+  it("retains unknown-country candidates and distinguishes them from explicitly foreign IDs", () => {
+    const page = parseTicketSportsCatalogPage([
+      row(1), row(1), row(2, { address: null }), row(3, { address: "Garuva, SC, Brasil" }),
+      row(4, { address: "Porto, Portugal" }), row(4, { address: "Porto, Portugal" }),
+      row(5, { address: "Porto, Portugal, Brasil" }), row(6, { address: "Avenida Brasil, Lisboa" }),
+    ], 25);
+    expect(page.events.map(event => [event.externalId, event.country])).toEqual([
+      ["1", null], ["2", null], ["3", "BR"], ["5", null], ["6", null],
+    ]);
+    expect(page.unknownCountryCount).toBe(4);
+    expect(page.excludedCountryCount).toBe(2);
+    expect(page.excludedCountryIds).toEqual(["4"]);
+    expect(page.rawCount).toBe(8);
+    expect(page.terminal).toBe(true);
+  });
   it("uses verified country/region filters, without restricting discovery to street races", () => {
     const url = new URL(ticketSportsCatalogUrl({ quantity: 25, state: "SC" }));
     expect(Object.fromEntries(url.searchParams)).toEqual({ quantity: "25", atlheteId: "0", term: "", country: "BR", region: "SC" });

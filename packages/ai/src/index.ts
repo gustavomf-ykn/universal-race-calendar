@@ -106,7 +106,7 @@ export class MockAIProvider implements AIProvider {
       endTime: evidence(null, 0),
       city: evidence(cityState.city, cityState.city ? 0.8 : 0),
       state: evidence(cityState.state, cityState.state ? 0.8 : 0),
-      country: evidence(cityState.country ?? "BR", 0.65),
+      country: evidence(cityState.country, cityState.country ? 0.65 : 0),
       locationName: evidence(null, 0),
       address: evidence(null, 0),
       latitude: null,
@@ -412,8 +412,8 @@ function inferName(text: string): string | null {
 }
 
 function findCityStateCountry(text: string): { city: string | null; state: string | null; country: string | null } {
-  const explicit = text.match(/([^.,;:]{2,80}),\s*([A-Z]{2})(?:,\s*(Brasil|BR))?/);
-  if (!explicit?.[1] || !explicit[2]) return { city: null, state: null, country: "BR" };
+  const explicit = text.match(/([^.,;:]{2,80}),\s*([A-Z]{2})(?:,\s*(Brasil|Brazil|BR)\b)?/);
+  if (!explicit?.[1] || !explicit[2]) return { city: null, state: null, country: null };
 
   const city = explicit[1]
     .replace(/\b\d{1,2}[/.]\d{1,2}(?:[/.]\d{2,4})?\b/g, " ")
@@ -425,7 +425,7 @@ function findCityStateCountry(text: string): { city: string | null; state: strin
   return {
     city: cleanText(city) || null,
     state: explicit[2].toUpperCase(),
-    country: "BR",
+    country: explicit[3] ? "BR" : null,
   };
 }
 

@@ -23,7 +23,7 @@ describe("API public and guarded routes without database", () => {
     expect(version.json()).toMatchObject({
       status: "ok",
       canonicalSchemaVersion: "1.0.0",
-      curationPipelineVersion: "1.2.0",
+      curationPipelineVersion: "1.3.0",
       ticketSportsAdapterVersion: "1.0.0",
     });
 

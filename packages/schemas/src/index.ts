@@ -126,7 +126,7 @@ export const raceEventExtractionSchema = z.object({
   endTime: evidenceStringSchema.optional(),
   city: evidenceStringSchema,
   state: evidenceStringSchema,
-  country: evidenceStringSchema.default({ value: "BR", confidence: 0.5, sourceText: null }),
+  country: evidenceStringSchema.default({ value: null, confidence: 0, sourceText: null }),
   locationName: evidenceStringSchema.optional(),
   address: evidenceStringSchema.optional(),
   latitude: z.number().nullable().default(null),

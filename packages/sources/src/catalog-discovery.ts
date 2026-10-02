@@ -21,6 +21,8 @@ export type TicketSportsCatalogPage = {
   rawIds: string[];
   invalidCount: number;
   excludedCountryCount: number;
+  excludedCountryIds: string[];
+  unknownCountryCount: number;
   terminal: boolean;
 };
 
@@ -49,6 +51,7 @@ export function parseTicketSportsCatalogPage(payload: unknown, requested: number
   if (!Array.isArray(payload)) throw Error("catalog_structure_changed");
   const events: TicketSportsCatalogPage["events"] = [];
   const rawIds: string[] = [];
+  const excludedCountryIds = new Set<string>();
   let invalidCount = 0, excludedCountryCount = 0;
   const seen = new Set<string>();
   for (const value of payload) {
@@ -62,12 +65,16 @@ export function parseTicketSportsCatalogPage(payload: unknown, requested: number
     if (!/^\d+$/.test(id) || !name || !["https:", "http:"].includes(url.protocol) || url.username || url.password ||
       !["www.ticketsports.com.br", "ticketsports.com.br"].includes(url.hostname)) { invalidCount++; continue; }
     const location = parseTicketSportsLocation(typeof row.address === "string" ? row.address : null);
-    if (location.country !== "BR") { excludedCountryCount++; continue; }
+    if (location.country && location.country !== "BR") {
+      excludedCountryCount++;
+      excludedCountryIds.add(id);
+      continue;
+    }
     if (seen.has(id)) continue;
     seen.add(id);
     events.push({
       sourceType: "ticketsports", adapter: "ticketsports", externalId: id, name, url: url.href,
-      country: "BR", city: location.city, state: location.state, date: explicitDate(row),
+      country: location.country, city: location.city, state: location.state, date: explicitDate(row),
       // Whitelist event fields. Never persist organizer email/document numbers from catalog payloads.
       metadata: { discovery: "official_calendar_filters", listItem: {
         eventId: id, title: name, uri: url.href, address: row.address ?? null, date: row.date ?? null,
@@ -77,6 +84,7 @@ export function parseTicketSportsCatalogPage(payload: unknown, requested: number
   }
   // Count the raw response, not filtered/unique events. This is the official Load more terminal signal.
   return { events, requested, rawCount: payload.length, rawIds, invalidCount, excludedCountryCount,
+    excludedCountryIds: [...excludedCountryIds], unknownCountryCount: events.filter(event => !event.country).length,
     terminal: payload.length < requested && invalidCount === 0 };
 }
 

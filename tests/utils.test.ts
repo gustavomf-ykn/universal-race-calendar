@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   atLeastSemver,
+  countryFromLocationText,
   generateEventFingerprint,
   normalizeDate,
   normalizeDistanceKm,
@@ -9,6 +10,14 @@ import {
 } from "@race-calendar/utils";
 
 describe("utils", () => {
+  it("requires explicit unambiguous country components rather than UFs or venue names", () => {
+    for (const location of [null, "", "Garuva, SC", "Parque Brasil, Lisboa", "Avenida Brasil, Porto", "Brasil, Garuva, SC", "constructor"])
+      expect(countryFromLocationText(location)).toEqual({ country: null, sourceText: null, conflicting: false });
+    expect(countryFromLocationText("Garuva, SC, Brasil")).toEqual({ country: "BR", sourceText: "Brasil", conflicting: false });
+    expect(countryFromLocationText("Porto, Portugal").country).toBe("PT");
+    expect(countryFromLocationText("Garuva, SC, BR, Brasil").country).toBe("BR");
+    expect(countryFromLocationText("Porto, Portugal, Brasil")).toEqual({ country: null, sourceText: null, conflicting: true });
+  });
   it("generates slugs", () => {
     expect(slugify("Meia Maratona de Florianopolis 2026")).toBe("meia-maratona-de-florianopolis-2026");
   });

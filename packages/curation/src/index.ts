@@ -46,6 +46,7 @@ import {
   absolutizeUrl,
   CANONICAL_SCHEMA_VERSION,
   cleanText,
+  countryFromLocationText,
   CURATION_PIPELINE_VERSION,
   generateEventFingerprint,
   normalizeDate,
@@ -364,8 +365,8 @@ export async function importTicketSportsEvents(
   const allDiscovered = options.discoverEvents
     ? await options.discoverEvents()
     : await discoverTicketSportsEvents(discoverOptions);
-  const brazilianDiscovered = allDiscovered.filter((event) => event.country.toUpperCase() === "BR");
-  const discovered = brazilianDiscovered.slice(offset, offset + quantity);
+  const eligibleDiscovered = allDiscovered.filter((event) => !event.country || event.country.toUpperCase() === "BR");
+  const discovered = eligibleDiscovered.slice(offset, offset + quantity);
   const failures: TicketSportsImportResult["failures"] = [];
   let processedCount = 0;
   let publishedEvents = 0;
@@ -426,7 +427,7 @@ export async function importTicketSportsEvents(
     offset,
     nextOffset,
     maxDurationMs,
-    discoveredCount: brazilianDiscovered.length,
+    discoveredCount: eligibleDiscovered.length,
     processedCount,
     publishedEvents,
     manualReviewEvents,
@@ -606,7 +607,7 @@ export async function createCatalogImportRun(input: CatalogImportRunInput = {}) 
     externalId: string;
     name: string;
     url: string;
-    country: string;
+    country: string | null;
     state: string | null;
     city: string | null;
     date: string | null;
@@ -671,6 +672,7 @@ export async function createCatalogImportRun(input: CatalogImportRunInput = {}) 
           action: "create" as const,
           provenance: jsonValue({
             discovery: row.sourceType,
+            country: row.country,
             adapter: row.adapter,
             metadata: { ...row.metadata, enrichOfficialPages: input.enrichOfficialPages !== false },
           }),
@@ -717,7 +719,7 @@ export async function processCatalogImportRun(
           name: candidate.name,
           url: candidate.sourceUrl,
           type: candidate.sourceType === "ticketsports" ? "registration_page" : "aggregator",
-          country: "BR",
+          country: stringValue(asRecord(candidate.provenance).country),
           state: candidate.state,
           city: candidate.city,
           adapter: candidate.sourceType,
@@ -1183,7 +1185,7 @@ export function normalizeRaceEventExtraction(
   const date = normalizeDate(extraction.date.value);
   const city = cleanText(extraction.city.value) || null;
   const state = cleanText(extraction.state.value)?.toUpperCase() || null;
-  const country = cleanText(extraction.country.value)?.toUpperCase() || "BR";
+  const country = cleanText(extraction.country.value)?.toUpperCase() || null;
   const registrationUrl = absolutizeUrl(extraction.registrationUrl?.value, raw.url);
   const officialUrl = absolutizeUrl(extraction.officialUrl?.value, raw.url) ?? raw.url;
   const regulationUrl = absolutizeUrl(extraction.regulationUrl?.value, raw.url);
@@ -1294,6 +1296,8 @@ export function evaluatePublishability(
 
   if (!cleanText(normalizedEvent.name)) reasons.push("missing_name");
   if (!normalizedEvent.date) reasons.push("missing_date");
+  if (!normalizedEvent.country) reasons.push("country_unconfirmed");
+  else if (normalizedEvent.country.toUpperCase() !== "BR") reasons.push("non_brazil_event");
   if (!hasPublishableLocation(normalizedEvent)) {
     reasons.push("missing_location");
   }
@@ -1308,10 +1312,10 @@ export function evaluatePublishability(
   return { canPublish: false, publicationStatus: "pending_review", reasons };
 }
 
-const criticalWarnings = new Set(["missing_date", "conflicting_date", "conflicting_location", "suspicious_city"]);
+const criticalWarnings = new Set(["missing_date", "conflicting_date", "conflicting_location", "conflicting_country", "suspicious_city"]);
 
 export function shouldPersistCanonicalEvent(event: Pick<CanonicalRaceEvent, "country">): boolean {
-  return event.country?.toUpperCase() === "BR";
+  return !event.country || event.country.toUpperCase() === "BR";
 }
 
 async function hasCurrentCurationForRaw(raw: RawSourceExtraction): Promise<boolean> {
@@ -1353,7 +1357,7 @@ function normalizeCurationWarnings(
   location: { city: string | null; state: string | null; country: string | null; locationName: string | null },
 ): string[] {
   const country = location.country?.toUpperCase() ?? null;
-  return unique(warnings).filter((warning) => {
+  return unique([...warnings, ...(!country ? ["country_unconfirmed"] : [])]).filter((warning) => {
     if (warning === "missing_state" && country && country !== "BR" && (location.city || location.locationName))
       return false;
     return true;
@@ -1475,6 +1479,8 @@ function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtra
   if (!normalizeDate(date)) warnings.push("missing_date");
   if (!location.city) warnings.push("missing_city");
   if (!location.state) warnings.push("missing_state");
+  if (!location.country) warnings.push("country_unconfirmed");
+  if (countryFromLocationText(address).conflicting) warnings.push("conflicting_country");
   if (location.suspiciousCity) warnings.push("suspicious_city");
   if (!registrationUrl) warnings.push("missing_registration_url");
   const confidence = warnings.length ? 0.72 : 0.92;
@@ -1487,7 +1493,8 @@ function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtra
     endTime: evidence(null, 0),
     city: evidence(location.city, location.city ? 0.9 : 0),
     state: evidence(location.state, location.state ? 0.9 : 0),
-    country: evidence(location.country ?? "BR", 0.85),
+    country: { value: location.country, confidence: location.country ? 0.85 : 0,
+      sourceText: countryFromLocationText(address).sourceText },
     locationName: evidence(location.locationName, location.locationName ? 0.7 : 0),
     address: evidence(address, address ? 0.88 : 0),
     latitude: numberOrNull(record.latitude),
@@ -1622,9 +1629,9 @@ function parseTicketSportsLocation(address: string): {
   suspiciousCity: boolean;
 } {
   const text = cleanText(address);
-  if (!text) return { city: null, state: null, country: "BR", locationName: null, suspiciousCity: false };
+  if (!text) return { city: null, state: null, country: null, locationName: null, suspiciousCity: false };
   const state = text.match(/,\s*([A-Z]{2})(?:,|\b)/)?.[1]?.toUpperCase() ?? null;
-  const country = countryFromTicketSportsText(text) ?? "BR";
+  const country = countryFromLocationText(text).country;
   const locationName = stripCountrySuffix(text.split(":")[0] ?? "") || null;
   if (!state) {
     const city = looksLikeVenueOrStreet(locationName) ? null : locationName;
@@ -1640,26 +1647,6 @@ function parseTicketSportsLocation(address: string): {
   ].filter((candidate): candidate is string => Boolean(candidate));
   const city = candidates.find((candidate) => !looksLikeVenueOrStreet(candidate)) ?? null;
   return { city, state, country, locationName, suspiciousCity: !city };
-}
-
-function countryFromTicketSportsText(value: string): string | null {
-  const text = stripDiacritics(cleanText(value).toLowerCase());
-  if (!text) return null;
-  if (/(^|[\s,;:])(brasil|brazil|br)(?=$|[\s,;:.])/.test(text)) return "BR";
-  const countries: Array<[RegExp, string]> = [
-    [/(^|[\s,;:])portugal(?=$|[\s,;:.])/, "PT"],
-    [/(^|[\s,;:])argentina(?=$|[\s,;:.])/, "AR"],
-    [/(^|[\s,;:])chile(?=$|[\s,;:.])/, "CL"],
-    [/(^|[\s,;:])(uruguai|uruguay)(?=$|[\s,;:.])/, "UY"],
-    [/(^|[\s,;:])(paraguai|paraguay)(?=$|[\s,;:.])/, "PY"],
-    [/(^|[\s,;:])bolivia(?=$|[\s,;:.])/, "BO"],
-    [/(^|[\s,;:])peru(?=$|[\s,;:.])/, "PE"],
-    [/(^|[\s,;:])colombia(?=$|[\s,;:.])/, "CO"],
-    [/(^|[\s,;:])mexico(?=$|[\s,;:.])/, "MX"],
-    [/(^|[\s,;:])(estados unidos|eua|usa|united states)(?=$|[\s,;:.])/, "US"],
-    [/(^|[\s,;:])(espanha|spain)(?=$|[\s,;:.])/, "ES"],
-  ];
-  return countries.find(([pattern]) => pattern.test(text))?.[1] ?? null;
 }
 
 function stripCountrySuffix(value: string): string | null {

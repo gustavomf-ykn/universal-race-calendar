@@ -104,7 +104,7 @@ describe("source adapters", () => {
       name: "9a MEIA MARATONA DE UBERABA",
       city: "Uberaba",
       state: "MG",
-      country: "BR",
+      country: null,
     });
   });
 
@@ -134,7 +134,7 @@ describe("source adapters", () => {
     });
 
     expect(discovered.map((event) => event.externalId)).toEqual(["74641"]);
-    expect(discovered.every((event) => event.country === "BR")).toBe(true);
+    expect(discovered.every((event) => event.country === null)).toBe(true);
   });
 
   it("discovers CorridasBR events from a state calendar", async () => {

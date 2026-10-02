@@ -27,6 +27,7 @@ import {
   ADAPTER_VERSION_OFFICIAL_PAGE,
   ADAPTER_VERSION_TICKETSPORTS,
   cleanText,
+  countryFromLocationText,
   normalizeDate,
   unique,
 } from "@race-calendar/utils";
@@ -57,7 +58,7 @@ export type TicketSportsDiscoveredEvent = {
   externalId: string;
   name: string;
   url: string;
-  country: string;
+  country: string | null;
   state: string | null;
   city: string | null;
   metadata: Record<string, unknown>;
@@ -366,7 +367,7 @@ export async function discoverTicketSportsEvents(
     const title = cleanText(stringValue(record.title));
     if (!eventId || !url || !title) return [];
     const location = parseTicketSportsLocation(stringValue(record.address));
-    if (location.country !== "BR") return [];
+    if (location.country && location.country !== "BR") return [];
     return [
       {
         sourceType: "ticketsports",
@@ -374,7 +375,7 @@ export async function discoverTicketSportsEvents(
         externalId: eventId,
         name: title,
         url,
-        country: location.country ?? "BR",
+        country: location.country,
         state: location.state,
         city: location.city,
         metadata: {
@@ -646,33 +647,13 @@ export function parseTicketSportsLocation(value: string | null): {
   country: string | null;
 } {
   const text = cleanText(value);
-  if (!text) return { city: null, state: null, country: "BR" };
+  if (!text) return { city: null, state: null, country: null };
   const state = text.match(/,\s*([A-Z]{2})(?:,|\b)/)?.[1]?.toUpperCase() ?? null;
-  const country = countryFromText(text) ?? "BR";
+  const country = countryFromLocationText(text).country;
   if (!state) return { city: cityBeforeColon(text), state: null, country };
   const beforeState = text.split(new RegExp(`,\\s*${state}\\b`, "i"))[0] ?? "";
   const city = cityBeforeColon(beforeState) ?? cleanText(beforeState.split(",").at(-1));
   return { city: city || null, state, country };
-}
-
-function countryFromText(value: string): string | null {
-  const text = stripDiacritics(cleanText(value).toLowerCase());
-  if (!text) return null;
-  if (/(^|[\s,;:])(brasil|brazil|br)(?=$|[\s,;:.])/.test(text)) return "BR";
-  const countries: Array<[RegExp, string]> = [
-    [/(^|[\s,;:])portugal(?=$|[\s,;:.])/, "PT"],
-    [/(^|[\s,;:])argentina(?=$|[\s,;:.])/, "AR"],
-    [/(^|[\s,;:])chile(?=$|[\s,;:.])/, "CL"],
-    [/(^|[\s,;:])(uruguai|uruguay)(?=$|[\s,;:.])/, "UY"],
-    [/(^|[\s,;:])(paraguai|paraguay)(?=$|[\s,;:.])/, "PY"],
-    [/(^|[\s,;:])bolivia(?=$|[\s,;:.])/, "BO"],
-    [/(^|[\s,;:])peru(?=$|[\s,;:.])/, "PE"],
-    [/(^|[\s,;:])colombia(?=$|[\s,;:.])/, "CO"],
-    [/(^|[\s,;:])(mexico|méxico)(?=$|[\s,;:.])/, "MX"],
-    [/(^|[\s,;:])(estados unidos|eua|usa|united states)(?=$|[\s,;:.])/, "US"],
-    [/(^|[\s,;:])(espanha|spain)(?=$|[\s,;:.])/, "ES"],
-  ];
-  return countries.find(([pattern]) => pattern.test(text))?.[1] ?? null;
 }
 
 function stripDiacritics(value: string): string {

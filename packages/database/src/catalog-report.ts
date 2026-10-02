@@ -12,8 +12,8 @@ export function publicCatalogSync(sync: CatalogSync, latestTask: CollectionTask 
         typeof r.reason !== "string" || !/^[a-z_]{1,80}$/.test(r.reason) ||
         ![r.requested, r.rawCount, r.unique].every(n => Number.isSafeInteger(n) && Number(n) >= 0)) return [];
     const details: Record<string, number | null | string> = {};
-    if (r.scope === "source_catalog") {
-      details.scope = "source_catalog";
+    if (r.scope === "source_catalog" || r.scope === "source_partition") {
+      details.scope = r.scope;
       for (const key of ["duplicates", "outOfScope", "unknownCountry", "advertisedTotal"]) {
         if (Number.isSafeInteger(r[key]) && Number(r[key]) >= 0) details[key] = Number(r[key]);
         else if (key === "advertisedTotal" && r[key] === null) details[key] = null;

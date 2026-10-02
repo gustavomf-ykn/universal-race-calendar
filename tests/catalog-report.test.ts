@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { publicCatalogSync } from "@race-calendar/database";
 
 describe("public catalog evidence", () => {
+  it("exposes partition geography counts without claiming a nationwide denominator", () => {
+    const sync = { id: "partition", source: "ticketsports", options: {}, status: "completed",
+      snapshot: { candidates: [{ country: "secret" }], receipts: [{ state: "SC", status: "completed",
+        reason: "official_load_more_end", requested: 25, rawCount: 3, unique: 3,
+        scope: "source_partition", unknownCountry: 1, outOfScope: 1 }] } } as unknown as Parameters<typeof publicCatalogSync>[0];
+    expect(publicCatalogSync(sync, null).receipts).toEqual([{ state: "SC", status: "completed",
+      reason: "official_load_more_end", requested: 25, rawCount: 3, unique: 3,
+      scope: "source_partition", unknownCountry: 1, outOfScope: 1 }]);
+    expect(JSON.stringify(publicCatalogSync(sync, null))).not.toContain("secret");
+  });
   it("exposes source-wide denominators separately from filtered candidates and strips raw checkpoints", () => {
     const sync = {
       id: "sync", source: "openresults", snapshot: {

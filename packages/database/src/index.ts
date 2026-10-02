@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { CURATION_PIPELINE_VERSION } from "@race-calendar/utils";
 import { assertTaskLease } from "./lease.js";
 import { capacityGrowth } from "./capacity.js";
 import { editionLinks, editionUrlVariants, crossSourceEditionReason } from "./edition-evidence.js";
@@ -924,7 +925,7 @@ function imageCreateData(canonicalEvent: CanonicalRaceEvent) {
 function eventVersionData(canonicalEvent: CanonicalRaceEvent) {
   return {
     schemaVersion: process.env.CANONICAL_SCHEMA_VERSION ?? "1.0.0",
-    curationVersion: canonicalEvent.curationVersion ?? process.env.CURATION_PIPELINE_VERSION ?? "1.2.0",
+    curationVersion: canonicalEvent.curationVersion ?? CURATION_PIPELINE_VERSION,
     snapshot: json(canonicalEvent),
   };
 }

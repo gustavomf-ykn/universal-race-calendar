@@ -1023,7 +1023,15 @@ async function updateEventPublicationStatus(
   if (!current) return reply.code(404).send({ error: "event_not_found" });
   if (publicationStatus === "published" && (!current.date || !current.city || !current.state))
     return reply.code(409).send({ error: "publication_requires_date_city_state" });
+  if (publicationStatus === "published" && current.country !== "BR")
+    return reply.code(409).send({ error: "publication_requires_brazil_country" });
   const event = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Event" WHERE id=${id} FOR UPDATE`;
+    const latest = await tx.event.findUniqueOrThrow({ where: { id } });
+    if (publicationStatus === "published" && (!latest.date || !latest.city?.trim() || !latest.state))
+      throw Object.assign(new Error("publication_requires_date_city_state"), { statusCode: 409 });
+    if (publicationStatus === "published" && latest.country !== "BR")
+      throw Object.assign(new Error("publication_requires_brazil_country"), { statusCode: 409 });
     const row = await tx.event.update({
       where: { id },
       data: {
@@ -1038,7 +1046,7 @@ async function updateEventPublicationStatus(
         actorId,
         eventId: id,
         action: "publication_status",
-        details: { before: current.publicationStatus, after: publicationStatus },
+        details: { before: latest.publicationStatus, after: publicationStatus },
       },
     });
     return row;
