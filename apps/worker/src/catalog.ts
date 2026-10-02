@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
-import { prisma, assertTaskLease } from "@race-calendar/database";
+import { prisma, assertTaskLease, enqueueTask } from "@race-calendar/database";
 import { discoverTicketSportsEvents, discoverCorridasBREvents } from "@race-calendar/sources";
+import { syncNationalTicketSports } from "./national-catalog.js";
+import { syncNationalCorridasBR } from "./corridas-catalog.js";
 
 type Candidate = {
   externalId: string;
@@ -9,17 +11,23 @@ type Candidate = {
   date?: string | null;
   city?: string | null;
   state?: string | null;
+  country?: string | null;
   metadata?: unknown;
 };
 export async function syncCatalog(input: Record<string, unknown>, discover?: () => Promise<Candidate[]>) {
   const id = String(input.syncId);
   let sync = await prisma.catalogSync.findUniqueOrThrow({ where: { id } });
+  if (sync.source === "ticketsports" && (sync.options as { discoveryMode?: string }).discoveryMode === "national")
+    return syncNationalTicketSports(sync);
+  if (sync.source === "corridasbr" && (sync.options as { discoveryMode?: string }).discoveryMode === "national")
+    return syncNationalCorridasBR(sync);
   const options = sync.options as {
     states: string[];
     batchSize: number;
     snapshotLimit: number;
     from?: string;
     to?: string;
+    discoveryMode?: string;
   };
   if (sync.status !== "ready") return { stage: sync.status, syncId: id, processed: 0 };
   let snapshot = sync.snapshot as unknown as Candidate[];
@@ -32,11 +40,12 @@ export async function syncCatalog(input: Record<string, unknown>, discover?: () 
     // Preserve unknown dates for review; never infer a date from the event name.
     snapshot = rows.filter(
       (r) =>
+        (!r.country || r.country === "BR") &&
         (!r.state || options.states.includes(r.state)) &&
         (!r.date || ((!options.from || r.date >= options.from) && (!options.to || r.date <= options.to))),
     );
     sync = await prisma.$transaction(async (tx) => {
-      await assertTaskLease(tx);
+      await assertTaskLease(tx, 65536 + Buffer.byteLength(JSON.stringify(snapshot)) * 8);
       return tx.catalogSync.update({
         where: { id },
         data: {
@@ -53,9 +62,10 @@ export async function syncCatalog(input: Record<string, unknown>, discover?: () 
   const batch = snapshot.slice(sync.cursor, sync.cursor + options.batchSize);
   for (const row of batch) {
     await prisma.$transaction(async (tx) => {
-      await assertTaskLease(tx);
+      await assertTaskLease(tx, 65536 + Buffer.byteLength(JSON.stringify(sync.snapshot)) * 8);
       const identity = { sourceType: sync.source, sourceExternalId: row.externalId };
       const ref = await tx.eventSourceReference.findUnique({ where: { sourceType_sourceExternalId: identity } });
+      let sourceId = ref?.sourceId;
       if (ref) {
         await tx.eventSourceReference.update({ where: { id: ref.id }, data: { lastSeenAt: new Date() } });
         existing++;
@@ -72,6 +82,7 @@ export async function syncCatalog(input: Record<string, unknown>, discover?: () 
             metadata: { catalog: true },
           },
         });
+        sourceId = source.id;
         const digest = createHash("sha256")
           .update(sync.source + ":" + row.externalId)
           .digest("hex");
@@ -85,21 +96,25 @@ export async function syncCatalog(input: Record<string, unknown>, discover?: () 
             date: row.date ? new Date(row.date) : null,
             city: row.city || null,
             state: row.state || null,
-            country: "BR",
+            country: row.country || null,
             sourceId: source.id,
             ...identity,
             sourceUrl: row.url,
             canonicalFingerprint: digest,
-            warnings: [],
-            publishabilityReasons: ["administrative_review_required"],
+            warnings: row.country ? [] : ["country_unconfirmed"],
+            publishabilityReasons: ["administrative_review_required", ...(!row.country ? ["country_unconfirmed"] : [])],
             publicationStatus: "pending_review",
-            administrativeReview: true,
+            administrativeReview: options.discoveryMode !== "national",
           },
         });
         await tx.eventSourceReference.create({
           data: { eventId: event.id, sourceId: source.id, ...identity, url: row.url },
         });
         created++;
+      }
+      if (options.discoveryMode === "national" && sourceId) {
+        const key = createHash("sha256").update(`catalog-enrich:${id}:${row.externalId}`).digest("hex");
+        await enqueueTask(sync.ownerId, key, sync.source, "check-source", { sourceId, syncId: id }, tx);
       }
       // Candidate and checkpoint commit together: a retry cannot skip a failed candidate.
       await tx.catalogSync.update({
@@ -112,7 +127,7 @@ export async function syncCatalog(input: Record<string, unknown>, discover?: () 
   const finished = next >= snapshot.length;
   const nextState = sync.source === "corridasbr" && sync.page < options.states.length;
   await prisma.$transaction(async (tx) => {
-    await assertTaskLease(tx);
+    await assertTaskLease(tx, 65536 + Buffer.byteLength(JSON.stringify(sync.snapshot)) * 8);
     await tx.catalogSync.update({
       where: { id },
       data: finished

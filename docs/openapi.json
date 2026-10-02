@@ -13020,6 +13020,48 @@
                       "type": "object",
                       "additionalProperties": true
                     },
+                    "checkpoint": {
+                      "type": "object",
+                      "properties": {
+                        "available": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "rootId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "parserVersion": {
+                          "type": "integer"
+                        },
+                        "pageSize": {
+                          "type": "integer"
+                        },
+                        "groups": {
+                          "type": "integer"
+                        },
+                        "completedGroups": {
+                          "type": "integer"
+                        },
+                        "pages": {
+                          "type": "integer"
+                        },
+                        "records": {
+                          "type": "integer"
+                        },
+                        "expiresAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    },
                     "attempt": {
                       "type": "integer"
                     },
@@ -13282,6 +13324,48 @@
                       "type": "object",
                       "additionalProperties": true
                     },
+                    "checkpoint": {
+                      "type": "object",
+                      "properties": {
+                        "available": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "rootId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "parserVersion": {
+                          "type": "integer"
+                        },
+                        "pageSize": {
+                          "type": "integer"
+                        },
+                        "groups": {
+                          "type": "integer"
+                        },
+                        "completedGroups": {
+                          "type": "integer"
+                        },
+                        "pages": {
+                          "type": "integer"
+                        },
+                        "records": {
+                          "type": "integer"
+                        },
+                        "expiresAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    },
                     "attempt": {
                       "type": "integer"
                     },
@@ -13509,6 +13593,48 @@
                           "progress": {
                             "type": "object",
                             "additionalProperties": true
+                          },
+                          "checkpoint": {
+                            "type": "object",
+                            "properties": {
+                              "available": {
+                                "type": "boolean"
+                              },
+                              "reason": {
+                                "type": [
+                                  "null",
+                                  "string"
+                                ]
+                              },
+                              "rootId": {
+                                "type": "string"
+                              },
+                              "status": {
+                                "type": "string"
+                              },
+                              "parserVersion": {
+                                "type": "integer"
+                              },
+                              "pageSize": {
+                                "type": "integer"
+                              },
+                              "groups": {
+                                "type": "integer"
+                              },
+                              "completedGroups": {
+                                "type": "integer"
+                              },
+                              "pages": {
+                                "type": "integer"
+                              },
+                              "records": {
+                                "type": "integer"
+                              },
+                              "expiresAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              }
+                            }
                           },
                           "attempt": {
                             "type": "integer"
@@ -13740,6 +13866,48 @@
                       "type": "object",
                       "additionalProperties": true
                     },
+                    "checkpoint": {
+                      "type": "object",
+                      "properties": {
+                        "available": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "rootId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "parserVersion": {
+                          "type": "integer"
+                        },
+                        "pageSize": {
+                          "type": "integer"
+                        },
+                        "groups": {
+                          "type": "integer"
+                        },
+                        "completedGroups": {
+                          "type": "integer"
+                        },
+                        "pages": {
+                          "type": "integer"
+                        },
+                        "records": {
+                          "type": "integer"
+                        },
+                        "expiresAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    },
                     "attempt": {
                       "type": "integer"
                     },
@@ -13949,6 +14117,48 @@
                     "progress": {
                       "type": "object",
                       "additionalProperties": true
+                    },
+                    "checkpoint": {
+                      "type": "object",
+                      "properties": {
+                        "available": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "rootId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "parserVersion": {
+                          "type": "integer"
+                        },
+                        "pageSize": {
+                          "type": "integer"
+                        },
+                        "groups": {
+                          "type": "integer"
+                        },
+                        "completedGroups": {
+                          "type": "integer"
+                        },
+                        "pages": {
+                          "type": "integer"
+                        },
+                        "records": {
+                          "type": "integer"
+                        },
+                        "expiresAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
                     },
                     "attempt": {
                       "type": "integer"
@@ -14960,6 +15170,48 @@
                       "type": "object",
                       "additionalProperties": true
                     },
+                    "checkpoint": {
+                      "type": "object",
+                      "properties": {
+                        "available": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "rootId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "parserVersion": {
+                          "type": "integer"
+                        },
+                        "pageSize": {
+                          "type": "integer"
+                        },
+                        "groups": {
+                          "type": "integer"
+                        },
+                        "completedGroups": {
+                          "type": "integer"
+                        },
+                        "pages": {
+                          "type": "integer"
+                        },
+                        "records": {
+                          "type": "integer"
+                        },
+                        "expiresAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    },
                     "attempt": {
                       "type": "integer"
                     },
@@ -15178,6 +15430,12 @@
                             ]
                           },
                           "state": {
+                            "type": [
+                              "null",
+                              "string"
+                            ]
+                          },
+                          "country": {
                             "type": [
                               "null",
                               "string"
@@ -15418,6 +15676,12 @@
                       ]
                     },
                     "state": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "country": {
                       "type": [
                         "null",
                         "string"
@@ -16467,6 +16731,23 @@
                     ],
                     "pattern": "^[A-Z]{2}$"
                   },
+                  "country": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "pattern": "^[A-Z]{2}$"
+                  },
+                  "modality": {
+                    "enum": [
+                      "road",
+                      "trail",
+                      "mixed",
+                      "kids",
+                      "walk",
+                      "unknown"
+                    ]
+                  },
                   "publicationStatus": {
                     "enum": [
                       "draft",
@@ -16995,11 +17276,39 @@
                   "states": {
                     "type": "array",
                     "items": {
-                      "type": "string",
-                      "pattern": "^[A-Z]{2}$"
+                      "enum": [
+                        "AC",
+                        "AL",
+                        "AM",
+                        "AP",
+                        "BA",
+                        "CE",
+                        "DF",
+                        "ES",
+                        "GO",
+                        "MA",
+                        "MG",
+                        "MS",
+                        "MT",
+                        "PA",
+                        "PB",
+                        "PE",
+                        "PI",
+                        "PR",
+                        "RJ",
+                        "RN",
+                        "RO",
+                        "RR",
+                        "RS",
+                        "SC",
+                        "SE",
+                        "SP",
+                        "TO"
+                      ]
                     },
                     "minItems": 1,
                     "maxItems": 27,
+                    "uniqueItems": true,
                     "default": [
                       "SC"
                     ]
@@ -17023,6 +17332,23 @@
                     "minimum": 5,
                     "maximum": 1000,
                     "default": 250
+                  },
+                  "discoveryMode": {
+                    "enum": [
+                      "bounded",
+                      "national"
+                    ],
+                    "default": "bounded"
+                  },
+                  "prefixLimit": {
+                    "type": "integer",
+                    "minimum": 25,
+                    "maximum": 10000,
+                    "default": 10000
+                  },
+                  "autoContinue": {
+                    "type": "boolean",
+                    "default": false
                   }
                 },
                 "required": [
@@ -17329,6 +17655,316 @@
       }
     },
     "/v1/admin/syncs/{id}/continue": {
+      "post": {
+        "tags": [
+          "Operations"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "supabaseAuth": []
+          },
+          {
+            "internalKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/syncs/{id}/pause": {
+      "post": {
+        "tags": [
+          "Operations"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "supabaseAuth": []
+          },
+          {
+            "internalKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/syncs/{id}/resume": {
       "post": {
         "tags": [
           "Operations"
@@ -18025,6 +18661,1312 @@
             }
           },
           "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/catalog/events/{id}/comparison": {
+      "get": {
+        "tags": [
+          "Operations"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "supabaseAuth": []
+          },
+          {
+            "internalKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/source-controls": {
+      "get": {
+        "tags": [
+          "Operations"
+        ],
+        "security": [
+          {
+            "supabaseAuth": []
+          },
+          {
+            "internalKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/source-controls/{source}/configure": {
+      "post": {
+        "tags": [
+          "Operations"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 500
+                  },
+                  "limitPerHour": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  },
+                  "minDelayMs": {
+                    "type": "integer",
+                    "minimum": 1000,
+                    "maximum": 60000
+                  }
+                },
+                "required": [
+                  "reason",
+                  "limitPerHour",
+                  "minDelayMs"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ticketsports",
+                "corridasbr",
+                "openresults"
+              ]
+            },
+            "in": "path",
+            "name": "source",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "supabaseAuth": []
+          },
+          {
+            "internalKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/source-controls/{source}/resume": {
+      "post": {
+        "tags": [
+          "Operations"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ticketsports",
+                "corridasbr",
+                "openresults"
+              ]
+            },
+            "in": "path",
+            "name": "source",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "supabaseAuth": []
+          },
+          {
+            "internalKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/capacity": {
+      "get": {
+        "tags": [
+          "Operations"
+        ],
+        "security": [
+          {
+            "supabaseAuth": []
+          },
+          {
+            "internalKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/capacity/configure": {
+      "post": {
+        "tags": [
+          "Operations"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 500
+                  },
+                  "databaseBudgetBytes": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,12}$"
+                  },
+                  "storageBudgetBytes": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,12}$"
+                  },
+                  "databaseHeadroomBytes": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,12}$"
+                  },
+                  "storageHeadroomBytes": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,12}$"
+                  },
+                  "allocationConfirmed": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
+                  }
+                },
+                "required": [
+                  "reason",
+                  "databaseBudgetBytes",
+                  "storageBudgetBytes",
+                  "databaseHeadroomBytes",
+                  "storageHeadroomBytes",
+                  "allocationConfirmed"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "supabaseAuth": []
+          },
+          {
+            "internalKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/capacity/resume": {
+      "post": {
+        "tags": [
+          "Operations"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 500
+                  },
+                  "resource": {
+                    "type": "string",
+                    "enum": [
+                      "database",
+                      "storage"
+                    ]
+                  }
+                },
+                "required": [
+                  "reason",
+                  "resource"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "supabaseAuth": []
+          },
+          {
+            "internalKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/capacity/refresh": {
+      "post": {
+        "tags": [
+          "Operations"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "supabaseAuth": []
+          },
+          {
+            "internalKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/catalog/reconciliations/preview": {
+      "post": {
+        "tags": [
+          "Operations"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "sourceId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "targetId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  }
+                },
+                "required": [
+                  "sourceId",
+                  "targetId"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "supabaseAuth": []
+          },
+          {
+            "internalKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/catalog/reconciliations": {
+      "post": {
+        "tags": [
+          "Operations"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "sourceId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "targetId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "revision": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 500
+                  },
+                  "confirmedSameEdition": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
+                  }
+                },
+                "required": [
+                  "sourceId",
+                  "targetId",
+                  "revision",
+                  "reason",
+                  "confirmedSameEdition"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "supabaseAuth": []
+          },
+          {
+            "internalKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
             "description": "Default Response",
             "content": {
               "application/json": {

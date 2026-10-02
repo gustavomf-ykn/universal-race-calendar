@@ -11,6 +11,7 @@ import {
   shouldPersistCanonicalEvent,
 } from "@race-calendar/curation";
 import type { RaceEventExtraction, RawSourceExtraction } from "@race-calendar/schemas";
+import { raceEventExtractionSchema } from "@race-calendar/schemas";
 import { CorridasBRAdapter, MockSourceAdapter, TicketSportsAdapter } from "@race-calendar/sources";
 
 const ticketsportsFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports-simple.json", "utf-8")) as Record<
@@ -21,7 +22,47 @@ const corridasBRDetailFixture = readFileSync("tests/fixtures/corridasbr-detail.h
 const officialEventFixture = readFileSync("tests/fixtures/official-event.html", "utf-8");
 
 describe("mock AI pipeline", () => {
-  it("publishes an exclusive CorridasBR event without inventing banner, lot, price, or kit", async () => {
+  it("keeps missing or conflicting TicketSports country for review even with a Brazilian UF", async () => {
+    for (const address of ["Garuva, SC", "Garuva, SC, Portugal, Brasil", "Avenida Brasil, Garuva, SC"]) {
+      const adapter = new TicketSportsAdapter({
+        async getJson() { return { ...ticketsportsFixture, address }; },
+        async getText() { throw Error("unexpected_transport"); },
+      });
+      const raw = await adapter.fetchAndExtract({ sourceId: "country-evidence", sourceExternalId: "123456",
+        url: "https://www.ticketsports.com.br/e/prova-123456" });
+      const result = await curateTicketSportsSourceExtraction(raw);
+      expect(result.normalizedEvent).toMatchObject({ country: null, publicationStatus: "pending_review" });
+      expect(result.extraction.country).toEqual({ value: null, confidence: 0, sourceText: null });
+      expect(result.publishability.reasons).toContain("country_unconfirmed");
+      expect(shouldPersistCanonicalEvent(result.normalizedEvent)).toBe(true);
+      if (address.includes("Portugal")) expect(result.normalizedEvent.warnings).toContain("conflicting_country");
+      const withoutCountry = Object.fromEntries(Object.entries(result.extraction).filter(([key]) => key !== "country"));
+      const extraction = raceEventExtractionSchema.parse(withoutCountry);
+      expect(extraction.country).toEqual({ value: null, confidence: 0, sourceText: null });
+      expect(normalizeRaceEventExtraction(extraction, raw).country).toBeNull();
+    }
+    expect(shouldPersistCanonicalEvent({ country: null })).toBe(true);
+  });
+  it("stores the observed country label and blocks automatic publication of foreign editions", async () => {
+    const adapter = new TicketSportsAdapter({
+      async getJson() { return { ...ticketsportsFixture, address: "Garuva, SC, Brasil" }; },
+      async getText() { throw Error("unexpected_transport"); },
+    });
+    const raw = await adapter.fetchAndExtract({ sourceId: "country-explicit", sourceExternalId: "123456",
+      url: "https://www.ticketsports.com.br/e/prova-123456" });
+    const result = await curateTicketSportsSourceExtraction(raw);
+    expect(result.extraction.country).toEqual({ value: "BR", confidence: 0.85, sourceText: "Brasil" });
+    expect(evaluatePublishability({ ...result.normalizedEvent, country: "PT" })).toMatchObject({ canPublish: false });
+    expect(evaluatePublishability({ ...result.normalizedEvent, country: "PT" }).reasons).toContain("non_brazil_event");
+  });
+  it("does not infer Brazil in the mock provider from a city/UF or source URL", async () => {
+    const raw = await new MockSourceAdapter().fetchAndExtract({ sourceId: "country-mock",
+      url: "mock://country", metadata: { title: "Corrida", importantText: "01/10/2026. Garuva, SC. Corrida de rua." } });
+    const result = await curateSourceExtraction(raw, new MockAIProvider());
+    expect(result.normalizedEvent).toMatchObject({ country: null, publicationStatus: "pending_review" });
+    expect(result.publishability.reasons).toContain("country_unconfirmed");
+  });
+  it("retains an exclusive CorridasBR event without inventing modality, banner, lot, price, or kit", async () => {
     const adapter = new CorridasBRAdapter({
       async getText() {
         return corridasBRDetailFixture;
@@ -43,8 +84,9 @@ describe("mock AI pipeline", () => {
       date: "2026-10-18",
       city: "Campinas",
       state: "SP",
-      country: "BR",
-      publicationStatus: "published",
+      country: null,
+      publicationStatus: "pending_review",
+      modality: "unknown",
       mainImageUrl: null,
       prices: [],
       kits: [],
@@ -88,7 +130,8 @@ describe("mock AI pipeline", () => {
     const result = await curateSourceExtraction(raw, new MockAIProvider());
     expect(result.normalizedEvent.name).toBe("Meia Maratona de Florianopolis");
     expect(result.normalizedEvent.date).toBe("2026-08-16");
-    expect(result.normalizedEvent.publicationStatus).toBe("published");
+    expect(result.normalizedEvent.publicationStatus).toBe("pending_review");
+    expect(result.normalizedEvent.publishabilityReasons).toContain("modality_unconfirmed");
     expect(result.normalizedEvent.registrationUrl).toBe("https://example.test/inscricao");
     expect(result.normalizedEvent.distances.map((distance) => distance.label)).toContain("21 km");
   });
@@ -100,6 +143,7 @@ describe("mock AI pipeline", () => {
       city: "Florianopolis",
       state: "SC",
       country: "BR",
+      modality: "unknown",
       locationName: null,
       registrationUrl: null,
       officialUrl: "https://example.test",
@@ -230,18 +274,19 @@ describe("mock AI pipeline", () => {
     expect(result.normalizedEvent.startTime).toBe("06:30");
     expect(result.normalizedEvent.city).toBe("Florianopolis");
     expect(result.normalizedEvent.state).toBe("SC");
-    expect(result.normalizedEvent.modality).toBe("road");
+    expect(result.normalizedEvent.modality).toBe("unknown");
     expect(result.normalizedEvent.eventStatus).toBe("scheduled");
-    expect(result.normalizedEvent.curationStatus).toBe("curated");
+    expect(result.normalizedEvent.curationStatus).toBe("manual_review");
     expect(result.normalizedEvent.curationProvider).toBe("deterministic");
     expect(result.normalizedEvent.curationModel).toBe("ticketsports-v1");
-    expect(result.normalizedEvent.curationVersion).toBe("1.2.0");
+    expect(result.normalizedEvent.curationVersion).toBe("1.7.0");
     expect(result.normalizedEvent.curatedAt).toBeTruthy();
     expect(result.normalizedEvent.registrationUrl).toContain("ticketsports.com.br");
     expect(result.normalizedEvent.distances.map((distance) => distance.distanceKm)).toContain(21);
     expect(result.normalizedEvent.distances.map((distance) => distance.label)).toEqual(["5 km", "10 km", "21 km"]);
     expect(result.normalizedEvent.prices[0]?.price).toBe(120);
-    expect(result.normalizedEvent.publicationStatus).toBe("published");
+    expect(result.normalizedEvent.publicationStatus).toBe("pending_review");
+    expect(result.normalizedEvent.publishabilityReasons).toContain("modality_unconfirmed");
   });
 
   it("extracts rich TicketSports details from structured payloads", async () => {
@@ -367,6 +412,8 @@ describe("mock AI pipeline", () => {
         return {
           ...ticketsportsFixture,
           title: "CIRCUITO DESBRAVA - RIO DE JANEIRO 2026",
+          eventId: "85556",
+          uri: "https://www.ticketsports.com.br/e/circuito-desbrava-85556",
           address: "Avenida Delfim Moreira, RJ, Brasil",
           eventContents: [
             {
@@ -390,7 +437,7 @@ describe("mock AI pipeline", () => {
 
     expect(result.normalizedEvent.city).toBeNull();
     expect(result.normalizedEvent.locationName).toBe("Avenida Delfim Moreira, RJ, Brasil");
-    expect(result.normalizedEvent.modality).toBe("road");
+    expect(result.normalizedEvent.modality).toBe("unknown");
     expect(result.normalizedEvent.distances.map((distance) => distance.label)).toEqual(["5 km", "10 km"]);
     expect(result.normalizedEvent.publicationStatus).toBe("pending_review");
     expect(result.normalizedEvent.publishabilityReasons).toContain("critical_warning");

@@ -7,11 +7,12 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import urlencode
 
 from app.config import Settings
-from app.models import EventDiscovery, RequestFailedError, StructureChangedError
+from app.models import AccessBlockedError, EventDiscovery, RequestFailedError, StructureChangedError
 from app.services.parser import deduplicate_records, parse_event_page, parse_result_rows
 from app.services.url_validation import validate_internal_url
 import httpx
 from app.services.safe_network import public_ip, bounded_get
+from app.services.source_requests import request_hooks, SourceBudgetDeferred, SourceCircuitOpen, CapacityDeferred
 
 
 ProgressCallback = Callable[[str, int], Awaitable[None] | None]
@@ -48,6 +49,10 @@ async def run_playwright_fallback(
         ) from exc
 
     await _emit(progress, "Abrindo fallback do navegador", 12)
+    # Playwright dispatches routes from its own connection task. Explicitly
+    # carry the originating task's hooks instead of relying on that context.
+    hooks=request_hooks.get()
+    control_error=None
     try:
         async with async_playwright() as playwright:
             address = await public_ip(settings.allowed_host)
@@ -56,6 +61,10 @@ async def run_playwright_fallback(
             page = await context.new_page()
 
             async def block_heavy(route: Any) -> None:
+                nonlocal control_error
+                if control_error:
+                    await route.abort()
+                    return
                 try:
                     validate_internal_url(route.request.url, settings.allowed_host)
                 except Exception:
@@ -69,21 +78,35 @@ async def run_playwright_fallback(
                     if route.request.method != 'GET':
                         await route.abort()
                         return
+                    token=request_hooks.set(hooks)
                     try:
                         async with httpx.AsyncClient(follow_redirects=False, trust_env=False) as client:
                             response = await bounded_get(client, route.request.url,
                                 await route.request.all_headers(), settings.request_timeout)
+                        if response.status_code in (401,403,429):
+                            raise AccessBlockedError('source_access_blocked')
                         await route.fulfill(status=response.status_code,
                             headers=dict(response.headers), body=response.content)
+                    except (AccessBlockedError,SourceBudgetDeferred,SourceCircuitOpen,CapacityDeferred) as exc:
+                        control_error=exc
+                        await route.abort()
                     except Exception:
                         await route.abort()
+                    finally:
+                        request_hooks.reset(token)
 
             await page.route("**/*", block_heavy)
             await page.goto(canonical_url, wait_until="domcontentloaded", timeout=int(settings.request_timeout * 1_000))
+            if control_error:
+                raise control_error
             discovery = parse_event_page(await page.content(), canonical_url)
             cookies = {item["name"]: item["value"] for item in await context.cookies()}
+            if control_error:
+                raise control_error
             if discovery.endpoint_url:
                 await browser.close()
+                if control_error:
+                    raise control_error
                 return PlaywrightOutcome(discovery=discovery, cookies=cookies)
 
             extracted_at = datetime.now(timezone.utc)
@@ -105,6 +128,8 @@ async def run_playwright_fallback(
                         wait_until="domcontentloaded",
                         timeout=int(settings.request_timeout * 1_000),
                     )
+                    if control_error:
+                        raise control_error
                     loading = page.locator("#loading")
                     if await loading.count():
                         try:
@@ -173,7 +198,11 @@ async def run_playwright_fallback(
                             extracted_at,
                         )
                     )
+            if control_error:
+                raise control_error
             await browser.close()
+            if control_error:
+                raise control_error
             records, duplicates = deduplicate_records(records)
             if duplicates:
                 warnings.append(f"O fallback descartou {duplicates} linha(s) duplicada(s).")
@@ -183,15 +212,21 @@ async def run_playwright_fallback(
                 records=records,
                 warnings=warnings,
             )
-    except StructureChangedError:
+    except (StructureChangedError,AccessBlockedError,SourceBudgetDeferred,SourceCircuitOpen,CapacityDeferred):
         raise
     except PlaywrightTimeoutError as exc:
+        if control_error:
+            raise control_error
         raise RequestFailedError("O fallback do navegador excedeu o tempo de espera.") from exc
     except PlaywrightError as exc:
+        if control_error:
+            raise control_error
         if "Executable doesn't exist" in str(exc):
             raise RequestFailedError(
                 "O Chromium do Playwright não está instalado. Execute 'playwright install chromium'."
             ) from exc
         raise RequestFailedError("O navegador do fallback não pôde ser iniciado.") from exc
     except Exception as exc:
+        if control_error:
+            raise control_error
         raise RequestFailedError("Não foi possível extrair os resultados com o fallback do navegador.") from exc

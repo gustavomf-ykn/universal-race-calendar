@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { enqueueTask, prisma, publicTask, TaskConflict, listWorkers } from "@race-calendar/database";
+import { enqueueTask, prisma, publicTask, TaskConflict, listWorkers, readResultCheckpoint, editionLocationEvidence, resolveEventId, resolveEventIds } from "@race-calendar/database";
 import { authorize, keyHash, requireAdmin } from "./auth.js";
 import { resultSchema, disciplineSchema, matchSchema } from "./contracts.js";
 
@@ -35,6 +35,12 @@ const taskSchema = {
     executionHold: { type: "boolean" },
     holdReason: { type: ["string","null"] },
     progress: { type: "object", additionalProperties: true },
+    checkpoint: { type: "object", properties: {
+      available: { type: "boolean" }, reason: { type: ["string", "null"] }, rootId: text, status: text,
+      parserVersion: { type: "integer" }, pageSize: { type: "integer" },
+      groups: { type: "integer" }, completedGroups: { type: "integer" }, pages: { type: "integer" }, records: { type: "integer" },
+      expiresAt: { type: "string", format: "date-time" },
+    } },
     attempt: { type: "integer" },
     maxAttempts: { type: "integer" },
     errorCode: { type: ["string", "null"] },
@@ -157,7 +163,7 @@ export async function registerBackend(app: FastifyInstance) {
       if (body.source === "openresults") {
         if (!body.eventId) return reply.code(400).send({ error: "event_id_required" });
         const reference = await prisma.eventSourceReference.findFirst({
-          where: { eventId: body.eventId, sourceType: "openresults" },
+          where: { eventId: await resolveEventId(body.eventId), sourceType: "openresults" },
         });
         if (!reference) return reply.code(409).send({ error: "source_association_required" });
         return acceptTask(req, reply, "openresults", "extract", {
@@ -205,7 +211,7 @@ export async function registerBackend(app: FastifyInstance) {
     async (req, reply) => {
       const t = await prisma.collectionTask.findUnique({ where: { id: (req.params as { id: string }).id } });
       if (!t || !owned(t.ownerId, req)) return reply.code(404).send({ error: "task_not_found" });
-      return publicTask(t);
+      return { ...publicTask(t), checkpoint: await readResultCheckpoint(t) };
     },
   );
   app.post(
@@ -233,7 +239,7 @@ export async function registerBackend(app: FastifyInstance) {
       },
     },
     async (req, reply) => {
-      const eventId = (req.params as { id: string }).id;
+      const eventId = await resolveEventId((req.params as { id: string }).id);
       if (!(await prisma.event.findFirst({ where: { id: eventId, publicationStatus: "published" } })))
         return reply.code(404).send({ error: "event_not_found" });
       return {
@@ -265,7 +271,7 @@ export async function registerBackend(app: FastifyInstance) {
       },
     },
     async (req, reply) => {
-      const eventId = (req.params as { id: string }).id;
+      const eventId = await resolveEventId((req.params as { id: string }).id);
       if (!(await prisma.event.findFirst({ where: { id: eventId, publicationStatus: "published" } })))
         return reply.code(404).send({ error: "event_not_found" });
       const { page: p, limit: l } = page(req.query);
@@ -312,7 +318,8 @@ export async function registerBackend(app: FastifyInstance) {
       },
     },
     async (req, reply) => {
-      const eventId = (req.params as { id: string }).id;
+      const requestedEventId = (req.params as { id: string }).id;
+      const eventId = await resolveEventId(requestedEventId);
       if (!(await prisma.event.findFirst({ where: { id: eventId, publicationStatus: "published" } })))
         return reply.code(404).send({ error: "event_not_found" });
       if (!(await prisma.resultSet.count({ where: { eventId } })))
@@ -320,7 +327,7 @@ export async function registerBackend(app: FastifyInstance) {
       let task;
       try {
         task = await enqueueTask(req.principal!.id, String(req.headers["idempotency-key"]), "exports", "export", {
-          eventId,
+          eventId: requestedEventId,
         });
       } catch (e) {
         if (e instanceof TaskConflict) return reply.code(409).send({ error: e.message });
@@ -368,7 +375,7 @@ export async function registerBackend(app: FastifyInstance) {
       if (!item || !owned(item.ownerId, req)) return reply.code(404).send({ error: "export_not_found" });
       const selection=item.selection as {eventIds?:string[];administrative?:boolean};
       if(selection.administrative && !req.principal!.admin)return reply.code(403).send({error:"admin_required"});
-      const eventIds=item.eventId?[item.eventId]:selection.eventIds??[];
+      const eventIds=await resolveEventIds(item.eventId?[item.eventId]:selection.eventIds??[]);
       if(!req.principal!.admin && await prisma.event.count({where:{id:{in:eventIds},publicationStatus:"published"}})!==eventIds.length)
         return reply.code(404).send({error:"event_not_found"});
       const task = await prisma.collectionTask.findUnique({ where: { id: item.taskId }, select: { status: true } });
@@ -456,17 +463,24 @@ export async function registerBackend(app: FastifyInstance) {
       },
     },
     async (req, reply) => {
-      const match = await prisma.sourceMatch.findUnique({ where: { id: (req.params as { id: string }).id } });
-      const eventId = (req.body as { eventId: string }).eventId;
-      const event = await prisma.event.findUnique({ where: { id: eventId } });
-      if (!match || !event) return reply.code(404).send({ error: "match_or_event_not_found" });
-      if (!match.date || !event.date || match.date.toISOString().slice(0, 10) !== event.date.toISOString().slice(0, 10))
-        return reply.code(409).send({ error: "edition_date_mismatch" });
-      const existing = await prisma.eventSourceReference.findUnique({
-        where: { sourceType_sourceExternalId: { sourceType: match.source, sourceExternalId: match.externalId } },
-      });
-      if (existing && existing.eventId !== eventId) return reply.code(409).send({ error: "already_associated" });
+      const matchId = (req.params as { id: string }).id;
+      const requestedEventId = (req.body as { eventId: string }).eventId;
       return prisma.$transaction(async (tx) => {
+        const eventId = await resolveEventId(requestedEventId, tx);
+        await tx.$queryRaw`SELECT id FROM "Event" WHERE id=${eventId} FOR UPDATE`;
+        await tx.$queryRaw`SELECT id FROM "SourceMatch" WHERE id=${matchId} FOR UPDATE`;
+        const match = await tx.sourceMatch.findUnique({ where: { id: matchId } });
+        const event = await tx.event.findUnique({ where: { id: eventId } });
+        if (!match || !event) return reply.code(404).send({ error: "match_or_event_not_found" });
+        if (!match.date || !event.date || match.date.toISOString().slice(0, 10) !== event.date.toISOString().slice(0, 10))
+          return reply.code(409).send({ error: "edition_date_mismatch" });
+        if (editionLocationEvidence(match, event) === "edition_location_conflict")
+          return reply.code(409).send({ error: "edition_location_conflict" });
+        const existing = await tx.eventSourceReference.findUnique({
+          where: { sourceType_sourceExternalId: { sourceType: match.source, sourceExternalId: match.externalId } },
+        });
+        if (existing && existing.eventId !== eventId) return reply.code(409).send({ error: "already_associated" });
+        if (existing && match.status === "resolved" && match.eventId === eventId) return match;
         const source = await tx.source.upsert({
           where: { adapter_externalId: { adapter: match.source, externalId: match.externalId } },
           update: {},
@@ -490,10 +504,13 @@ export async function registerBackend(app: FastifyInstance) {
           },
         });
         if (linked.eventId !== eventId) throw Object.assign(new Error("already_associated"), { statusCode: 409 });
-        return tx.sourceMatch.update({
+        const resolved = await tx.sourceMatch.update({
           where: { id: match.id },
           data: { eventId, status: "resolved", resolvedBy: req.principal!.id, updatedAt: new Date() },
         });
+        await tx.adminAudit.create({ data: { actorId: req.principal!.id, eventId, action: "resolve_source_match",
+          details: { matchId: match.id, source: match.source, externalId: match.externalId } } });
+        return resolved;
       });
     },
   );

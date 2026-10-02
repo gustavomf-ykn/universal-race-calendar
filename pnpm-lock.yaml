@@ -159,6 +159,9 @@ importers:
       '@race-calendar/schemas':
         specifier: workspace:*
         version: link:../schemas
+      '@race-calendar/utils':
+        specifier: workspace:*
+        version: link:../utils
     devDependencies:
       prisma:
         specifier: ^6.2.1

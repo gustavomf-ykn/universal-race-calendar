@@ -1,10 +1,46 @@
 import { randomUUID } from "node:crypto";
+import { CURATION_PIPELINE_VERSION } from "@race-calendar/utils";
 import { assertTaskLease } from "./lease.js";
+import { capacityGrowth } from "./capacity.js";
+import { editionLinks, editionUrlVariants, crossSourceEditionReason } from "./edition-evidence.js";
+import { resolveEventId, resolveEventSlug } from "./event-reconciliation.js";
+export { editionIdentity, editionLinks, editionLocationEvidence, editionFailureCode } from "./edition-evidence.js";
+export { eventPublicationError, hasPublicationReference, validPublicationDate, validPublicationCity,
+  validBrazilianPublicationLocation, validPublicationReference, brazilianStateCodes } from "./publication-policy.js";
 export { setTaskLease, assertTaskLease } from "./lease.js";
+export { assertCapacity, CapacityDeferred, capacityReasons, deferCapacityTask, readCapacity, controlCapacity } from "./capacity.js";
 export { listWorkers, workerPresence, newWorkerId } from "./presence.js";
+export { compareSourceObservations, observationOf, comparisonFields } from "./source-comparison.js";
+export type { SourceObservation } from "./source-comparison.js";
+import { observationOf } from "./source-comparison.js";
 export { enqueueTask, claimTask, heartbeatTask, finishTask, publicTask, TaskConflict, stableJson } from "./tasks.js";
+export { catalogCheckpoint, coordinateCatalogSyncs, controlCatalogSync } from "./catalog-continuation.js";
+export { publicCatalogSync } from "./catalog-report.js";
+export { readResultCheckpoint, reserveResultCheckpoint, resultCheckpointRoot } from "./result-checkpoints.js";
+export { resolveEventId, resolveEventIds, resolveEventSlug, previewEventReconciliation,
+  reconcileEventEditions, ReconciliationConflict } from "./event-reconciliation.js";
+export type { ReconciliationInput } from "./event-reconciliation.js";
+export {
+  requestSource,
+  requestSources,
+  waitForSourceRequest,
+  SourceBudgetDeferred,
+  SourceCircuitOpen,
+  deferSourceTask,
+  blockSourceRequests,
+  observeSourceResponse,
+  publicSourceControl,
+  resumeSourceRequests,
+  configureSourceRequests,
+} from "./source-requests.js";
+export type { RequestSource } from "./source-requests.js";
 import { PrismaClient } from "@prisma/client";
-import type { CanonicalRaceEvent, CurationJobStatus, CurationStatus, RawSourceExtraction } from "@race-calendar/schemas";
+import type {
+  CanonicalRaceEvent,
+  CurationJobStatus,
+  CurationStatus,
+  RawSourceExtraction,
+} from "@race-calendar/schemas";
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
@@ -39,7 +75,9 @@ export type CreateSourceInput = {
 };
 
 export async function createSource(input: CreateSourceInput) {
-  return prisma.source.create({
+  return prisma.$transaction(async tx => {
+   await assertTaskLease(tx, capacityGrowth(input));
+   return tx.source.create({
     data: withoutUndefined({
       id: prefixedId("src"),
       name: input.name,
@@ -54,9 +92,12 @@ export async function createSource(input: CreateSourceInput) {
       checkIntervalMinutes: input.checkIntervalMinutes,
     }),
   });
+  });
 }
 
-export async function upsertSourceByAdapterExternalId(input: CreateSourceInput & { adapter: string; externalId: string }) {
+export async function upsertSourceByAdapterExternalId(
+  input: CreateSourceInput & { adapter: string; externalId: string },
+) {
   const existing = await prisma.source.findFirst({
     where: {
       adapter: input.adapter,
@@ -65,7 +106,9 @@ export async function upsertSourceByAdapterExternalId(input: CreateSourceInput &
   });
   if (!existing) return createSource(input);
 
-  return prisma.source.update({
+  return prisma.$transaction(async tx => {
+   await assertTaskLease(tx, capacityGrowth(input));
+   return tx.source.update({
     where: { id: existing.id },
     data: withoutUndefined({
       name: input.name,
@@ -80,6 +123,7 @@ export async function upsertSourceByAdapterExternalId(input: CreateSourceInput &
       checkIntervalMinutes: input.checkIntervalMinutes,
       status: "active",
     }),
+  });
   });
 }
 
@@ -103,7 +147,9 @@ export async function createExtractionJob(sourceId: string) {
 }
 
 export async function saveRawSourceExtraction(raw: RawSourceExtraction) {
-  return prisma.rawSourceExtraction.create({
+  return prisma.$transaction(async tx => {
+   await assertTaskLease(tx, capacityGrowth(raw));
+   return tx.rawSourceExtraction.create({
     data: {
       id: prefixedId("raw"),
       sourceId: raw.sourceId,
@@ -120,6 +166,7 @@ export async function saveRawSourceExtraction(raw: RawSourceExtraction) {
       adapterVersion: raw.adapterVersion,
       fetchedAt: new Date(raw.fetchedAt),
     },
+  });
   });
 }
 
@@ -142,7 +189,9 @@ export type SaveImportRunInput = {
 };
 
 export async function saveImportRun(input: SaveImportRunInput) {
-  return prisma.importRun.create({
+  return prisma.$transaction(async tx => {
+   await assertTaskLease(tx, capacityGrowth(input));
+   return tx.importRun.create({
     data: {
       id: input.id,
       source: input.source,
@@ -161,6 +210,7 @@ export async function saveImportRun(input: SaveImportRunInput) {
       finishedAt: new Date(input.finishedAt),
     },
   });
+  });
 }
 
 export async function getLatestImportRun(source?: string) {
@@ -172,30 +222,49 @@ export async function getLatestImportRun(source?: string) {
   );
 }
 
-export async function saveCanonicalEvent(event: CanonicalRaceEvent, options: { contentHash?: string | null } = {}): Promise<{
+export async function saveCanonicalEvent(
+  event: CanonicalRaceEvent,
+  options: { contentHash?: string | null } = {},
+): Promise<{
   event: { id: string };
   canonicalEvent: CanonicalRaceEvent;
   duplicateOfEventId: string | null;
 }> {
   const directExisting =
     event.sourceType && event.sourceExternalId
-      ? await prisma.event.findFirst({ where: { sourceType: event.sourceType, sourceExternalId: event.sourceExternalId } })
+      ? await prisma.event.findFirst({
+          where: { sourceType: event.sourceType, sourceExternalId: event.sourceExternalId },
+        })
       : null;
   const referenceExisting =
     !directExisting && event.sourceType && event.sourceExternalId
       ? await prisma.eventSourceReference.findUnique({
-          where: { sourceType_sourceExternalId: { sourceType: event.sourceType, sourceExternalId: event.sourceExternalId } },
+          where: {
+            sourceType_sourceExternalId: { sourceType: event.sourceType, sourceExternalId: event.sourceExternalId },
+          },
           include: { event: true },
         })
       : null;
   const existingBySource = directExisting ?? referenceExisting?.event ?? null;
-  if(existingBySource?.date && event.date && existingBySource.date.getUTCFullYear()!==new Date(event.date).getUTCFullYear()) {
+  if (
+    existingBySource?.date &&
+    event.date &&
+    existingBySource.date.getUTCFullYear() !== new Date(event.date).getUTCFullYear()
+  ) {
     throw new Error("source_identifier_reused_for_different_edition");
+  }
+  if (existingBySource && existingBySource.sourceType !== event.sourceType) {
+    const linked = await mergeCrossSourceEvent(existingBySource.id, event);
+    const role =
+      sourcePriority(event.sourceType) > sourcePriority(existingBySource.sourceType) ? "primary" : "supplemental";
+    await upsertEventSourceReference(linked.event.id, event, role, options.contentHash);
+    return linked;
   }
   const crossSourceMatch = existingBySource ? null : await findCanonicalEventMatch(event);
   if (crossSourceMatch?.automatic) {
-    const linked = await mergeCrossSourceEvent(crossSourceMatch.event.id, event);
-    const role = sourcePriority(event.sourceType) > sourcePriority(crossSourceMatch.event.sourceType) ? "primary" : "supplemental";
+    const linked = await mergeCrossSourceEvent(crossSourceMatch.event.id, event, true);
+    const role =
+      sourcePriority(event.sourceType) > sourcePriority(crossSourceMatch.event.sourceType) ? "primary" : "supplemental";
     await upsertEventSourceReference(linked.event.id, event, role, options.contentHash);
     return linked;
   }
@@ -211,16 +280,29 @@ export async function saveCanonicalEvent(event: CanonicalRaceEvent, options: { c
     dedupeStatus,
     duplicateOfEventId,
     publishabilityReasons: duplicate
-      ? [...new Set([...event.publishabilityReasons, "possible_duplicate"])]
+      ? [...new Set([...event.publishabilityReasons, "possible_duplicate", ...(crossSourceMatch?.reason ? [crossSourceMatch.reason] : [])])]
       : event.publishabilityReasons,
   };
 
   if (existingBySource) {
     const saved = await prisma.$transaction(async (tx) => {
-      await assertTaskLease(tx);
+      await assertTaskLease(tx, capacityGrowth(canonicalEvent));
       await tx.$queryRaw`SELECT id FROM "Event" WHERE id=${existingBySource.id} FOR UPDATE`;
-      const current=await tx.event.findUniqueOrThrow({where:{id:existingBySource.id}});
-      if(current.administrativeReview || ["hidden","rejected"].includes(current.publicationStatus))canonicalEvent.publicationStatus=current.publicationStatus;
+      const current = await tx.event.findUniqueOrThrow({
+        where: { id: existingBySource.id },
+        include: {
+          distances: true,
+          prices: true,
+          kits: true,
+          kitPickups: true,
+          schedule: true,
+          rules: true,
+          images: true,
+        },
+      });
+      await preserveValidatedMetadata(tx, canonicalEvent, current);
+      if (current.administrativeReview || ["hidden", "rejected"].includes(current.publicationStatus))
+        canonicalEvent.publicationStatus = current.publicationStatus;
       const updated = await tx.event.update({
         where: { id: existingBySource.id },
         data: {
@@ -236,24 +318,23 @@ export async function saveCanonicalEvent(event: CanonicalRaceEvent, options: { c
       return updated;
     });
     const role = existingBySource.sourceType === canonicalEvent.sourceType ? "primary" : "supplemental";
-    await upsertEventSourceReference(saved.id, canonicalEvent, role, options.contentHash);
+    await upsertEventSourceReference(saved.id, event, role, options.contentHash);
     return { event: saved, canonicalEvent, duplicateOfEventId };
   }
 
-  const saved = await prisma.$transaction(async tx=>{
-    await assertTaskLease(tx);
+  const saved = await prisma.$transaction(async (tx) => {
+    await assertTaskLease(tx, capacityGrowth(canonicalEvent));
     return tx.event.create({
-    data: {
-      id: prefixedId("evt"),
-      ...eventScalarData(canonicalEvent),
-      publishedAt: publicationStatus === "published" ? new Date() : null,
-      ...eventChildrenCreateData(canonicalEvent),
-      versions: {
-        create: eventVersionData(canonicalEvent),
+      data: {
+        id: prefixedId("evt"),
+        ...eventScalarData(canonicalEvent),
+        publishedAt: publicationStatus === "published" ? new Date() : null,
+        ...eventChildrenCreateData(canonicalEvent),
+        versions: {
+          create: eventVersionData(canonicalEvent),
+        },
       },
-    },
-  });
-
+    });
   });
   await upsertEventSourceReference(saved.id, canonicalEvent, "primary", options.contentHash);
 
@@ -265,6 +346,7 @@ export async function findCanonicalEventMatch(event: CanonicalRaceEvent): Promis
   score: number;
   automatic: boolean;
   sameSource: boolean;
+  reason?: string;
 } | null> {
   if (event.sourceType && event.sourceExternalId) {
     const sameSource = await prisma.event.findFirst({
@@ -279,45 +361,47 @@ export async function findCanonicalEventMatch(event: CanonicalRaceEvent): Promis
     if (sameSource) return { event: sameSource, score: 1, automatic: true, sameSource: true };
   }
   if (!event.date) return null;
-  const editionDate=new Date(`${event.date}T00:00:00.000Z`);
-  const ticketSportsId = ticketSportsIdFromEvent(event);
-  if (ticketSportsId) {
-    const byTicketSportsId = await prisma.event.findMany({
-      take: 2,
-      where: {
-        date: editionDate,
-        OR: [
-          { sourceType: "ticketsports", sourceExternalId: ticketSportsId },
-          { sourceReferences: { some: { sourceType: "ticketsports", sourceExternalId: ticketSportsId } } },
-        ],
-        publicationStatus: { not: "rejected" },
-      },
-      select: { id: true, sourceType: true },
-    });
-    if (byTicketSportsId.length) return { event: byTicketSportsId[0]!, score: 1, automatic: byTicketSportsId.length === 1, sameSource: false };
-  }
-
-  const urls = [event.registrationUrl, event.officialUrl, event.sourceUrl].filter((value): value is string => Boolean(value));
-  if (urls.length) {
+  const editionDate = new Date(`${event.date}T00:00:00.000Z`);
+  const links = editionLinks(event);
+  const ticketSportsIds = [...new Set(links.filter(link => link.source === "ticketsports").map(link => link.externalId))];
+  const urls = [...new Set(links.flatMap(editionUrlVariants))];
+  if (urls.length || ticketSportsIds.length) {
     const byUrl = await prisma.event.findMany({
       take: 2,
       where: {
         date: editionDate,
-        publicationStatus: { not: "rejected" },
         OR: [
+          { sourceType: "ticketsports", sourceExternalId: { in: ticketSportsIds } },
+          { sourceReferences: { some: { sourceType: "ticketsports", sourceExternalId: { in: ticketSportsIds } } } },
           { registrationUrl: { in: urls } },
           { officialUrl: { in: urls } },
           { sourceUrl: { in: urls } },
           { sourceReferences: { some: { url: { in: urls } } } },
         ],
       },
-      select: { id: true, sourceType: true },
+      select: { id: true, sourceType: true, sourceExternalId: true, sourceUrl: true, registrationUrl: true, officialUrl: true,
+        date: true, city: true, state: true, country: true, publicationStatus: true,
+        sourceReferences: { select: { sourceType: true, sourceExternalId: true, url: true, observation: true, lastValidatedAt: true } } },
+      orderBy: { id: "asc" },
     });
-    if (byUrl.length) return { event: byUrl[0]!, score: 1, automatic: byUrl.length === 1, sameSource: false };
+    if (byUrl.length) {
+      const candidate = byUrl[0]!;
+      const reason = byUrl.length !== 1 ? "edition_link_ambiguous" : crossSourceEditionReason(event, candidate);
+      return { event: candidate, score: 1, automatic: reason === null, sameSource: false, reason: reason ?? "edition_link_confirmed" };
+    }
+  }
+  // A generic official/organizer URL is useful for review, never an edition identity.
+  const reviewUrls = [event.registrationUrl, event.officialUrl, event.sourceUrl].filter((value): value is string => Boolean(value));
+  if (reviewUrls.length) {
+    const byGenericUrl = await prisma.event.findMany({ take: 2, where: { date: editionDate,
+      publicationStatus: { not: "rejected" }, OR: [{ registrationUrl: { in: reviewUrls } }, { officialUrl: { in: reviewUrls } },
+        { sourceUrl: { in: reviewUrls } }, { sourceReferences: { some: { url: { in: reviewUrls } } } }] },
+      select: { id: true, sourceType: true }, orderBy: { id: "asc" } });
+    if (byGenericUrl.length) return { event: byGenericUrl[0]!, score: 1, automatic: false, sameSource: false, reason: "edition_link_unconfirmed" };
   }
 
   const exact = await prisma.event.findMany({
-      take: 2,
+    take: 2,
     where: {
       canonicalFingerprint: event.canonicalFingerprint,
       date: editionDate,
@@ -326,7 +410,7 @@ export async function findCanonicalEventMatch(event: CanonicalRaceEvent): Promis
     orderBy: { createdAt: "asc" },
     select: { id: true, sourceType: true },
   });
-  if (exact.length) return { event: exact[0]!, score: 1, automatic: exact.length === 1, sameSource: false };
+  if (exact.length) return { event: exact[0]!, score: 1, automatic: false, sameSource: false, reason: "edition_fingerprint_review" };
   if (!event.date || !event.city || !event.state) return null;
 
   const candidates = await prisma.event.findMany({
@@ -355,6 +439,7 @@ export async function findCanonicalEventMatch(event: CanonicalRaceEvent): Promis
 async function mergeCrossSourceEvent(
   existingEventId: string,
   incoming: CanonicalRaceEvent,
+  requireEditionEvidence = false,
 ): Promise<{ event: { id: string }; canonicalEvent: CanonicalRaceEvent; duplicateOfEventId: null }> {
   const existing = await prisma.event.findUnique({
     where: { id: existingEventId },
@@ -388,9 +473,15 @@ async function mergeCrossSourceEvent(
             ? "published"
             : incoming.publicationStatus,
         confidence: Math.max(existing.confidence, incoming.confidence),
-        canonicalFingerprint: incoming.date && incoming.city && incoming.state ? incoming.canonicalFingerprint : existing.canonicalFingerprint,
+        canonicalFingerprint:
+          incoming.date && incoming.city && incoming.state
+            ? incoming.canonicalFingerprint
+            : existing.canonicalFingerprint,
         warnings: [...new Set([...jsonArray(existing.warnings), ...incoming.warnings])],
-        publishabilityReasons: incoming.publicationStatus === "published" ? incoming.publishabilityReasons : jsonArray(existing.publishabilityReasons),
+        publishabilityReasons:
+          incoming.publicationStatus === "published"
+            ? incoming.publishabilityReasons
+            : jsonArray(existing.publishabilityReasons),
         distances: incoming.distances.length ? incoming.distances : existing.distances,
         prices: incoming.prices.length ? incoming.prices : existingPrices(existing.prices),
         kits: incoming.kits.length ? incoming.kits : existingKits(existing.kits),
@@ -451,6 +542,27 @@ async function mergeCrossSourceEvent(
 
   const updated = await prisma.$transaction(async (tx) => {
     await assertTaskLease(tx);
+    await tx.$queryRaw`SELECT id FROM "Event" WHERE id=${existing.id} FOR UPDATE`;
+    const current = await tx.event.findUniqueOrThrow({
+      where: { id: existing.id },
+      include: {
+        sourceReferences: true,
+        distances: true,
+        prices: true,
+        kits: true,
+        kitPickups: true,
+        schedule: true,
+        rules: true,
+        images: true,
+      },
+    });
+    if (requireEditionEvidence) {
+      const reason = crossSourceEditionReason(incoming, current);
+      if (reason) throw new Error(reason);
+    }
+    await preserveValidatedMetadata(tx, canonicalEvent, current);
+    if (current.administrativeReview || ["hidden", "rejected"].includes(current.publicationStatus))
+      canonicalEvent.publicationStatus = current.publicationStatus;
     if (promoteIncoming) {
       const row = await tx.event.update({
         where: { id: existing.id },
@@ -468,45 +580,59 @@ async function mergeCrossSourceEvent(
     const row = await tx.event.update({
       where: { id: existing.id },
       data: {
-        description: existing.description ?? incoming.description,
-        startTime: existing.startTime ?? incoming.startTime,
-        endTime: existing.endTime ?? incoming.endTime,
-        city: existing.city ?? incoming.city,
-        state: existing.state ?? incoming.state,
-        country: existing.country ?? incoming.country,
-        locationName: existing.locationName ?? incoming.locationName,
-        address: existing.address ?? incoming.address,
-        latitude: existing.latitude ?? incoming.latitude,
-        longitude: existing.longitude ?? incoming.longitude,
-        registrationUrl: existing.registrationUrl ?? incoming.registrationUrl,
-        officialUrl: existing.officialUrl ?? incoming.officialUrl,
-        regulationUrl: existing.regulationUrl ?? incoming.regulationUrl,
-        organizerName: existing.organizerName ?? incoming.organizerName,
-        organizerUrl: existing.organizerUrl ?? incoming.organizerUrl,
-        mainImageUrl: existing.mainImageUrl ?? incoming.mainImageUrl,
+        description: canonicalEvent.description,
+        startTime: canonicalEvent.startTime,
+        endTime: canonicalEvent.endTime,
+        city: canonicalEvent.city,
+        state: canonicalEvent.state,
+        country: canonicalEvent.country,
+        locationName: canonicalEvent.locationName,
+        address: canonicalEvent.address,
+        latitude: canonicalEvent.latitude,
+        longitude: canonicalEvent.longitude,
+        registrationUrl: canonicalEvent.registrationUrl,
+        officialUrl: canonicalEvent.officialUrl,
+        regulationUrl: canonicalEvent.regulationUrl,
+        organizerName: canonicalEvent.organizerName,
+        organizerUrl: canonicalEvent.organizerUrl,
+        mainImageUrl: canonicalEvent.mainImageUrl,
         versions: { create: eventVersionData(canonicalEvent) },
       },
     });
     if (!existing.distances.length && incoming.distances.length) {
-      await tx.eventDistance.createMany({ data: distanceCreateData(incoming).map((item) => ({ ...item, eventId: existing.id })) });
+      await tx.eventDistance.createMany({
+        data: distanceCreateData(incoming).map((item) => ({ ...item, eventId: existing.id })),
+      });
     }
     if (!existing.prices.length && incoming.prices.length) {
-      await tx.eventPrice.createMany({ data: priceCreateData(incoming).map((item) => ({ ...item, eventId: existing.id })) });
+      await tx.eventPrice.createMany({
+        data: priceCreateData(incoming).map((item) => ({ ...item, eventId: existing.id })),
+      });
     }
     if (!existing.kits.length && incoming.kits.length) {
-      await tx.eventKit.createMany({ data: kitCreateData(incoming).map((item) => ({ ...item, eventId: existing.id })) });
+      await tx.eventKit.createMany({
+        data: kitCreateData(incoming).map((item) => ({ ...item, eventId: existing.id })),
+      });
     }
     if (!existing.kitPickups.length && incoming.kitPickup) {
-      await tx.eventKitPickup.createMany({ data: kitPickupCreateData(incoming).map((item) => ({ ...item, eventId: existing.id })) });
+      await tx.eventKitPickup.createMany({
+        data: kitPickupCreateData(incoming).map((item) => ({ ...item, eventId: existing.id })),
+      });
     }
     if (!existing.schedule.length && incoming.schedule.length) {
-      await tx.eventSchedule.createMany({ data: scheduleCreateData(incoming).map((item) => ({ ...item, eventId: existing.id })) });
+      await tx.eventSchedule.createMany({
+        data: scheduleCreateData(incoming).map((item) => ({ ...item, eventId: existing.id })),
+      });
     }
     if (!existing.rules.length && incoming.rules.length) {
-      await tx.eventRule.createMany({ data: ruleCreateData(incoming).map((item) => ({ ...item, eventId: existing.id })) });
+      await tx.eventRule.createMany({
+        data: ruleCreateData(incoming).map((item) => ({ ...item, eventId: existing.id })),
+      });
     }
     if (!existing.images.length && incoming.images.length) {
-      await tx.eventImage.createMany({ data: incoming.images.map((url, index) => ({ eventId: existing.id, url, sortOrder: index })) });
+      await tx.eventImage.createMany({
+        data: incoming.images.map((url, index) => ({ eventId: existing.id, url, sortOrder: index })),
+      });
     }
     return row;
   });
@@ -520,33 +646,92 @@ async function upsertEventSourceReference(
   contentHash?: string | null,
 ) {
   if (!event.sourceId || !event.sourceType || !event.sourceExternalId || !event.sourceUrl) return;
-  await prisma.$transaction(async tx => {
+  await prisma.$transaction(async (tx) => {
     await assertTaskLease(tx);
     await tx.eventSourceReference.upsert({
-    where: { sourceType_sourceExternalId: { sourceType: event.sourceType!, sourceExternalId: event.sourceExternalId! } },
-    create: {
-      id: prefixedId("ref"),
-      eventId,
-      sourceId: event.sourceId!,
-      sourceType: event.sourceType!,
-      sourceExternalId: event.sourceExternalId!,
-      url: event.sourceUrl!,
-      role,
-      priority: sourcePriority(event.sourceType!),
-      contentHash: contentHash ?? null,
-      lastSeenAt: new Date(),
-    },
-    update: {
-      eventId,
-      sourceId: event.sourceId!,
-      url: event.sourceUrl!,
-      role,
-      priority: sourcePriority(event.sourceType!),
-      ...(contentHash ? { contentHash } : {}),
-      lastSeenAt: new Date(),
-    },
+      where: {
+        sourceType_sourceExternalId: { sourceType: event.sourceType!, sourceExternalId: event.sourceExternalId! },
+      },
+      create: {
+        id: prefixedId("ref"),
+        eventId,
+        sourceId: event.sourceId!,
+        sourceType: event.sourceType!,
+        sourceExternalId: event.sourceExternalId!,
+        url: event.sourceUrl!,
+        role,
+        priority: sourcePriority(event.sourceType!),
+        contentHash: contentHash ?? null,
+        observation: json(observationOf(event)),
+        lastValidatedAt: new Date(),
+        lastSeenAt: new Date(),
+      },
+      update: {
+        eventId,
+        sourceId: event.sourceId!,
+        url: event.sourceUrl!,
+        role,
+        priority: sourcePriority(event.sourceType!),
+        ...(contentHash ? { contentHash } : {}),
+        observation: json(observationOf(event)),
+        lastValidatedAt: new Date(),
+        lastSeenAt: new Date(),
+      },
     });
   });
+}
+
+async function preserveValidatedMetadata(tx: any, incoming: CanonicalRaceEvent, current: any) {
+  const audits = await tx.adminAudit.findMany({
+    where: { eventId: current.id, action: "review_event" },
+    select: { details: true },
+  });
+  const protectedFields = new Set<string>(
+    audits.flatMap((audit: { details: { changes?: object } }) => Object.keys(audit.details?.changes ?? {})),
+  );
+  const scalarFields = [
+    "name",
+    "description",
+    "date",
+    "startTime",
+    "endTime",
+    "city",
+    "state",
+    "country",
+    "locationName",
+    "address",
+    "latitude",
+    "longitude",
+    "modality",
+    "eventStatus",
+    "registrationUrl",
+    "officialUrl",
+    "regulationUrl",
+    "organizerName",
+    "organizerUrl",
+    "mainImageUrl",
+  ];
+  const target = incoming as unknown as Record<string, unknown>;
+  for (const field of scalarFields) {
+    if (
+      protectedFields.has(field) ||
+      target[field] == null ||
+      target[field] === "" ||
+      (field === "name" && incoming.warnings.includes("missing_name")) ||
+      (field === "modality" && target[field] === "unknown" && current.modality !== "unknown")
+    ) {
+      if (protectedFields.has(field) || current[field] != null)
+        target[field] = field === "date" ? dateToIsoDate(current.date) : current[field];
+    }
+  }
+  // Missing optional collections are not evidence that previously validated information was removed.
+  if (!incoming.distances.length) incoming.distances = current.distances;
+  if (!incoming.prices.length) incoming.prices = existingPrices(current.prices);
+  if (!incoming.kits.length) incoming.kits = existingKits(current.kits);
+  if (!incoming.schedule.length) incoming.schedule = existingSchedule(current.schedule);
+  if (!incoming.rules.length) incoming.rules = existingRules(current.rules);
+  if (!incoming.kitPickup) incoming.kitPickup = existingKitPickup(current.kitPickups[0]);
+  if (!incoming.images.length) incoming.images = current.images.map((image: { url: string }) => image.url);
 }
 
 function eventScalarData(canonicalEvent: CanonicalRaceEvent) {
@@ -626,16 +811,40 @@ async function replaceEventChildren(tx: any, eventId: string, canonicalEvent: Ca
   await tx.eventRule.deleteMany({ where: { eventId } });
   await tx.eventImage.deleteMany({ where: { eventId } });
 
-  await createManyIfAny(tx.eventDistance, distanceCreateData(canonicalEvent).map((item) => ({ ...item, eventId })));
-  await createManyIfAny(tx.eventPrice, priceCreateData(canonicalEvent).map((item) => ({ ...item, eventId })));
-  await createManyIfAny(tx.eventKit, kitCreateData(canonicalEvent).map((item) => ({ ...item, eventId })));
-  await createManyIfAny(tx.eventKitPickup, kitPickupCreateData(canonicalEvent).map((item) => ({ ...item, eventId })));
-  await createManyIfAny(tx.eventSchedule, scheduleCreateData(canonicalEvent).map((item) => ({ ...item, eventId })));
-  await createManyIfAny(tx.eventRule, ruleCreateData(canonicalEvent).map((item) => ({ ...item, eventId })));
-  await createManyIfAny(tx.eventImage, imageCreateData(canonicalEvent).map((item) => ({ ...item, eventId })));
+  await createManyIfAny(
+    tx.eventDistance,
+    distanceCreateData(canonicalEvent).map((item) => ({ ...item, eventId })),
+  );
+  await createManyIfAny(
+    tx.eventPrice,
+    priceCreateData(canonicalEvent).map((item) => ({ ...item, eventId })),
+  );
+  await createManyIfAny(
+    tx.eventKit,
+    kitCreateData(canonicalEvent).map((item) => ({ ...item, eventId })),
+  );
+  await createManyIfAny(
+    tx.eventKitPickup,
+    kitPickupCreateData(canonicalEvent).map((item) => ({ ...item, eventId })),
+  );
+  await createManyIfAny(
+    tx.eventSchedule,
+    scheduleCreateData(canonicalEvent).map((item) => ({ ...item, eventId })),
+  );
+  await createManyIfAny(
+    tx.eventRule,
+    ruleCreateData(canonicalEvent).map((item) => ({ ...item, eventId })),
+  );
+  await createManyIfAny(
+    tx.eventImage,
+    imageCreateData(canonicalEvent).map((item) => ({ ...item, eventId })),
+  );
 }
 
-async function createManyIfAny(model: { createMany: (input: { data: unknown[] }) => Promise<unknown> }, data: unknown[]) {
+async function createManyIfAny(
+  model: { createMany: (input: { data: unknown[] }) => Promise<unknown> },
+  data: unknown[],
+) {
   if (data.length) await model.createMany({ data });
 }
 
@@ -719,7 +928,7 @@ function imageCreateData(canonicalEvent: CanonicalRaceEvent) {
 function eventVersionData(canonicalEvent: CanonicalRaceEvent) {
   return {
     schemaVersion: process.env.CANONICAL_SCHEMA_VERSION ?? "1.0.0",
-    curationVersion: canonicalEvent.curationVersion ?? process.env.CURATION_PIPELINE_VERSION ?? "1.2.0",
+    curationVersion: canonicalEvent.curationVersion ?? CURATION_PIPELINE_VERSION,
     snapshot: json(canonicalEvent),
   };
 }
@@ -849,23 +1058,23 @@ export async function updateEventCurationMetadata(input: {
   model?: string | null;
   curationVersion?: string | null;
 }) {
-  return prisma.$transaction(async tx => {
+  return prisma.$transaction(async (tx) => {
     await assertTaskLease(tx);
     return tx.event.update({
-    where: { id: input.eventId },
-    data: withoutUndefined({
-      curationStatus: input.curationStatus,
-      curatedAt: input.curatedAt,
-      curationProvider: input.provider,
-      curationModel: input.model,
-      curationVersion: input.curationVersion,
-    }),
+      where: { id: await resolveEventId(input.eventId, tx) },
+      data: withoutUndefined({
+        curationStatus: input.curationStatus,
+        curatedAt: input.curatedAt,
+        curationProvider: input.provider,
+        curationModel: input.model,
+        curationVersion: input.curationVersion,
+      }),
     });
   });
 }
 
 export async function getLatestRawExtractionForEvent(eventId: string) {
-  const event = await prisma.event.findUnique({ where: { id: eventId } });
+  const event = await prisma.event.findUnique({ where: { id: await resolveEventId(eventId) } });
   if (!event?.sourceId) return null;
   return prisma.rawSourceExtraction.findFirst({
     where: { sourceId: event.sourceId },
@@ -995,21 +1204,6 @@ function existingKitPickup(pickup: any | undefined): CanonicalRaceEvent["kitPick
   };
 }
 
-function ticketSportsIdFromEvent(event: CanonicalRaceEvent): string | null {
-  for (const value of [event.registrationUrl, event.officialUrl, event.sourceUrl]) {
-    if (!value) continue;
-    try {
-      const parsed = new URL(value);
-      if (!parsed.hostname.includes("ticketsports.com.br")) continue;
-      const id = parsed.searchParams.get("eventId") ?? parsed.pathname.match(/(\d{3,})(?:\D*)$/)?.[1];
-      if (id) return id;
-    } catch {
-      // Ignore malformed optional URLs.
-    }
-  }
-  return null;
-}
-
 function tokenSimilarity(left: string, right: string): number {
   const leftTokens = new Set(normalizeEventText(left).split(" ").filter(Boolean));
   const rightTokens = new Set(normalizeEventText(right).split(" ").filter(Boolean));
@@ -1036,7 +1230,7 @@ function jsonArray(value: unknown): string[] {
 
 async function uniqueSlug(baseSlug: string): Promise<string> {
   let slug = baseSlug;
-  for (let index = 2; await prisma.event.findUnique({ where: { slug } }); index += 1) {
+  for (let index = 2; await resolveEventSlug(slug); index += 1) {
     slug = `${baseSlug}-${index}`;
   }
   return slug;

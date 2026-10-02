@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio";
 import { safeResponse } from "./safe-http.js";
+export { setSourceRequestGuard, enterSourceRequestScope, withSourceRequestScope } from "./safe-http.js";
 import { cleanText, hashContent, unique } from "@race-calendar/utils";
 
 export type ScraperHttpClientOptions = {
@@ -34,10 +35,11 @@ export class ScraperHttpClient {
   async getText(url: string, options: { headers?: Record<string, string>; delayMs?: number } = {}): Promise<string> {
     const response = await this.fetchWithRetry(url, options);
     const buffer = await response.arrayBuffer();
-    const charset = response.headers.get("content-type")?.match(/charset=([^;]+)/i)?.[1]?.trim();
-    const labels = charset
-      ? [charset, "utf-8", "windows-1252", "iso-8859-1"]
-      : ["utf-8", "windows-1252", "iso-8859-1"];
+    const charset = response.headers
+      .get("content-type")
+      ?.match(/charset=([^;]+)/i)?.[1]
+      ?.trim();
+    const labels = charset ? [charset, "utf-8", "windows-1252", "iso-8859-1"] : ["utf-8", "windows-1252", "iso-8859-1"];
     for (const label of [...new Set(labels.filter(Boolean))] as string[]) {
       try {
         return new TextDecoder(label, { fatal: true }).decode(buffer);
@@ -66,11 +68,15 @@ export class ScraperHttpClient {
       if (options.delayMs && attempt === 1) await wait(options.delayMs);
       let retryDelay = 400 * attempt;
       try {
-        const response = await safeResponse(url, {
+        const response = await safeResponse(
+          url,
+          {
             "User-Agent": this.userAgent,
             Accept: "text/html,application/xhtml+xml,application/json,text/plain,*/*",
             ...options.headers,
-          }, this.timeoutMs);
+          },
+          this.timeoutMs,
+        );
         if (!response.ok) {
           const header = response.headers.get("retry-after");
           if (header) {
@@ -84,8 +90,9 @@ export class ScraperHttpClient {
         }
         return response;
       } catch (error) {
+        if (error instanceof Error && ["SourceBudgetDeferred", "SourceCircuitOpen", "CapacityDeferred"].includes(error.name)) throw error;
         lastError = error;
-        if (error instanceof ScraperHttpError && error.statusCode && error.statusCode < 500 && error.statusCode !== 429) throw error;
+        if (error instanceof ScraperHttpError && error.statusCode && error.statusCode < 500) throw error;
         if (attempt < this.maxRetries) await wait(retryDelay);
       }
     }

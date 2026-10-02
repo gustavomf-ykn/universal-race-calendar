@@ -19,7 +19,8 @@
   },
   "dependencies": {
     "@prisma/client": "^6.2.1",
-    "@race-calendar/schemas": "workspace:*"
+    "@race-calendar/schemas": "workspace:*",
+    "@race-calendar/utils": "workspace:*"
   },
   "devDependencies": {
     "prisma": "^6.2.1",

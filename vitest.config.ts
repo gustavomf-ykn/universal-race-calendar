@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts", "packages/**/*.test.ts", "apps/api/**/*.test.ts", "apps/worker/**/*.test.ts"],
     environment: "node",
+    setupFiles: ["./tests/capacity-fixture.ts"],
     fileParallelism: false,
     testTimeout: 30000,
     hookTimeout: 30000,

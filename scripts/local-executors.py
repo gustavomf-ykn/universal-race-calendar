@@ -55,11 +55,23 @@ def main():
             db.execute('SELECT id FROM "CatalogSync" LIMIT 0')
             db.execute('SELECT id FROM "AdminAudit" LIMIT 0')
             db.execute('SELECT "administrativeReview" FROM "Event" LIMIT 0')
+            db.execute('SELECT observation,"lastValidatedAt" FROM "EventSourceReference" LIMIT 0')
+            db.execute('SELECT source,"blockedAt" FROM "SourceRequestControl" LIMIT 0')
+            db.execute("SELECT 'reserve_source_request(text)'::regprocedure, 'defer_source_task(text,text,jsonb,timestamp with time zone,boolean)'::regprocedure")
+            db.execute('SELECT id,"confirmedAt" FROM "CatalogCapacity" LIMIT 0')
+            db.execute('SELECT "rootTaskId","parserVersion" FROM "ResultCheckpoint" LIMIT 0')
+            db.execute('SELECT "nextOffset" FROM "ResultCheckpointGroup" LIMIT 0')
+            db.execute('SELECT "contentHash" FROM "ResultCheckpointPage" LIMIT 0')
+            db.execute('SELECT "recordKey" FROM "ResultCheckpointRow" LIMIT 0')
+            db.execute('SELECT country FROM "SourceMatch" LIMIT 0')
+            db.execute('SELECT id,"canonicalEventId","oldSlug" FROM "EventAlias" LIMIT 0')
+            db.execute("SELECT 'resolve_event_id(text)'::regprocedure")
+            db.execute("SELECT 'check_catalog_capacity(text,bigint,text,text)'::regprocedure, 'defer_capacity_task(text,text,jsonb,text)'::regprocedure")
             db.execute('SELECT "distanceKm",gap FROM "RaceResult" LIMIT 0')
             db.execute('SELECT selection,"contentType" FROM "ExportArtifact" LIMIT 0')
             active = db.execute('SELECT count(*) FROM "WorkerPresence" WHERE "lastSeenAt">now()-interval \'75 seconds\' AND state<>\'stopped\'').fetchone()[0]
             protected = db.execute('SELECT count(*) FROM "CollectionTask" WHERE status=\'queued\' AND "executionHold"').fetchone()[0]
-            pending = db.execute('SELECT id,kind,source,payload FROM "CollectionTask" WHERE NOT "executionHold" AND (%s::text[] IS NULL OR id=ANY(%s::text[])) AND (status=\'queued\' OR (status=\'running\' AND "leaseUntil"<=now())) ORDER BY "createdAt"', (selected,selected)).fetchall()
+            pending = db.execute('SELECT id,kind,source,payload FROM "CollectionTask" t WHERE NOT "executionHold" AND NOT EXISTS (SELECT FROM "SourceRequestControl" g WHERE g.source=t.source AND g."blockedAt" IS NOT NULL) AND (%s::text[] IS NULL OR id=ANY(%s::text[])) AND (status=\'queued\' OR (status=\'running\' AND "leaseUntil"<=now())) ORDER BY "createdAt"', (selected,selected)).fetchall()
             running = db.execute('SELECT count(*) FROM "CollectionTask" WHERE status=\'running\' AND \"leaseUntil\">now()').fetchone()[0]
         if active or running:
             log('Outro executor recente ou tarefa em execução detectada. Não iniciamos concorrentes; confira o painel e aguarde a presença expirar.')

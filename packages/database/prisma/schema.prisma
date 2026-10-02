@@ -240,13 +240,26 @@ model Event {
   curationJobs        CurationJob[]
   sourceReferences    EventSourceReference[]
   resultSets          ResultSet[]
+  resultCheckpoints   ResultCheckpoint[]
   exports             ExportArtifact[]
+  aliases             EventAlias[]
 
   @@index([publicationStatus])
   @@index([date])
   @@index([city, state, country])
   @@index([canonicalFingerprint])
   @@unique([sourceType, sourceExternalId])
+}
+
+model EventAlias {
+  id               String @id
+  oldSlug          String @unique
+  canonicalEventId String
+  canonicalEvent   Event @relation(fields: [canonicalEventId], references: [id], onDelete: Restrict)
+  snapshot         Json
+  createdBy        String
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+  @@index([canonicalEventId])
 }
 
 model EventSourceReference {
@@ -261,6 +274,8 @@ model EventSourceReference {
   role             String   @default("supplemental")
   priority         Int      @default(50)
   contentHash      String?
+  observation      Json              @default("{}")
+  lastValidatedAt  DateTime?          @db.Timestamptz(6)
   lastSeenAt       DateTime @default(now())
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
@@ -458,12 +473,114 @@ model CollectionTask {
   createdAt      DateTime @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime @default(now()) @db.Timestamptz(3)
   finishedAt     DateTime? @db.Timestamptz(3)
+  capacityReservations CapacityReservation[]
+  resultCheckpoint ResultCheckpoint? @relation("ResultCheckpointRoot")
+  activeResultCheckpoints ResultCheckpoint[] @relation("ResultCheckpointActive")
   @@unique([ownerId, idempotencyKey])
   @@index([source, status, availableAt])
 }
 
 model SourceSlot {
   source String @id
+}
+
+model CatalogCapacity {
+ id Int @id
+ databaseBudgetBytes BigInt?
+ storageBudgetBytes BigInt?
+ databaseHeadroomBytes BigInt @default(16777216)
+ storageHeadroomBytes BigInt @default(1048576)
+ confirmedAt DateTime? @db.Timestamptz(6)
+ databaseBytes BigInt?
+ databaseMeasuredAt DateTime? @db.Timestamptz(6)
+ storageBytes BigInt?
+ storageMeasuredAt DateTime? @db.Timestamptz(6)
+ updatedAt DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model CapacityReservation {
+ taskId String
+ task CollectionTask @relation(fields: [taskId],references: [id],onDelete: Cascade)
+ leaseToken String
+ bytes BigInt
+ expiresAt DateTime @db.Timestamptz(6)
+ @@id([taskId,leaseToken])
+}
+
+model ResultCheckpoint {
+ rootTaskId String @id
+ rootTask CollectionTask @relation("ResultCheckpointRoot", fields: [rootTaskId], references: [id], onDelete: Cascade)
+ activeTaskId String?
+ activeTask CollectionTask? @relation("ResultCheckpointActive", fields: [activeTaskId], references: [id], onDelete: SetNull)
+ eventId String
+ event Event @relation(fields: [eventId], references: [id], onDelete: Restrict)
+ externalId String
+ sourceUrl String
+ parserVersion Int
+ pageSize Int
+ manifestHash String
+ manifest Json
+ status String @default("collecting")
+ errorCode String?
+ createdAt DateTime @default(now()) @db.Timestamptz(6)
+ updatedAt DateTime @default(now()) @db.Timestamptz(6)
+ expiresAt DateTime @default(dbgenerated("now() + interval '7 days'")) @db.Timestamptz(6)
+ groups ResultCheckpointGroup[]
+ @@index([expiresAt], map: "ResultCheckpoint_expiry")
+}
+
+model ResultCheckpointGroup {
+ rootTaskId String
+ checkpoint ResultCheckpoint @relation(fields: [rootTaskId], references: [rootTaskId], onDelete: Cascade)
+ modalityValue String
+ gender String
+ status String @default("collecting")
+ nextOffset Int @default(0)
+ expectedTotal Int?
+ recordCount Int @default(0)
+ pageCount Int @default(0)
+ pages ResultCheckpointPage[]
+ rows ResultCheckpointRow[]
+ @@id([rootTaskId,modalityValue,gender])
+}
+
+model ResultCheckpointPage {
+ rootTaskId String
+ modalityValue String
+ gender String
+ group ResultCheckpointGroup @relation(fields: [rootTaskId,modalityValue,gender], references: [rootTaskId,modalityValue,gender], onDelete: Cascade)
+ offset Int
+ nextOffset Int
+ hasMore Boolean
+ expectedTotal Int?
+ contentHash String
+ recordCount Int
+ @@id([rootTaskId,modalityValue,gender,offset])
+}
+
+model ResultCheckpointRow {
+ rootTaskId String
+ recordKey String
+ dedupeKey String
+ modalityValue String
+ gender String
+ group ResultCheckpointGroup @relation(fields: [rootTaskId,modalityValue,gender], references: [rootTaskId,modalityValue,gender], onDelete: Cascade)
+ record Json
+ @@id([rootTaskId,recordKey])
+ @@unique([rootTaskId,dedupeKey])
+}
+
+model SourceRequestControl {
+  source String @id
+  windowStart DateTime @default(now()) @db.Timestamptz(6)
+  requestCount Int @default(0)
+  limitPerHour Int @default(100)
+  minDelayMs Int @default(1000)
+  nextAllowedAt DateTime @default(now()) @db.Timestamptz(6)
+  blockedAt DateTime? @db.Timestamptz(6)
+  blockedUntil DateTime? @db.Timestamptz(6)
+  blockReason String?
+  updatedAt DateTime @default(now()) @db.Timestamptz(6)
 }
 
 model ResultSet {
@@ -538,6 +655,7 @@ model SourceMatch {
   date       DateTime? @db.Timestamptz(3)
   city       String?
   state      String?
+  country    String?
   status     String @default("pending")
   eventId    String?
   resolvedBy String?

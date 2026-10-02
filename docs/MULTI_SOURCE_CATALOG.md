@@ -10,13 +10,15 @@
 
 ## Correspondencia
 
-Ordem: ID TicketSports no link externo, URL, fingerprint exato e similaridade de nome com data/cidade/UF iguais. Scores a partir de `0.92` vinculam; `0.80` a `0.919` ficam em revisao; abaixo disso o CorridasBR cria um evento.
+Identidade de fonte ja associada e reutilizada. Para novas associacoes entre fontes, exigir link direto reconhecido de edicao, correspondencia unica, mesma data/cidade/UF/pais e observacao validada da localizacao. URLs genericas de organizadores, fingerprints e similaridade de nome somente sugerem revisao; nenhum score de nome autoriza vinculo automatico. Links contraditorios, referencias sem evidencia, conflito de localizacao, identidades diferentes da mesma fonte e estados hidden/rejected exigem revisao. Anos distintos permanecem separados. Uniao auditada de registros ja separados ainda esta em desenvolvimento na branch nacional.
 
 ## Publicacao
 
 CorridasBR pode publicar com nome, data, cidade, UF, pais BR e URL de origem. Banner, preco, lote e kit nao sao obrigatorios. Precos/lotes so entram por evidencia explicita; banners publicitarios do CorridasBR nunca sao usados.
 
 ## Operacao
+
+Os parametros legados abaixo descrevem o importador antigo, nao uma agenda atualmente habilitada. A branch nacional usa limites compartilhados, intervalos conservadores e continuidade opt-in descritos em [NATIONAL-CATALOG.md](NATIONAL-CATALOG.md). Agenda nacional semanal ainda pendente; nao confundir configuracao/documentacao com execucao real.
 
 - `Catalog Import` diario: reaplica somente fontes alteradas.
 - Reconciliacao semanal: `force=true`.
