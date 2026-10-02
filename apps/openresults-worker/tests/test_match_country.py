@@ -90,8 +90,8 @@ def test_reinspection_does_not_hide_conflicts_in_previously_resolved_identity(mo
             row = conn.execute('SELECT status,"eventId","resolvedBy",country FROM "SourceMatch" WHERE "externalId"=%s',
                                (ident,)).fetchone()
             if change == 'country' and value == '':
-                # A partial refresh keeps known evidence, rather than deleting it.
-                assert row == {'status': 'resolved', 'eventId': ident, 'resolvedBy': 'exact_reference', 'country': 'BR'}
+                # Keep historical evidence without treating it as this inspection's evidence.
+                assert row == {'status': 'pending', 'eventId': None, 'resolvedBy': None, 'country': 'BR'}
             else:
                 assert row['status'] == 'pending' and row['eventId'] is None and row['resolvedBy'] is None
             assert conn.execute('SELECT "eventId" FROM "EventSourceReference" WHERE id=%s', (ident,)).fetchone()['eventId'] == ident

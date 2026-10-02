@@ -39,7 +39,9 @@ describe.skipIf(!process.env.DATABASE_URL)("authenticated result checkpoint retr
       where: { OR: [{ ownerId: prefix }, { idempotencyKey: { startsWith: prefix } }] },
     });
     await prisma.resultCheckpoint.deleteMany({ where: { eventId: { in: ids } } });
-    await prisma.adminAudit.deleteMany({ where: { taskId: { in: tasks.map((t) => t.id) } } });
+    await prisma.adminAudit.deleteMany({
+      where: { OR: [{ taskId: { in: tasks.map((t) => t.id) } }, { eventId: { in: ids } }] },
+    });
     await prisma.collectionTask.deleteMany({ where: { id: { in: tasks.map((t) => t.id) } } });
     await prisma.event.deleteMany({ where: { id: { in: ids } } });
     await prisma.source.deleteMany({ where: { id: { in: ids } } });
@@ -61,6 +63,9 @@ describe.skipIf(!process.env.DATABASE_URL)("authenticated result checkpoint retr
         slug: id,
         name: "Fixture",
         date: new Date("2026-01-01"),
+        city: "Teste",
+        state: "SC",
+        country: "BR",
         canonicalFingerprint: id,
         warnings: [],
         publishabilityReasons: [],
@@ -88,10 +93,21 @@ describe.skipIf(!process.env.DATABASE_URL)("authenticated result checkpoint retr
         eventId: id,
         externalId: id,
         sourceUrl: url,
-        parserVersion: 1,
+        parserVersion: 2,
         pageSize: 1000,
         manifestHash: "fixture",
-        manifest: { privateFixture: "not-in-response" },
+        manifest: {
+          privateFixture: "not-in-response",
+          metadata: {
+            name: "Fixture",
+            event_date: "2026-01-01",
+            city: "Teste",
+            state: "SC",
+            country: "BR",
+            event_id: id,
+            source_url: url,
+          },
+        },
         groups: { create: [{ modalityValue: "5k", gender: "F", pageCount: 2, recordCount: 3, nextOffset: 3 }] },
       },
     });
@@ -160,14 +176,81 @@ describe.skipIf(!process.env.DATABASE_URL)("authenticated result checkpoint retr
     await prisma.resultCheckpoint.update({ where: { rootTaskId: expired.id }, data: { expiresAt: new Date(0) } });
     expect((await retry(expired.id, "expired")).json().error).toBe("result_checkpoint_expired");
     const incompatible = await fixture("incompatible");
-    await prisma.resultCheckpoint.update({ where: { rootTaskId: incompatible.id }, data: { parserVersion: 2 } });
+    await prisma.resultCheckpoint.update({ where: { rootTaskId: incompatible.id }, data: { parserVersion: 1 } });
     expect((await retry(incompatible.id, "incompatible")).json().error).toBe("result_checkpoint_incompatible");
+    expect(
+      (await prisma.resultCheckpoint.findUniqueOrThrow({ where: { rootTaskId: incompatible.id } })).parserVersion,
+    ).toBe(1);
+    expect(
+      await prisma.collectionTask.count({ where: { payload: { path: ["retryOf"], equals: incompatible.id } } }),
+    ).toBe(0);
     const reassociated = await fixture("association");
     await prisma.eventSourceReference.updateMany({
       where: { eventId: reassociated.id },
       data: { url: "https://openresults.run/evento/changed/" },
     });
     expect((await retry(reassociated.id, "association")).json().error).toBe("association_changed");
+  });
+  it.each([
+    ["city", "Outra cidade", "edition_location_conflict"],
+    ["state", "PR", "edition_location_conflict"],
+    ["country", "PT", "edition_location_conflict"],
+    ["country", "não reconhecido", "edition_location_unconfirmed"],
+    ["event_date", null, "edition_date_unconfirmed"],
+    ["event_date", "2027-01-01", "edition_date_mismatch"],
+    ["source_url", "https://openresults.run/evento/another/", "association_changed"],
+    ["event_id", "another", "source_identity_mismatch"],
+  ])("refuses resume with changed %s evidence before enqueueing a task", async (field, value, reason) => {
+    const old = await fixture(`evidence-${field}-${reason}`);
+    const root = await prisma.resultCheckpoint.findUniqueOrThrow({ where: { rootTaskId: old.id } });
+    const manifest = root.manifest as any;
+    manifest.metadata[field!] = value;
+    await prisma.resultCheckpoint.update({ where: { rootTaskId: old.id }, data: { manifest } });
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/tasks/${old.id}`,
+      headers: { "x-api-key": "test-internal-key" },
+    });
+    expect(response.json().checkpoint).toMatchObject({ available: false, reason, pages: 2, records: 3 });
+    expect(response.body).not.toContain("privateFixture");
+    const rejected = await retry(old.id, `evidence-${field}-${reason}`);
+    expect(rejected.statusCode).toBe(409);
+    expect(rejected.json()).toEqual({ error: reason });
+    expect(await prisma.collectionTask.count({ where: { payload: { path: ["retryOf"], equals: old.id } } })).toBe(0);
+    expect((await prisma.resultCheckpoint.findUniqueOrThrow({ where: { rootTaskId: old.id } })).status).toBe(
+      root.status,
+    );
+  });
+  it("rechecks current location and respects reviewed overrides without accepting a changed date", async () => {
+    const old = await fixture("current-location");
+    await prisma.event.update({ where: { id: old.id }, data: { city: "Cidade revisada" } });
+    expect((await retry(old.id, "unreviewed-location")).json()).toEqual({ error: "edition_location_conflict" });
+    await prisma.adminAudit.create({
+      data: {
+        actorId: prefix,
+        action: "review_event",
+        eventId: old.id,
+        details: { changes: { city: "Cidade revisada", date: "2026-01-01" } },
+      },
+    });
+    const summary = await app.inject({
+      method: "GET",
+      url: `/v1/tasks/${old.id}`,
+      headers: { "x-api-key": "test-internal-key" },
+    });
+    expect(summary.json().checkpoint).toMatchObject({ available: true });
+    await prisma.event.update({ where: { id: old.id }, data: { date: new Date("2027-01-01") } });
+    expect((await retry(old.id, "reviewed-date-conflict")).json()).toEqual({ error: "edition_date_mismatch" });
+    expect((await prisma.collectionTask.findUniqueOrThrow({ where: { id: old.id } })).status).toBe("failed");
+  });
+  it("keeps a known country when the compatible pinned snapshot has no country", async () => {
+    const old = await fixture("partial-country");
+    const root = await prisma.resultCheckpoint.findUniqueOrThrow({ where: { rootTaskId: old.id } });
+    const manifest = root.manifest as any;
+    manifest.metadata.country = "";
+    await prisma.resultCheckpoint.update({ where: { rootTaskId: old.id }, data: { manifest } });
+    expect((await retry(old.id, "partial-country")).statusCode).toBe(202);
+    expect((await prisma.event.findUniqueOrThrow({ where: { id: old.id } })).country).toBe("BR");
   });
   it("requires signed JWT admin metadata for result resume, never frontend-controlled user metadata", async () => {
     const old = await fixture("jwt");

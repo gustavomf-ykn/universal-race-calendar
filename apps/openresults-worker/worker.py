@@ -8,7 +8,6 @@ import json
 import os
 import signal
 import uuid
-import unicodedata
 from datetime import date, datetime, timezone
 from dataclasses import replace
 
@@ -29,7 +28,8 @@ from app.services.source_requests import request_hooks, SourceBudgetDeferred, So
 from source_requests import database_request_hooks
 from capacity import CapacityDeferred, check_capacity, database_capacity, storage_capacity
 from result_checkpoints import ResultCheckpoints, ResultCheckpointError, cleanup_checkpoints
-from app.services.country import normalize_country
+from source_observation import edition_observation
+from edition_metadata import IDENTITY_ERRORS, metadata_identity_reason, normalized_location, reviewed_metadata_fields
 from event_aliases import payload as canonical_payload
 
 
@@ -80,18 +80,28 @@ def publish(task, result):
     with connection() as conn:
         fenced(conn, task, len(canonical.encode()) * 8 + len(records) * 2048)
         payload = canonical_payload(conn, payload)
-        reference = conn.execute('''SELECT r."eventId",e.date FROM "EventSourceReference" r JOIN "Event" e ON e.id=r."eventId"
+        reference = conn.execute('''SELECT r."eventId",r.url,e.date,e.city,e.state,e.country FROM "EventSourceReference" r JOIN "Event" e ON e.id=r."eventId"
             WHERE r."sourceType"='openresults' AND r."sourceExternalId"=%s FOR UPDATE OF r,e''', (payload['externalId'],)).fetchone()
-        if not reference or reference['eventId'] != payload['eventId']:
+        if (not reference or reference['eventId'] != payload['eventId'] or reference['url'] != payload['url']
+                or reference['url'].rstrip('/') != result.metadata.source_url.rstrip('/')):
             raise ValueError('association_changed')
-        if not result.metadata.event_date or not reference['date'] or reference['date'].date() != result.metadata.event_date:
+        if not result.metadata.event_date or not reference['date']:
+            raise ValueError('edition_date_unconfirmed')
+        if reference['date'].date() != result.metadata.event_date:
             raise ValueError('edition_date_mismatch')
         if result.metadata.event_id and str(result.metadata.event_id) != payload['externalId']:
             raise ValueError('source_identity_mismatch')
-        result_set = conn.execute('''INSERT INTO "ResultSet" (id,"eventId",source,"externalId","sourceUrl","updatedAt","contentHash",count)
+        problem = metadata_identity_reason(reference, result.metadata, reviewed_metadata_fields(conn, payload['eventId']))
+        if problem:
+            raise ValueError(problem)
+        published = conn.execute('''INSERT INTO "ResultSet" (id,"eventId",source,"externalId","sourceUrl","updatedAt","contentHash",count)
             VALUES (%s,%s,'openresults',%s,%s,now(),%s,%s) ON CONFLICT (source,"externalId") DO UPDATE
-            SET "updatedAt"=now(),"contentHash"=EXCLUDED."contentHash",count=EXCLUDED.count,"sourceUrl"=EXCLUDED."sourceUrl" RETURNING id''',
-            (str(uuid.uuid4()),payload['eventId'],payload['externalId'],payload['url'],hashlib.sha256(canonical.encode()).hexdigest(),len(records))).fetchone()['id']
+            SET "updatedAt"=now(),"contentHash"=EXCLUDED."contentHash",count=EXCLUDED.count,"sourceUrl"=EXCLUDED."sourceUrl"
+            WHERE "ResultSet"."eventId"=EXCLUDED."eventId" RETURNING id''',
+            (str(uuid.uuid4()),payload['eventId'],payload['externalId'],payload['url'],hashlib.sha256(canonical.encode()).hexdigest(),len(records))).fetchone()
+        if not published:
+            raise ValueError('association_changed')
+        result_set = published['id']
         conn.execute('DELETE FROM "RaceResult" WHERE "resultSetId"=%s',(result_set,))
         conn.execute('DELETE FROM "RaceDiscipline" WHERE "resultSetId"=%s',(result_set,))
         for modality in result.modalities:
@@ -118,6 +128,7 @@ def position(value):
 
 def store_match(task, metadata):
     external_id=str(metadata.event_id) if metadata.event_id else 'url:'+hashlib.sha256(metadata.source_url.encode()).hexdigest()
+    observation = edition_observation(metadata)
     with connection() as conn:
         fenced(conn,task)
         reference = conn.execute('''SELECT r."eventId",e.date,e.city,e.state,e.country FROM "EventSourceReference" r
@@ -128,17 +139,13 @@ def store_match(task, metadata):
             url=EXCLUDED.url,name=EXCLUDED.name,date=EXCLUDED.date,city=EXCLUDED.city,state=EXCLUDED.state,
             country=coalesce(EXCLUDED.country,"SourceMatch".country),"updatedAt"=now() RETURNING *''',
             (str(uuid.uuid4()),external_id,metadata.source_url,metadata.name,metadata.event_date,metadata.city,metadata.state,
-             normalize_country(metadata.country) or None)).fetchone()
+             observation['country'])).fetchone()
         # A reused provider ID still needs compatible edition evidence. An old resolved status
         # must not hide a newly observed conflict; references/results remain untouched for review.
-        def normalized(value):
-            return ' '.join(''.join(c for c in unicodedata.normalize('NFD', value or '')
-                                   if not unicodedata.combining(c)).casefold().split())
-        evidence = metadata.raw_metadata.get('country_evidence') or {}
-        invalid_country = evidence.get('status') in ('conflicting', 'unrecognized') or bool(metadata.country and not normalize_country(metadata.country))
-        compatible = bool(reference and not invalid_country and match['date'] and reference['date']
+        # Historical fields retained by COALESCE are not fresh evidence of compatibility.
+        compatible = bool(reference and match['date'] and reference['date']
                           and match['date'].astimezone(timezone.utc).date() == reference['date'].date()
-                          and all(normalized(match[field]) and normalized(match[field]) == normalized(reference[field])
+                          and all(normalized_location(observation[field]) and normalized_location(observation[field]) == normalized_location(reference[field])
                                   for field in ('city', 'state', 'country')))
         if compatible:
             conn.execute('''UPDATE "SourceMatch" SET status='resolved',"eventId"=%s,
@@ -322,13 +329,15 @@ async def execute(task):
             await asyncio.to_thread(query,'SELECT block_source_requests(%s,NULL)',('openresults',))
         if checkpoint and isinstance(exc, (StructureChangedError, ResultCheckpointError)):
             await asyncio.to_thread(checkpoint.invalidate,'source_structure_changed' if isinstance(exc,StructureChangedError) else str(exc))
-        if isinstance(exc, (AccessBlockedError, StructureChangedError, ResultCheckpointError)):
+        identity_error = isinstance(exc, ValueError) and str(exc) in IDENTITY_ERRORS
+        if isinstance(exc, (AccessBlockedError, StructureChangedError, ResultCheckpointError)) or identity_error:
             with connection() as conn:
                 conn.execute('UPDATE "CollectionTask" SET "maxAttempts"=attempt WHERE id=%s AND "leaseToken"=%s',(task['id'],task['leaseToken']))
         code=('source_access_blocked' if isinstance(exc, AccessBlockedError) else
               'source_structure_changed' if isinstance(exc, StructureChangedError) else
               str(exc) if isinstance(exc, ResultCheckpointError) else
-              str(exc) if isinstance(exc,ValueError) and str(exc) in {'incomplete_extraction','catalog_checkpoint_incompatible','idempotency_conflict','catalog_pagination_not_advancing','catalog_end_unconfirmed','selected_edition_without_results','export_too_large_refine_selection','export_expired','source_identity_already_associated','edition_date_mismatch'} else 'collection_failed')
+              str(exc) if identity_error else
+              str(exc) if isinstance(exc,ValueError) and str(exc) in {'incomplete_extraction','catalog_checkpoint_incompatible','idempotency_conflict','catalog_pagination_not_advancing','catalog_end_unconfirmed','selected_edition_without_results','export_too_large_refine_selection','export_expired'} else 'collection_failed')
         outcome='partial' if code=='incomplete_extraction' else 'failed'
         await asyncio.to_thread(query,'SELECT finish_task(%s,%s,%s,%s,%s)',(task['id'],task['leaseToken'],outcome,Jsonb(progress),code))
     finally:

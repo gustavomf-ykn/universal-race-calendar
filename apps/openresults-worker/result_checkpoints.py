@@ -11,8 +11,10 @@ from app.models import EventDiscovery, EventMetadata, ExtractionResult, Modality
 from app.services.parser import clean_text, normalize_gender
 from app.services.result_pages import record_key
 from event_aliases import payload as canonical_payload
+from edition_metadata import metadata_identity_reason, reviewed_metadata_fields
+from source_observation import edition_observation
 
-PARSER_VERSION = 1
+PARSER_VERSION = 2
 
 
 class ResultCheckpointError(ValueError):
@@ -52,6 +54,7 @@ def manifest_for(discovery, page_size, extracted_at):
                 'headers': discovery.result_headers, 'extractedAt': extracted_at.isoformat()}
     identity = {'sourceUrl': metadata['source_url'], 'externalId': metadata['event_id'],
                 'date': metadata['event_date'], 'expected': metadata['expected_total'],
+                'location': {field: edition_observation(discovery.metadata)[field] for field in ('city', 'state', 'country')},
                 'endpoint': discovery.endpoint_url, 'headers': discovery.result_headers,
                 'groups': [(str(m.value), m.name, m.expected_by_gender) for m in discovery.modalities],
                 'version': PARSER_VERSION, 'pageSize': page_size}
@@ -114,13 +117,19 @@ class ResultCheckpoints:
         with self.connection() as conn:
             self.fence(conn, self.task, len(json.dumps(manifest).encode()) * 8 + 65536)
             payload = canonical_payload(conn, payload)
-            reference = conn.execute('''SELECT r."eventId",e.date FROM "EventSourceReference" r
+            reference = conn.execute('''SELECT r."eventId",r.url,e.date,e.city,e.state,e.country FROM "EventSourceReference" r
                 JOIN "Event" e ON e.id=r."eventId" WHERE r."sourceType"='openresults'
-                AND r."sourceExternalId"=%s FOR UPDATE OF r''', (payload['externalId'],)).fetchone()
-            if not reference or reference['eventId'] != payload['eventId']:
+                AND r."sourceExternalId"=%s FOR UPDATE OF r,e''', (payload['externalId'],)).fetchone()
+            if (not reference or reference['eventId'] != payload['eventId'] or reference['url'] != payload['url']
+                    or reference['url'].rstrip('/') != discovery.metadata.source_url.rstrip('/')):
                 raise ResultCheckpointError('association_changed')
-            if not reference['date'] or reference['date'].date() != discovery.metadata.event_date:
+            if not reference['date'] or not discovery.metadata.event_date:
+                raise ResultCheckpointError('edition_date_unconfirmed')
+            if reference['date'].date() != discovery.metadata.event_date:
                 raise ResultCheckpointError('edition_date_mismatch')
+            problem = metadata_identity_reason(reference, discovery.metadata, reviewed_metadata_fields(conn, payload['eventId']))
+            if problem:
+                raise ResultCheckpointError(problem)
             root = self._root(conn)
             if root:
                 if root['manifestHash'] != digest:
@@ -260,13 +269,18 @@ class ResultCheckpoints:
                 raise ResultCheckpointError('incomplete_extraction')
             self.fence(conn, self.task, int(size['bytes']) * 8 + size['count'] * 2048)
             payload = canonical_payload(conn, self.task['payload'])
-            reference = conn.execute('''SELECT r."eventId",r.url,e.date FROM "EventSourceReference" r
+            reference = conn.execute('''SELECT r."eventId",r.url,e.date,e.city,e.state,e.country FROM "EventSourceReference" r
                 JOIN "Event" e ON e.id=r."eventId" WHERE r."sourceType"='openresults'
                 AND r."sourceExternalId"=%s FOR UPDATE OF r,e''', (payload['externalId'],)).fetchone()
             if not reference or reference['eventId'] != payload['eventId'] or reference['url'] != payload['url']:
                 raise ResultCheckpointError('association_changed')
-            if not reference['date'] or reference['date'].date() != validated.metadata.event_date:
+            if not reference['date'] or not validated.metadata.event_date:
+                raise ResultCheckpointError('edition_date_unconfirmed')
+            if reference['date'].date() != validated.metadata.event_date:
                 raise ResultCheckpointError('edition_date_mismatch')
+            problem = metadata_identity_reason(reference, validated.metadata, reviewed_metadata_fields(conn, payload['eventId']))
+            if problem:
+                raise ResultCheckpointError(problem)
             digest = hashlib.sha256()
             with conn.cursor(name='checkpoint_digest') as cursor:
                 cursor.execute('''SELECT record FROM "ResultCheckpointRow" WHERE "rootTaskId"=%s ORDER BY "recordKey"''', (self.root_id,))

@@ -6,9 +6,11 @@ Implementação em desenvolvimento. Não confirma publicação, integração no 
 
 O executor Python usa PostgreSQL para guardar páginas do endpoint nativo OpenResults. Cada transação verifica a tarefa running, token/validade do lease e capacidade antes de gravar linhas, recibo e cursor juntos. Reinício e espera por orçamento retomam a primeira página não confirmada. Grupos completos não são consultados novamente. Uma resposta perdida depois do commit pode ser repetida com o mesmo conteúdo sem duplicar linhas ou avançar duas vezes.
 
-O checkpoint registra identidade da fonte/edição, data, endpoint, cabeçalhos, modalidades, contagens esperadas, versão do parser e tamanho da página. Incompatibilidade, total alterado, repetição de linhas, salto de offset ou fim sem evidência interrompem o trabalho; não causam reinício silencioso. Ausência de `hasMore` só permite inferir término com um total válido. A string `false` é terminal, não verdadeira; totais/offsets fracionários são recusados.
+O checkpoint registra identidade da fonte/edição, data, cidade/UF/país observados, endpoint, cabeçalhos, modalidades, contagens esperadas, versão do parser e tamanho da página. O protocolo passa a versão 2 na API e no Python: checkpoints v1 não confirmavam a localização no manifesto e são incompatíveis, sem conversão ou reinício automático. Histórico e resultados publicados permanecem; uma nova coleta deve ser intencional. Incompatibilidade, total alterado, repetição de linhas, salto de offset ou fim sem evidência interrompem o trabalho. Ausência de `hasMore` só permite inferir término com um total válido. A string `false` é terminal, não verdadeira; totais/offsets fracionários são recusados.
 
 Somente um conjunto completo, sem divergências e ainda associado à mesma edição pode substituir os resultados publicados. A leitura das linhas intermediárias é por cursor, sem reunir a edição inteira em memória. Exclusão do conjunto anterior, inserção do novo, atualização do checkpoint e conclusão da tarefa são atômicas. Falha na publicação mantém os resultados anteriores e o checkpoint pronto. Um checkpoint pronto pode publicar sem novas requisições à fonte, respeitando lease, associação, validade e capacidade.
+
+Início e publicação relêem referência e edição sob lock: URL/ID, data e localização conhecida precisam ser compatíveis. A publicação revalida a edição atual, inclusive depois de um checkpoint ficar pronto. O caminho DOM aplica a mesma proteção antes de substituir linhas. Campo ausente conserva o canônico; país conflitante/não reconhecido impede a operação. Correções administrativas de localização são preservadas; data divergente continua impedindo publicação mesmo quando foi revisada. Estas garantias de identidade não tornam o fallback DOM retomável por página.
 
 ## Retomada administrativa
 
@@ -20,7 +22,7 @@ Somente um conjunto completo, sem divergências e ainda associado à mesma ediç
 - `mode=restart`: cria uma nova extração desde o início, com checkpoint próprio; remove o ponteiro ao checkpoint de uma tentativa retomada. Sincronização de catálogo exige criar outro ciclo para reiniciar, como antes.
 - Repetir a mesma chave/payload devolve a tarefa já criada, mesmo se o checkpoint avançou ou foi publicado. Trocar o payload sob a mesma chave retorna 409. Outra chave de retomada enquanto o checkpoint está em uso retorna 409 `result_checkpoint_in_use`.
 
-Erros seguros adicionais: `result_checkpoint_incompatible`, `result_checkpoint_expired`, `result_checkpoint_unavailable`, `association_changed`, `edition_date_mismatch`, `source_identity_mismatch`. Estrutura inconsistente permanece `source_structure_changed`; contagem incompleta permanece `incomplete_extraction`. Checkpoint incompatível/inválido não é retomável; requer revisão e nova coleta intencional. Bloqueio de acesso mantém as páginas confirmadas, mas retomada de tarefa não remove o bloqueio da fonte.
+Erros seguros adicionais: `result_checkpoint_incompatible`, `result_checkpoint_expired`, `result_checkpoint_unavailable`, `association_changed`, `edition_date_unconfirmed`, `edition_date_mismatch`, `edition_location_conflict`, `edition_location_unconfirmed`, `source_identity_mismatch` e `source_identity_already_associated`. Conflitos de identidade exigem revisão e não geram retries automáticos. Estrutura inconsistente permanece `source_structure_changed`; contagem incompleta permanece `incomplete_extraction`. Checkpoint incompatível/inválido não é retomável; requer revisão e nova coleta intencional. Bloqueio de acesso mantém as páginas confirmadas, mas retomada de tarefa não remove o bloqueio da fonte.
 
 O painel oferece retomada somente quando o resumo indica disponibilidade; nova tentativa do início é uma opção distinta. A chave permanece por usuário/tarefa/mode após resposta incerta. Retenção por capacidade e espera por orçamento não aparecem como conclusão ou erro de fonte.
 
@@ -31,6 +33,8 @@ Migration aditiva `20261001000400_result_checkpoints`: quatro tabelas privadas c
 Validade inicial: sete dias a partir da primeira página/manifesto, sem renovação indefinida por tentativas. A limpeza do worker remove linhas intermediárias expiradas em lotes de até 25, sem tocar dados de lease running válido ou ResultSet/RaceResult. Recibos e contadores permanecem no histórico; linhas intermediárias são removidas também após publicação bem-sucedida. Limpeza de históricos pode remover raízes vencidas/inativas, sem apagar resultados permanentes.
 
 A migration foi preparada para o banco local isolado; não aplicada ao race-platform-staging nesta entrega. A integração futura exige migration antes de atualizar API e executor Python e publicar o frontend. O inicializador local verifica as quatro tabelas antes de iniciar consumidores. Nenhum agendamento é ativado.
+
+A revisão de identidade/protocolo v2 não acrescenta migration; depende das migrations anteriores deste PR. Atualizar API e Python juntos antes de retomar tarefas, para não apresentar checkpoints antigos como disponíveis. Não altera pedidos antigos nem corrige metadados históricos em massa.
 
 ## Limites e validação pendente
 

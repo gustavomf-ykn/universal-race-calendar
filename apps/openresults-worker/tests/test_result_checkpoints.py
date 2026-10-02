@@ -15,6 +15,8 @@ from app.services.source_requests import SourceBudgetDeferred
 from capacity import CapacityDeferred
 from result_checkpoints import ResultCheckpoints, ResultCheckpointError, cleanup_checkpoints
 import worker
+from edition_metadata import update_edition
+from app.models import ExtractionResult
 
 pytestmark = pytest.mark.skipif(not os.environ.get('DATABASE_URL'),reason='isolated PostgreSQL required')
 
@@ -102,6 +104,174 @@ def test_checkpoint_with_old_event_id_publishes_to_canonical_without_mutating_re
 
 def previous(adapter):
     return worker.query('SELECT "contentHash",count FROM "ResultSet" WHERE "externalId"=%s',(adapter.task['payload']['externalId'],),True)
+
+
+@pytest.mark.parametrize('field,value,reason', [
+    ('city', 'Outra cidade', 'edition_location_conflict'),
+    ('state', 'PR', 'edition_location_conflict'),
+    ('country', 'PT', 'edition_location_conflict'),
+    ('event_date', date(2027, 1, 1), 'edition_date_mismatch'),
+    ('event_date', None, 'edition_date_unconfirmed'),
+    ('country', 'País não reconhecido', 'edition_location_unconfirmed'),
+    ('raw_metadata', {'country_evidence': {'status': 'conflicting'}}, 'edition_location_unconfirmed'),
+])
+def test_conflicting_enrichment_records_observation_without_upgrading_identity_or_edition(checkpoint, field, value, reason):
+    adapter, discovery, _ = checkpoint
+    ident = adapter.root_id
+    old = 'url:pending-' + ident
+    with worker.connection() as conn:
+        conn.execute('UPDATE "Source" SET "externalId"=%s WHERE id=%s', (old, ident))
+        conn.execute('UPDATE "EventSourceReference" SET "sourceExternalId"=%s WHERE id=%s', (old, ident))
+        conn.execute('UPDATE "Event" SET "sourceType"=\'openresults\',"sourceId"=%s,"sourceExternalId"=%s WHERE id=%s', (ident, old, ident))
+        before = conn.execute('SELECT * FROM "Event" WHERE id=%s', (ident,)).fetchone()
+    discovery.metadata.name = 'Changed upstream name'
+    setattr(discovery.metadata, field, value)
+    original_payload = dict(adapter.task['payload'])
+    with pytest.raises(ValueError, match=reason):
+        update_edition(adapter.task, discovery.metadata, worker.connection, worker.fenced)
+    with worker.connection() as conn:
+        assert conn.execute('SELECT * FROM "Event" WHERE id=%s', (ident,)).fetchone() == before
+        ref = conn.execute('SELECT "sourceExternalId",observation,"lastValidatedAt" FROM "EventSourceReference" WHERE id=%s', (ident,)).fetchone()
+        assert ref['sourceExternalId'] == old and ref['lastValidatedAt']
+        assert ref['observation']['name'] == 'Changed upstream name'
+        assert conn.execute('SELECT "externalId" FROM "Source" WHERE id=%s', (ident,)).fetchone()['externalId'] == old
+    assert adapter.task['payload'] == original_payload
+    assert previous(adapter) == {'contentHash': 'old-validated-hash', 'count': 1}
+
+
+def test_enrichment_preserves_reviewed_location_but_never_accepts_a_different_date(checkpoint):
+    adapter, discovery, _ = checkpoint
+    ident = adapter.root_id
+    with worker.connection() as conn:
+        conn.execute('UPDATE "Event" SET city=\'Cidade revisada\',"sourceType"=\'openresults\',"sourceId"=%s WHERE id=%s', (ident, ident))
+        conn.execute('''INSERT INTO "AdminAudit" (id,"actorId",action,"eventId",details)
+            VALUES (%s,%s,'review_event',%s,%s)''',
+            (str(uuid.uuid4()), ident, ident, Jsonb({'changes': {'city': 'Cidade revisada', 'date': '2026-01-01'}})))
+    discovery.metadata.name = 'Nome atualizado'
+    update_edition(adapter.task, discovery.metadata, worker.connection, worker.fenced)
+    saved = worker.query('SELECT name,city,date FROM "Event" WHERE id=%s', (ident,), True)
+    assert saved['name'] == 'Nome atualizado' and saved['city'] == 'Cidade revisada'
+    discovery.metadata.event_date = date(2027, 1, 1)
+    with pytest.raises(ValueError, match='edition_date_mismatch'):
+        update_edition(adapter.task, discovery.metadata, worker.connection, worker.fenced)
+    assert worker.query('SELECT name,city,date FROM "Event" WHERE id=%s', (ident,), True) == saved
+
+
+@pytest.mark.parametrize('field,value,reason', [
+    ('city', 'Outra cidade', 'edition_location_conflict'),
+    ('state', 'PR', 'edition_location_conflict'),
+    ('country', 'PT', 'edition_location_conflict'),
+    ('country', 'não reconhecido', 'edition_location_unconfirmed'),
+    ('source_url', 'https://openresults.run/evento/another/', 'association_changed'),
+])
+def test_checkpoint_rejects_conflicting_evidence_before_first_page(checkpoint, field, value, reason):
+    adapter, discovery, _ = checkpoint
+    setattr(discovery.metadata, field, value)
+    with pytest.raises(ResultCheckpointError, match=reason):
+        adapter.start(discovery, datetime.now(timezone.utc))
+    assert worker.query('SELECT count(*) AS n FROM "ResultCheckpoint" WHERE "rootTaskId"=%s', (adapter.root_id,), True)['n'] == 0
+    assert previous(adapter) == {'contentHash': 'old-validated-hash', 'count': 1}
+
+
+@pytest.mark.parametrize('target', ['incoming', 'canonical'])
+def test_native_and_dom_require_a_confirmed_date(checkpoint, target):
+    adapter, discovery, _ = checkpoint
+    if target == 'incoming':
+        discovery.metadata.event_date = None
+    else:
+        worker.query('UPDATE "Event" SET date=NULL WHERE id=%s RETURNING id', (adapter.root_id,))
+    with pytest.raises(ResultCheckpointError, match='edition_date_unconfirmed'):
+        adapter.start(discovery, datetime.now(timezone.utc))
+    result = ExtractionResult(discovery.metadata, discovery.modalities,
+        [{'name': 'Controlled fixture', 'modality': '5k', 'gender': 'F', 'bib': '01'}],
+        1, 1, {'F': 1}, {'5k:F': 1})
+    with pytest.raises(ValueError, match='edition_date_unconfirmed'):
+        worker.publish(adapter.task, result)
+    assert previous(adapter) == {'contentHash': 'old-validated-hash', 'count': 1}
+
+
+def test_stale_metadata_executor_cannot_even_record_a_conflicting_observation(checkpoint):
+    adapter, discovery, _ = checkpoint
+    discovery.metadata.city = 'Outra cidade'
+    worker.query('UPDATE "CollectionTask" SET "leaseToken"=\'new-executor\' WHERE id=%s RETURNING id', (adapter.task['id'],))
+    with pytest.raises(RuntimeError, match='lease_lost'):
+        update_edition(adapter.task, discovery.metadata, worker.connection, worker.fenced)
+    ref = worker.query('SELECT observation,"lastValidatedAt" FROM "EventSourceReference" WHERE id=%s', (adapter.root_id,), True)
+    assert ref == {'observation': {}, 'lastValidatedAt': None}
+    assert worker.query('SELECT city FROM "Event" WHERE id=%s', (adapter.root_id,), True)['city'] == 'Teste'
+    assert previous(adapter) == {'contentHash': 'old-validated-hash', 'count': 1}
+
+
+def test_changed_location_manifest_or_legacy_version_cannot_resume_confirmed_pages(checkpoint):
+    adapter, discovery, _ = checkpoint
+    adapter.start(discovery, datetime.now(timezone.utc))
+    adapter.save_page(discovery.modalities[0], 'F', 0, parsed_page(discovery, 'F', 0))
+    # Both observations are compatible with the canonical BR country, but are
+    # different snapshots. The already-confirmed page must not be mixed into a new one.
+    discovery.metadata.country = 'BR'
+    with pytest.raises(ResultCheckpointError, match='result_checkpoint_incompatible'):
+        adapter.start(discovery, datetime.now(timezone.utc))
+    discovery.metadata.country = ''
+    with worker.connection() as conn:
+        conn.execute('UPDATE "ResultCheckpoint" SET "parserVersion"=1 WHERE "rootTaskId"=%s', (adapter.root_id,))
+    with pytest.raises(ResultCheckpointError, match='result_checkpoint_incompatible'):
+        adapter.start(discovery, datetime.now(timezone.utc))
+    with pytest.raises(ResultCheckpointError, match='result_checkpoint_incompatible'):
+        adapter.ready()
+    assert worker.query('SELECT "nextOffset" FROM "ResultCheckpointGroup" WHERE "rootTaskId"=%s AND gender=\'F\'', (adapter.root_id,), True)['nextOffset'] == 1
+    assert previous(adapter) == {'contentHash': 'old-validated-hash', 'count': 1}
+
+
+@pytest.mark.parametrize('field,value,reason', [
+    ('city', 'Outra cidade', 'edition_location_conflict'),
+    ('state', 'PR', 'edition_location_conflict'),
+    ('country', 'PT', 'edition_location_conflict'),
+    ('date', date(2027, 1, 1), 'edition_date_mismatch'),
+    ('url', 'https://openresults.run/evento/another/', 'association_changed'),
+])
+def test_ready_checkpoint_rechecks_current_edition_before_replacing_results(checkpoint, field, value, reason):
+    adapter, discovery, _ = checkpoint
+    discovery.metadata.country = 'BR'
+    result = ready(adapter, discovery)
+    with worker.connection() as conn:
+        if field == 'url':
+            conn.execute('UPDATE "EventSourceReference" SET url=%s WHERE id=%s', (value, adapter.root_id))
+        else:
+            from psycopg import sql
+            conn.execute(sql.SQL('UPDATE "Event" SET {}=%s WHERE id=%s').format(sql.Identifier(field)), (value, adapter.root_id))
+    with pytest.raises(ResultCheckpointError, match=reason):
+        adapter.publish(result, worker.position)
+    assert previous(adapter) == {'contentHash': 'old-validated-hash', 'count': 1}
+    assert adapter.ready().extracted_total == 2
+    assert worker.query('SELECT status FROM "CollectionTask" WHERE id=%s', (adapter.task['id'],), True)['status'] == 'running'
+
+
+@pytest.mark.parametrize('field,value,reason', [
+    ('city', 'Outra cidade', 'edition_location_conflict'),
+    ('state', 'PR', 'edition_location_conflict'),
+    ('country', 'PT', 'edition_location_conflict'),
+    ('source_url', 'https://openresults.run/evento/another/', 'association_changed'),
+    ('event_id', 'another-id', 'source_identity_mismatch'),
+])
+def test_dom_fallback_publication_rejects_incompatible_identity(checkpoint, field, value, reason):
+    adapter, discovery, _ = checkpoint
+    setattr(discovery.metadata, field, value)
+    result = ExtractionResult(discovery.metadata, discovery.modalities,
+        [{'name': 'Controlled fixture', 'modality': '5k', 'gender': 'F', 'bib': '01'}],
+        1, 1, {'F': 1}, {'5k:F': 1})
+    with pytest.raises(ValueError, match=reason):
+        worker.publish(adapter.task, result)
+    assert previous(adapter) == {'contentHash': 'old-validated-hash', 'count': 1}
+
+
+def test_dom_fallback_accepts_same_edition_and_keeps_missing_country(checkpoint):
+    adapter, discovery, _ = checkpoint
+    result = ExtractionResult(discovery.metadata, discovery.modalities,
+        [{'name': 'Controlled fixture', 'modality': '5k', 'gender': 'F', 'bib': '01'}],
+        1, 1, {'F': 1}, {'5k:F': 1})
+    worker.publish(adapter.task, result)
+    assert previous(adapter)['contentHash'] != 'old-validated-hash'
+    assert worker.query('SELECT country FROM "Event" WHERE id=%s', (adapter.root_id,), True)['country'] == 'BR'
 
 
 @pytest.mark.asyncio

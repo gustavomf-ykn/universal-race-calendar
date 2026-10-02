@@ -206,7 +206,7 @@ describe.skipIf(!process.env.DATABASE_URL)("transactional reconciliation of sepa
         eventId: source.id,
         externalId: source.sourceExternalId!,
         sourceUrl: source.sourceUrl!,
-        parserVersion: 1,
+        parserVersion: 2,
         pageSize: 100,
         manifestHash: "fixture",
         manifest: {},

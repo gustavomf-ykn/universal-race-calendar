@@ -8,7 +8,7 @@ from datetime import date
 
 from openpyxl import load_workbook
 from app.config import Settings
-from app.models import EXPORT_COLUMNS
+from app.models import EXPORT_COLUMNS, EventMetadata
 from event_aliases import payload as canonical_payload
 from result_checkpoints import ResultCheckpoints
 from selection_export import build_selection
@@ -39,7 +39,8 @@ elif mode == 'publish':
         'name': 'Participante sintético atualizado', 'modality': '5k', 'bib': '001',
         'gender': 'F', 'overall_position': 1, 'time': '00:25:00',
     }], modalities=[SimpleNamespace(value='5k', name='5 km')],
-        metadata=SimpleNamespace(event_date=date(2040, 10, 10), event_id=task['payload']['externalId']))
+        metadata=EventMetadata('Edição sintética', date(2040, 10, 10), 'São José', 'SC',
+            task['payload']['url'], 'fixture', country='BR', event_id=task['payload']['externalId']))
     worker.publish(task, result)
     assert task['payload']['eventId'] == old_id
     saved = worker.query('SELECT status,payload FROM "CollectionTask" WHERE id=%s', (task_id,), True)

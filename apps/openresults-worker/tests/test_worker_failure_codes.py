@@ -2,6 +2,7 @@ from unittest.mock import MagicMock
 import pytest
 import worker
 from app.models import AccessBlockedError, StructureChangedError
+from edition_metadata import IDENTITY_ERRORS
 
 
 @pytest.mark.asyncio
@@ -10,6 +11,7 @@ from app.models import AccessBlockedError, StructureChangedError
     (StructureChangedError('upstream-private-detail'), 'source_structure_changed', 'failed', True),
     (ValueError('incomplete_extraction'), 'incomplete_extraction', 'partial', False),
     (RuntimeError('upstream-private-detail'), 'collection_failed', 'failed', False),
+    *[(ValueError(code), code, 'failed', True) for code in sorted(IDENTITY_ERRORS)],
 ])
 async def test_worker_records_safe_failure_and_does_not_retry_blocked_source(monkeypatch, error, expected, outcome, disable_retry):
     async def scrape(*args, **kwargs):
