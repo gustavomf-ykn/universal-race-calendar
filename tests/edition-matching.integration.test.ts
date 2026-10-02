@@ -364,7 +364,11 @@ describe.skipIf(!process.env.DATABASE_URL)("edition matching and country evidenc
     });
     sources.push(source.id);
     const initial = await runSourceCheck(source.id);
-    expect(initial.status).toBe("success");
+    expect(initial.status).toBe("manual_review");
+    expect(initial.reasons).toContain("invalid_source_reference");
+    expect(await prisma.event.findUniqueOrThrow({ where: { id: initial.eventId! } })).toMatchObject({
+      publicationStatus: "pending_review",
+    });
     events.push(initial.eventId!);
     const result = await prisma.resultSet.create({
       data: {
