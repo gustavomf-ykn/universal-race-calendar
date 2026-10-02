@@ -5,6 +5,7 @@ import zipfile
 from datetime import date, datetime
 from app.models import EXPORT_COLUMNS
 from app.services.exporter import _styled_workbook
+from event_aliases import event_ids as canonical_event_ids
 
 SIMPLE=[('internal_id','ID interno'),('event_id','ID na fonte'),('name','Nome'),('event_date','Data'),('city','Cidade'),('state','UF'),('source','Fonte'),('url','URL de origem'),('publication','Publicação')]
 FULL=SIMPLE+[('description','Descrição'),('location','Local'),('address','Endereço'),('modality','Modalidade'),('registration','Inscrição'),('official','Site oficial'),('image','Imagem'),('references','Referências de fontes'),('updated_at','Atualizado em'),('metadata_json','Metadados completos (JSON)')]
@@ -21,6 +22,7 @@ def build_selection(artifact,connection):
     selection=artifact['selection'];ids=selection['eventIds'];kind=artifact['kind'];files=[];total=0
     if not ids or len(ids)>10000: raise ValueError('invalid_selection')
     with connection() as conn:
+        ids = canonical_event_ids(conn, ids)
         events=conn.execute('SELECT * FROM "Event" WHERE id=ANY(%s) ORDER BY id',(ids,)).fetchall()
         if len(events)!=len(ids):raise ValueError('selection_changed')
         if not selection.get('administrative') and any(e['publicationStatus']!='published' for e in events):raise ValueError('event_not_published')

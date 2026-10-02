@@ -4,7 +4,9 @@ Este documento descreve a branch `codex/national-catalog`. Não constitui aceite
 
 ## Implementado
 
-- Cruzamento de novas referências exige link de edição reconhecido nas três fontes, correspondência única e data/cidade/UF/país compatíveis. Host, rota e credenciais da URL são validados; homepage de organizador e fingerprint apenas sugerem revisão. Referências com localização nunca validada não autorizam associação automática; conflitos de observações, múltiplos links, identidades distintas da mesma fonte e estados hidden/rejected também exigem revisão. A evidência é conferida novamente com o registro bloqueado antes de alterar o canônico. Isso ainda não implementa a união dos registros já separados.
+- União manual de registros separados com prévia, confirmação, idempotência e auditoria; IDs/slugs antigos resolvem para o destino. Transferência transacional e consumidores descritos em [EVENT-RECONCILIATION.md](EVENT-RECONCILIATION.md). Ainda não publicada: coordenação da reconciliação global, aceite de correspondências reais e navegador permanecem pendentes.
+
+- Cruzamento de novas referências exige link de edição reconhecido nas três fontes, correspondência única e data/cidade/UF/país compatíveis. Host, rota e credenciais da URL são validados; homepage de organizador e fingerprint apenas sugerem revisão. Referências com localização nunca validada não autorizam associação automática; conflitos de observações, múltiplos links, identidades distintas da mesma fonte e estados hidden/rejected também exigem revisão. A evidência é conferida novamente com o registro bloqueado antes de alterar o canônico. A união manual de registros já separados é uma operação distinta, com prévia e confirmação.
 - Inspeção OpenResults preserva o país observado em SourceMatch; falta de país não vira BR por domínio/UF. Atualização parcial mantém país previamente observado. Registro independente conserva esse valor, fica pending_review e indica country_unconfirmed quando ausente. A tela de associação mostra nome, data, cidade/UF e país, inclusive país não confirmado. Não corrige automaticamente valores históricos presumidos nem comprova cobertura nacional.
 - Reinspeção de identidade OpenResults já associada confere data e localização completa antes de resolver a pendência automaticamente. Conflito novo ou evidência incompleta volta a `pending`, inclusive se antes estava resolvida; referência e resultados existentes permanecem. Ausência de país na atualização parcial conserva o valor previamente observado. Comparação de cidade ignora apenas acentos, caixa e espaços.
 - Associação manual rejeita conflito conhecido de data/localização dentro da transação; bloqueia e relê a pendência antes da decisão. Pedidos concorrentes para a mesma associação produzem um vínculo e uma auditoria. País desconhecido pode ser revisado manualmente, mas não é preenchido por presunção.
@@ -40,7 +42,7 @@ OpenResults: recibo com `scope=source_catalog`, páginas em `requested`, `rawCou
 
 `POST /v1/admin/syncs/{id}/continue` continua manualmente. Replay devolve a tarefa original mesmo depois de avançar checkpoint. Rejeita ciclo pausado, concluído/limitado ou com passo ativo.
 
-`GET /v1/admin/catalog/events/{id}/comparison` mostra valores canônicos e validados por fonte para nome, data, cidade, UF, país, modalidade e URLs. Compara referências já associadas; reconciliação do catálogo inteiro ainda está pendente.
+`GET /v1/admin/catalog/events/{id}/comparison` mostra valores canônicos e validados por fonte para nome, data, cidade, UF, país, modalidade e URLs. Compara referências já associadas; a união manual de registros separados utiliza a prévia/confirmacão documentada em EVENT-RECONCILIATION.md. Reconciliação automática do catálogo inteiro ainda está pendente.
 
 `GET /v1/admin/source-controls` mostra as três fontes, uso e limite da janela, intervalo, próximo reset, bloqueio e prazo mínimo de retomada. Uma fonte sem histórico utiliza os padrões acima.
 

@@ -1,6 +1,7 @@
 import type { CollectionTask, Prisma } from "@prisma/client";
 import { prisma } from "./index.js";
 import { TaskConflict } from "./tasks.js";
+import { resolveEventId } from "./event-reconciliation.js";
 
 export const resultParserVersion = 1;
 
@@ -21,7 +22,7 @@ export async function readResultCheckpoint(task: CollectionTask, db: Prisma.Tran
   let reason: string | null = null;
   if (
     root.parserVersion !== resultParserVersion ||
-    root.eventId !== payload.eventId ||
+    root.eventId !== await resolveEventId(String(payload.eventId), db) ||
     root.externalId !== payload.externalId ||
     root.sourceUrl !== payload.url
   )
@@ -56,7 +57,7 @@ export async function reserveResultCheckpoint(task: CollectionTask, db: Prisma.T
       sourceType_sourceExternalId: { sourceType: "openresults", sourceExternalId: String(payload.externalId) },
     },
   });
-  if (!reference || reference.eventId !== payload.eventId || reference.url !== payload.url)
+  if (!reference || reference.eventId !== await resolveEventId(String(payload.eventId), db) || reference.url !== payload.url)
     throw new TaskConflict("association_changed");
   return rootId;
 }

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { assertTaskLease } from "./lease.js";
 import { capacityGrowth } from "./capacity.js";
 import { editionLinks, editionUrlVariants, crossSourceEditionReason } from "./edition-evidence.js";
+import { resolveEventId, resolveEventSlug } from "./event-reconciliation.js";
 export { editionIdentity, editionLinks, editionLocationEvidence, editionFailureCode } from "./edition-evidence.js";
 export { setTaskLease, assertTaskLease } from "./lease.js";
 export { assertCapacity, CapacityDeferred, capacityReasons, deferCapacityTask, readCapacity, controlCapacity } from "./capacity.js";
@@ -13,6 +14,9 @@ export { enqueueTask, claimTask, heartbeatTask, finishTask, publicTask, TaskConf
 export { catalogCheckpoint, coordinateCatalogSyncs, controlCatalogSync } from "./catalog-continuation.js";
 export { publicCatalogSync } from "./catalog-report.js";
 export { readResultCheckpoint, reserveResultCheckpoint, resultCheckpointRoot } from "./result-checkpoints.js";
+export { resolveEventId, resolveEventIds, resolveEventSlug, previewEventReconciliation,
+  reconcileEventEditions, ReconciliationConflict } from "./event-reconciliation.js";
+export type { ReconciliationInput } from "./event-reconciliation.js";
 export {
   requestSource,
   requestSources,
@@ -1053,7 +1057,7 @@ export async function updateEventCurationMetadata(input: {
   return prisma.$transaction(async (tx) => {
     await assertTaskLease(tx);
     return tx.event.update({
-      where: { id: input.eventId },
+      where: { id: await resolveEventId(input.eventId, tx) },
       data: withoutUndefined({
         curationStatus: input.curationStatus,
         curatedAt: input.curatedAt,
@@ -1066,7 +1070,7 @@ export async function updateEventCurationMetadata(input: {
 }
 
 export async function getLatestRawExtractionForEvent(eventId: string) {
-  const event = await prisma.event.findUnique({ where: { id: eventId } });
+  const event = await prisma.event.findUnique({ where: { id: await resolveEventId(eventId) } });
   if (!event?.sourceId) return null;
   return prisma.rawSourceExtraction.findFirst({
     where: { sourceId: event.sourceId },
@@ -1222,7 +1226,7 @@ function jsonArray(value: unknown): string[] {
 
 async function uniqueSlug(baseSlug: string): Promise<string> {
   let slug = baseSlug;
-  for (let index = 2; await prisma.event.findUnique({ where: { slug } }); index += 1) {
+  for (let index = 2; await resolveEventSlug(slug); index += 1) {
     slug = `${baseSlug}-${index}`;
   }
   return slug;

@@ -64,6 +64,8 @@ def main():
             db.execute('SELECT "contentHash" FROM "ResultCheckpointPage" LIMIT 0')
             db.execute('SELECT "recordKey" FROM "ResultCheckpointRow" LIMIT 0')
             db.execute('SELECT country FROM "SourceMatch" LIMIT 0')
+            db.execute('SELECT id,"canonicalEventId","oldSlug" FROM "EventAlias" LIMIT 0')
+            db.execute("SELECT 'resolve_event_id(text)'::regprocedure")
             db.execute("SELECT 'check_catalog_capacity(text,bigint,text,text)'::regprocedure, 'defer_capacity_task(text,text,jsonb,text)'::regprocedure")
             db.execute('SELECT "distanceKm",gap FROM "RaceResult" LIMIT 0')
             db.execute('SELECT selection,"contentType" FROM "ExportArtifact" LIMIT 0')

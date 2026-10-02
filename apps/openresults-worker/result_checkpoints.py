@@ -10,6 +10,7 @@ from psycopg.types.json import Jsonb
 from app.models import EventDiscovery, EventMetadata, ExtractionResult, ModalityInfo, NoResultsError, StructureChangedError
 from app.services.parser import clean_text, normalize_gender
 from app.services.result_pages import record_key
+from event_aliases import payload as canonical_payload
 
 PARSER_VERSION = 1
 
@@ -79,7 +80,7 @@ class ResultCheckpoints:
                             (self.root_id,)).fetchone()
         if not root:
             return None
-        payload = self.task['payload']
+        payload = canonical_payload(conn, self.task['payload'])
         if (root['eventId'] != payload['eventId'] or root['externalId'] != payload['externalId']
                 or root['sourceUrl'] != payload['url'] or root['parserVersion'] != PARSER_VERSION
                 or root['pageSize'] != self.settings.endpoint_page_size):
@@ -112,6 +113,7 @@ class ResultCheckpoints:
             raise ResultCheckpointError('source_identity_mismatch')
         with self.connection() as conn:
             self.fence(conn, self.task, len(json.dumps(manifest).encode()) * 8 + 65536)
+            payload = canonical_payload(conn, payload)
             reference = conn.execute('''SELECT r."eventId",e.date FROM "EventSourceReference" r
                 JOIN "Event" e ON e.id=r."eventId" WHERE r."sourceType"='openresults'
                 AND r."sourceExternalId"=%s FOR UPDATE OF r''', (payload['externalId'],)).fetchone()
@@ -257,7 +259,7 @@ class ResultCheckpoints:
             if size['count'] != validated.extracted_total:
                 raise ResultCheckpointError('incomplete_extraction')
             self.fence(conn, self.task, int(size['bytes']) * 8 + size['count'] * 2048)
-            payload = self.task['payload']
+            payload = canonical_payload(conn, self.task['payload'])
             reference = conn.execute('''SELECT r."eventId",r.url,e.date FROM "EventSourceReference" r
                 JOIN "Event" e ON e.id=r."eventId" WHERE r."sourceType"='openresults'
                 AND r."sourceExternalId"=%s FOR UPDATE OF r,e''', (payload['externalId'],)).fetchone()

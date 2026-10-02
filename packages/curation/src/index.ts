@@ -12,6 +12,7 @@ import {
   getSource,
   listEventsForCuration,
   prisma,
+  resolveEventId,
   saveImportRun,
   saveCurationJob,
   markSourceChecked,
@@ -1107,6 +1108,7 @@ export async function runAICurationForEvent(
   eventId: string,
   options: RunAICurationOptions = {},
 ): Promise<AICurationRunResult> {
+  eventId = await resolveEventId(eventId);
   const event = await prisma.event.findUnique({
     where: { id: eventId },
     include: { distances: true, prices: true, images: true },

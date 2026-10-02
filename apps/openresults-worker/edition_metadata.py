@@ -2,6 +2,7 @@
 from psycopg.types.json import Jsonb
 from psycopg import sql
 from source_observation import edition_observation
+from event_aliases import event_id as canonical_event_id
 
 def update_edition(task, metadata, connection, fenced):
     event_id = task['payload'].get('eventId')
@@ -9,6 +10,7 @@ def update_edition(task, metadata, connection, fenced):
         return
     with connection() as conn:
         fenced(conn, task)
+        event_id = canonical_event_id(conn, event_id)
         ref = conn.execute('''SELECT * FROM "EventSourceReference" WHERE "eventId"=%s
             AND "sourceType"='openresults' FOR UPDATE''', (event_id,)).fetchone()
         event = conn.execute('SELECT * FROM "Event" WHERE id=%s FOR UPDATE', (event_id,)).fetchone()

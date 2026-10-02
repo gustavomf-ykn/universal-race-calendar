@@ -243,3 +243,9 @@ Hold `capacity_wait` significa retenção por configuração, medição desconhe
 ### Retomada de resultados na branch de catálogo nacional
 
 Ainda sem publicação: `GET /v1/tasks/:id` acrescenta resumo `checkpoint` para extração OpenResults; `available` informa se uma tarefa failed/partial pode ser retomada. Contadores de páginas/linhas confirmadas são intermediários, não resultados publicados. O painel oferece `POST /v1/tasks/:id/retry` com `mode=resume` quando disponível e distingue `mode=restart`, que inicia uma extração nova sem reutilizar páginas. Ambos exigem JWT admin e chave de idempotência persistida por usuário/tarefa/mode; a tentativa anterior permanece no histórico. Campos, erros, validade e limites do fallback: [RESULT-CHECKPOINTS.md](RESULT-CHECKPOINTS.md).
+
+### União de edições na branch de catálogo nacional
+
+Ainda sem publicação: POST `/v1/admin/catalog/reconciliations/preview` com sourceId/targetId; confirmação POST `/v1/admin/catalog/reconciliations` com JWT admin, Idempotency-Key, revision da prévia, reason e confirmedSameEdition=true. Campos, conflitos e migration: [EVENT-RECONCILIATION.md](EVENT-RECONCILIATION.md). O painel busca a edição visualmente, mostra evidências e preserva a confirmação após perda de resposta. Uma prévia obsoleta exige nova revisão. Tarefas/lotes ativos impedem a união.
+
+O destino conserva seu ID. IDs/slugs antigos passam a resolver o destino, inclusive resultados, tarefas antigas e seleções de exportação, sem reescrever payloads/chaves ou arquivos existentes. A permissão de publicação do destino vale também para os links antigos. União não equivale a coleta nova, publicação de uma edição ou cobertura nacional completa. Exige migration e atualização explícita de API/executores antes do frontend; aceite autenticado no navegador permanece pendente.

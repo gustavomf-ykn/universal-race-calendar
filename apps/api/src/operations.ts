@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { prisma, enqueueTask, publicTask, TaskConflict, catalogCheckpoint, controlCatalogSync, publicCatalogSync } from "@race-calendar/database";
+import { prisma, enqueueTask, publicTask, TaskConflict, catalogCheckpoint, controlCatalogSync, publicCatalogSync, resolveEventId, resolveEventIds } from "@race-calendar/database";
 import { requireAdmin, authorize } from "./auth.js";
 import { reserveResultCheckpoint, resultCheckpointRoot } from "@race-calendar/database";
 
@@ -209,7 +209,7 @@ export async function registerOperations(app: FastifyInstance) {
       ),
     },
     async (req, reply) => {
-      const id = (req.params as any).id,
+      const id = await resolveEventId((req.params as any).id),
         body = req.body as any;
       const current = await prisma.event.findUnique({ where: { id } });
       if (!current) return reply.code(404).send({ error: "event_not_found" });
@@ -265,7 +265,7 @@ export async function registerOperations(app: FastifyInstance) {
       const q = req.query as any;
       return {
         data: await prisma.adminAudit.findMany({
-          where: { eventId: (req.params as any).id },
+          where: { eventId: await resolveEventId((req.params as any).id) },
           orderBy: { createdAt: "desc" },
           skip: (q.page - 1) * q.limit,
           take: q.limit,
@@ -513,7 +513,7 @@ export async function registerOperations(app: FastifyInstance) {
         ref: { sourceType: string; url: string; sourceExternalId: string; sourceId: string };
       }> = [];
       for (const eventId of body.eventIds) {
-        const event = await prisma.event.findUnique({ where: { id: eventId }, include: { sourceReferences: true } });
+        const event = await prisma.event.findUnique({ where: { id: await resolveEventId(eventId) }, include: { sourceReferences: true } });
         if (!event) return reply.code(404).send({ error: "event_not_found" });
         const ref = event.sourceReferences.find((r) =>
           body.operation === "results" ? r.sourceType === "openresults" : r.sourceType === event.sourceType,
@@ -640,7 +640,8 @@ export async function registerOperations(app: FastifyInstance) {
         }
       }
       // Snapshot IDs at acceptance, including every page. Hard limit is explicit, never silent truncation.
-      const where = body.eventIds ? { id: { in: body.eventIds } } : adminEventFilter(body.filter);
+      const selectedIds = body.eventIds ? await resolveEventIds(body.eventIds) : null;
+      const where = selectedIds ? { id: { in: selectedIds } } : adminEventFilter(body.filter);
       const events = await prisma.event.findMany({
         where: { AND: [where, ...(req.principal!.admin ? [] : [{ publicationStatus: "published" as const }])] },
         select: { id: true },
@@ -649,7 +650,7 @@ export async function registerOperations(app: FastifyInstance) {
       });
       if (!events.length) return reply.code(409).send({ error: "empty_selection" });
       if (events.length > 10000) return reply.code(409).send({ error: "selection_exceeds_10000_refine_filter" });
-      if (body.eventIds && events.length !== body.eventIds.length)
+      if (selectedIds && events.length !== selectedIds.length)
         return reply.code(404).send({ error: "event_not_found" });
       try {
         const { task, artifact } = await prisma.$transaction(async (tx) => {

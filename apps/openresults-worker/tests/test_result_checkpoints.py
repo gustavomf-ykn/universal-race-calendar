@@ -49,6 +49,7 @@ def checkpoint(monkeypatch):
     adapter=ResultCheckpoints(task,settings,worker.connection,worker.fenced)
     yield adapter,discovery,settings
     with worker.connection() as conn:
+        conn.execute('DELETE FROM "EventAlias" WHERE "canonicalEventId"=%s',(ident,))
         conn.execute('DELETE FROM "ResultCheckpoint" WHERE "eventId"=%s',(ident,))
         conn.execute('DELETE FROM "AdminAudit" WHERE "actorId"=%s',(ident,))
         conn.execute('DELETE FROM "CollectionTask" WHERE "ownerId"=%s',(ident,))
@@ -76,6 +77,27 @@ def ready(adapter,discovery):
     for gender,offset in [('F',0),('F',1),('M',0)]:
         adapter.save_page(discovery.modalities[0],gender,offset,parsed_page(discovery,gender,offset))
     return adapter.finish()
+
+
+def test_checkpoint_with_old_event_id_publishes_to_canonical_without_mutating_request(checkpoint):
+    adapter, discovery, _ = checkpoint
+    canonical = adapter.task['payload']['eventId']
+    old = canonical + '-old'
+    with worker.connection() as conn:
+        conn.execute('''INSERT INTO "EventAlias" (id,"oldSlug","canonicalEventId",snapshot,"createdBy")
+            VALUES (%s,%s,%s,'{}','controlled_fixture')''', (old, old, canonical))
+        original = {**adapter.task['payload'], 'eventId': old}
+        conn.execute('UPDATE "CollectionTask" SET payload=%s WHERE id=%s', (Jsonb(original), adapter.task['id']))
+    adapter.task['payload'] = original
+    result = ready(adapter, discovery)
+    assert adapter.task['payload']['eventId'] == old
+    assert adapter.ready().extracted_total == 2
+    adapter.publish(result, worker.position)
+    assert previous(adapter)['count'] == 2
+    with worker.connection() as conn:
+        assert conn.execute('SELECT "eventId" FROM "ResultSet" WHERE id=%s', (adapter.root_id,)).fetchone()['eventId'] == canonical
+        saved = conn.execute('SELECT payload,status FROM "CollectionTask" WHERE id=%s', (adapter.task['id'],)).fetchone()
+        assert saved['payload'] == original and saved['status'] == 'completed'
 
 
 def previous(adapter):

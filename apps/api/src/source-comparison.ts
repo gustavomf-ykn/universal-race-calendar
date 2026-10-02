@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { prisma, compareSourceObservations, observationOf, type SourceObservation } from "@race-calendar/database";
+import { prisma, compareSourceObservations, observationOf, resolveEventId, type SourceObservation } from "@race-calendar/database";
 import { requireAdmin } from "./auth.js";
 
 export async function registerSourceComparison(app: FastifyInstance) {
@@ -10,7 +10,7 @@ export async function registerSourceComparison(app: FastifyInstance) {
       403: { type: "object", properties: { error: { type: "string" } } },
       404: { type: "object", properties: { error: { type: "string" } } } },
   } }, async (req, reply) => {
-    const event = await prisma.event.findUnique({ where: { id: (req.params as { id: string }).id }, include: {
+    const event = await prisma.event.findUnique({ where: { id: await resolveEventId((req.params as { id: string }).id) }, include: {
       sourceReferences: { orderBy: [{ priority: "desc" }, { id: "asc" }] },
     } });
     if (!event) return reply.code(404).send({ error: "event_not_found" });

@@ -2,6 +2,7 @@ import { registerOperations } from "./operations.js";
 import { registerSourceComparison } from "./source-comparison.js";
 import { registerSourceControls } from "./source-controls.js";
 import { registerCapacity } from "./capacity.js";
+import { registerReconciliation } from "./reconciliation.js";
 import { registerBackend, acceptTask } from "./backend.js";
 import { installLegacyContracts } from "./legacy-contracts.js";
 import { installCalendarContracts } from "./contracts.js";
@@ -26,6 +27,8 @@ import {
   getSource,
   listSources,
   prisma,
+  resolveEventId,
+  resolveEventSlug,
 } from "@race-calendar/database";
 import {
   curationJobStatusSchema,
@@ -197,9 +200,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
   app.get("/v1/events/slug/:slug", async (request, reply) => {
     const { slug } = request.params as { slug: string };
-    const event = await prisma.event.findUnique({ where: { slug } });
-    if (!event) return reply.code(404).send({ error: "event_not_found" });
-    return sendEventDetail(event.id, reply);
+    const id = await resolveEventSlug(slug);
+    if (!id) return reply.code(404).send({ error: "event_not_found" });
+    return sendEventDetail(id, reply);
   });
 
   app.get("/v1/events/nearby", async (request) => {
@@ -499,7 +502,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   });
 
   app.get("/v1/admin/events/:id", { preHandler: requireInternalApiKey }, async (request, reply) => {
-    const { id } = request.params as { id: string };
+    const id = await resolveEventId((request.params as { id: string }).id);
     const event = await prisma.event.findUnique({
       where: { id },
       include: {
@@ -540,7 +543,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   );
 
   app.patch("/v1/admin/events/:id/dedupe-status", { preHandler: requireInternalApiKey }, async (request, reply) => {
-    const { id } = request.params as { id: string };
+    const id = await resolveEventId((request.params as { id: string }).id);
     const body = objectBody(request.body);
     const parsed = dedupeStatusSchema.safeParse(body.dedupeStatus ?? body.status);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_dedupe_status" });
@@ -548,7 +551,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     const data: { dedupeStatus: typeof parsed.data; duplicateOfEventId?: string | null } = {
       dedupeStatus: parsed.data,
     };
-    if (duplicateOfEventId) data.duplicateOfEventId = duplicateOfEventId;
+    if (duplicateOfEventId) data.duplicateOfEventId = await resolveEventId(duplicateOfEventId);
     if (parsed.data === "unique") data.duplicateOfEventId = null;
     const event = await prisma.event
       .update({
@@ -736,10 +739,12 @@ export async function buildApp(options: BuildAppOptions = {}) {
   await registerSourceComparison(app);
   await registerSourceControls(app);
   await registerCapacity(app);
+  await registerReconciliation(app);
   return app;
 }
 
 async function sendEventDetail(id: string, reply: FastifyReply) {
+  id = await resolveEventId(id);
   const event = await prisma.event.findFirst({
     where: { id, publicationStatus: "published", country: "BR" },
     include: {
@@ -1013,6 +1018,7 @@ async function updateEventPublicationStatus(
   reply: FastifyReply,
   actorId: string,
 ) {
+  id = await resolveEventId(id);
   const current = await prisma.event.findUnique({ where: { id } });
   if (!current) return reply.code(404).send({ error: "event_not_found" });
   if (publicationStatus === "published" && (!current.date || !current.city || !current.state))

@@ -30,6 +30,7 @@ from source_requests import database_request_hooks
 from capacity import CapacityDeferred, check_capacity, database_capacity, storage_capacity
 from result_checkpoints import ResultCheckpoints, ResultCheckpointError, cleanup_checkpoints
 from app.services.country import normalize_country
+from event_aliases import payload as canonical_payload
 
 
 def storage_headers():
@@ -78,8 +79,9 @@ def publish(task, result):
     canonical = json.dumps(records, sort_keys=True, default=str, ensure_ascii=False)
     with connection() as conn:
         fenced(conn, task, len(canonical.encode()) * 8 + len(records) * 2048)
+        payload = canonical_payload(conn, payload)
         reference = conn.execute('''SELECT r."eventId",e.date FROM "EventSourceReference" r JOIN "Event" e ON e.id=r."eventId"
-            WHERE r."sourceType"='openresults' AND r."sourceExternalId"=%s FOR UPDATE OF r''', (payload['externalId'],)).fetchone()
+            WHERE r."sourceType"='openresults' AND r."sourceExternalId"=%s FOR UPDATE OF r,e''', (payload['externalId'],)).fetchone()
         if not reference or reference['eventId'] != payload['eventId']:
             raise ValueError('association_changed')
         if not result.metadata.event_date or not reference['date'] or reference['date'].date() != result.metadata.event_date:
@@ -180,7 +182,7 @@ async def export(task):
     else:
         # Repair the short API enqueue/artifact creation gap after an interrupted request.
         artifact=query('''INSERT INTO "ExportArtifact" (id,"eventId","ownerId","taskId",status,"expiresAt","createdAt")
-            VALUES (%s,%s,%s,%s,'queued',%s::timestamptz+interval '1 day',%s)
+            VALUES (%s,resolve_event_id(%s),%s,%s,'queued',%s::timestamptz+interval '1 day',%s)
             ON CONFLICT ("taskId") DO UPDATE SET "taskId"=EXCLUDED."taskId" RETURNING *''',
             (str(uuid.uuid4()),task['payload']['eventId'],task['ownerId'],task['id'],task['createdAt'],task['createdAt']),one=True)
     if artifact['expiresAt'].replace(tzinfo=timezone.utc)<=datetime.now(timezone.utc):

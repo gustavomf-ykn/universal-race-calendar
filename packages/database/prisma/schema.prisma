@@ -242,12 +242,24 @@ model Event {
   resultSets          ResultSet[]
   resultCheckpoints   ResultCheckpoint[]
   exports             ExportArtifact[]
+  aliases             EventAlias[]
 
   @@index([publicationStatus])
   @@index([date])
   @@index([city, state, country])
   @@index([canonicalFingerprint])
   @@unique([sourceType, sourceExternalId])
+}
+
+model EventAlias {
+  id               String @id
+  oldSlug          String @unique
+  canonicalEventId String
+  canonicalEvent   Event @relation(fields: [canonicalEventId], references: [id], onDelete: Restrict)
+  snapshot         Json
+  createdBy        String
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+  @@index([canonicalEventId])
 }
 
 model EventSourceReference {

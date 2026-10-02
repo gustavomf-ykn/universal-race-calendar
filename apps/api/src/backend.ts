@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { enqueueTask, prisma, publicTask, TaskConflict, listWorkers, readResultCheckpoint, editionLocationEvidence } from "@race-calendar/database";
+import { enqueueTask, prisma, publicTask, TaskConflict, listWorkers, readResultCheckpoint, editionLocationEvidence, resolveEventId, resolveEventIds } from "@race-calendar/database";
 import { authorize, keyHash, requireAdmin } from "./auth.js";
 import { resultSchema, disciplineSchema, matchSchema } from "./contracts.js";
 
@@ -163,7 +163,7 @@ export async function registerBackend(app: FastifyInstance) {
       if (body.source === "openresults") {
         if (!body.eventId) return reply.code(400).send({ error: "event_id_required" });
         const reference = await prisma.eventSourceReference.findFirst({
-          where: { eventId: body.eventId, sourceType: "openresults" },
+          where: { eventId: await resolveEventId(body.eventId), sourceType: "openresults" },
         });
         if (!reference) return reply.code(409).send({ error: "source_association_required" });
         return acceptTask(req, reply, "openresults", "extract", {
@@ -239,7 +239,7 @@ export async function registerBackend(app: FastifyInstance) {
       },
     },
     async (req, reply) => {
-      const eventId = (req.params as { id: string }).id;
+      const eventId = await resolveEventId((req.params as { id: string }).id);
       if (!(await prisma.event.findFirst({ where: { id: eventId, publicationStatus: "published" } })))
         return reply.code(404).send({ error: "event_not_found" });
       return {
@@ -271,7 +271,7 @@ export async function registerBackend(app: FastifyInstance) {
       },
     },
     async (req, reply) => {
-      const eventId = (req.params as { id: string }).id;
+      const eventId = await resolveEventId((req.params as { id: string }).id);
       if (!(await prisma.event.findFirst({ where: { id: eventId, publicationStatus: "published" } })))
         return reply.code(404).send({ error: "event_not_found" });
       const { page: p, limit: l } = page(req.query);
@@ -318,7 +318,8 @@ export async function registerBackend(app: FastifyInstance) {
       },
     },
     async (req, reply) => {
-      const eventId = (req.params as { id: string }).id;
+      const requestedEventId = (req.params as { id: string }).id;
+      const eventId = await resolveEventId(requestedEventId);
       if (!(await prisma.event.findFirst({ where: { id: eventId, publicationStatus: "published" } })))
         return reply.code(404).send({ error: "event_not_found" });
       if (!(await prisma.resultSet.count({ where: { eventId } })))
@@ -326,7 +327,7 @@ export async function registerBackend(app: FastifyInstance) {
       let task;
       try {
         task = await enqueueTask(req.principal!.id, String(req.headers["idempotency-key"]), "exports", "export", {
-          eventId,
+          eventId: requestedEventId,
         });
       } catch (e) {
         if (e instanceof TaskConflict) return reply.code(409).send({ error: e.message });
@@ -374,7 +375,7 @@ export async function registerBackend(app: FastifyInstance) {
       if (!item || !owned(item.ownerId, req)) return reply.code(404).send({ error: "export_not_found" });
       const selection=item.selection as {eventIds?:string[];administrative?:boolean};
       if(selection.administrative && !req.principal!.admin)return reply.code(403).send({error:"admin_required"});
-      const eventIds=item.eventId?[item.eventId]:selection.eventIds??[];
+      const eventIds=await resolveEventIds(item.eventId?[item.eventId]:selection.eventIds??[]);
       if(!req.principal!.admin && await prisma.event.count({where:{id:{in:eventIds},publicationStatus:"published"}})!==eventIds.length)
         return reply.code(404).send({error:"event_not_found"});
       const task = await prisma.collectionTask.findUnique({ where: { id: item.taskId }, select: { status: true } });
@@ -463,8 +464,9 @@ export async function registerBackend(app: FastifyInstance) {
     },
     async (req, reply) => {
       const matchId = (req.params as { id: string }).id;
-      const eventId = (req.body as { eventId: string }).eventId;
+      const requestedEventId = (req.body as { eventId: string }).eventId;
       return prisma.$transaction(async (tx) => {
+        const eventId = await resolveEventId(requestedEventId, tx);
         await tx.$queryRaw`SELECT id FROM "Event" WHERE id=${eventId} FOR UPDATE`;
         await tx.$queryRaw`SELECT id FROM "SourceMatch" WHERE id=${matchId} FOR UPDATE`;
         const match = await tx.sourceMatch.findUnique({ where: { id: matchId } });
