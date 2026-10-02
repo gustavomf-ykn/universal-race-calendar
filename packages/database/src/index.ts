@@ -717,6 +717,7 @@ async function preserveValidatedMetadata(tx: any, incoming: CanonicalRaceEvent, 
       protectedFields.has(field) ||
       target[field] == null ||
       target[field] === "" ||
+      (field === "name" && incoming.warnings.includes("missing_name")) ||
       (field === "modality" && target[field] === "unknown" && current.modality !== "unknown")
     ) {
       if (protectedFields.has(field) || current[field] != null)

@@ -8,7 +8,7 @@ const raw = (title: string, importantText: string) => rawSourceExtractionSchema.
   sourceType: "ticketsports", sourceId: "modality-evidence", sourceExternalId: "123456",
   url: "https://www.ticketsports.com.br/e/prova-123456", title, importantText,
   // Controlled country evidence: these tests isolate modality, not inferred location.
-  rawSourceData: { address: "Campinas, SP, Brasil" },
+  rawSourceData: { realDate: "2026-10-10", address: "Campinas, SP, Brasil" },
   fetchedAt: "2026-10-02T12:00:00.000Z", contentHash: "modality-evidence-test-hash", adapter: "ticketsports", adapterVersion: "1.0.0",
 });
 const extraction = raceEventExtractionSchema.parse({
@@ -79,6 +79,6 @@ describe("modality evidence", () => {
     const normalized = normalizeRaceEventExtraction({ ...extraction, warnings: ["modality_unconfirmed", "multiple_modalities", "missing_date"] },
       raw("Corrida", "Corrida de rua"));
     expect(normalized.modality).toBe("road");
-    expect(normalized.warnings).toEqual(["missing_date"]);
+    expect(normalized.warnings).toEqual([]);
   });
 });

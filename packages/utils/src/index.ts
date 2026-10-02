@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 
-export const ADAPTER_VERSION_TICKETSPORTS = process.env.ADAPTER_VERSION_TICKETSPORTS ?? "1.0.0";
-export const ADAPTER_VERSION_CORRIDASBR = process.env.ADAPTER_VERSION_CORRIDASBR ?? "1.0.0";
-export const ADAPTER_VERSION_OFFICIAL_PAGE = process.env.ADAPTER_VERSION_OFFICIAL_PAGE ?? "1.0.0";
+export const ADAPTER_VERSION_TICKETSPORTS = atLeastSemver(process.env.ADAPTER_VERSION_TICKETSPORTS, "1.1.0");
+export const ADAPTER_VERSION_CORRIDASBR = atLeastSemver(process.env.ADAPTER_VERSION_CORRIDASBR, "1.1.0");
+export const ADAPTER_VERSION_OFFICIAL_PAGE = atLeastSemver(process.env.ADAPTER_VERSION_OFFICIAL_PAGE, "1.1.0");
 export const CANONICAL_SCHEMA_VERSION = process.env.CANONICAL_SCHEMA_VERSION ?? "1.0.0";
-export const CURATION_PIPELINE_VERSION = atLeastSemver(process.env.CURATION_PIPELINE_VERSION, "1.6.0");
+export const CURATION_PIPELINE_VERSION = atLeastSemver(process.env.CURATION_PIPELINE_VERSION, "1.7.0");
 
 export function cleanText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();

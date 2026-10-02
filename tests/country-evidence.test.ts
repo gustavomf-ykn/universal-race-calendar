@@ -21,7 +21,9 @@ const raw = (importantText: string, rawSourceData: object = {}, sourceType = "ti
     url: "https://www.ticketsports.com.br/e/prova-123456",
     title: "Corrida",
     importantText: `Corrida de rua. ${importantText}`,
-    rawSourceData,
+    rawSourceData: sourceType === "corridasbr"
+      ? { ...rawSourceData, corridasbr: { date: "2026-10-18", city: "Vitória", state: "ES", ...(rawSourceData as any).corridasbr } }
+      : { realDate: "2026-10-18", address: "Vitória, ES", ...rawSourceData },
     fetchedAt: "2026-10-02T12:00:00.000Z",
     contentHash: "country-evidence-test",
     adapter: sourceType,
@@ -96,7 +98,9 @@ describe("country observed at the edition location", () => {
     const structured = (date: string, city: string) => ({
       corridasbr: { date: "2026-10-18" },
       officialPage: {
+        jsonLdSelection: "single",
         jsonLdEvent: {
+          name: "Corrida",
           startDate: date,
           location: {
             address: {

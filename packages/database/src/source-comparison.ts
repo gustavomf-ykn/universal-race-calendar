@@ -1,8 +1,9 @@
 export const comparisonFields = ["name", "date", "city", "state", "country", "modality", "registrationUrl", "officialUrl"] as const;
 type Field = typeof comparisonFields[number];
 export type SourceObservation = Partial<Record<Field, string | null>>;
-export function observationOf(event: SourceObservation): SourceObservation {
-  return Object.fromEntries(comparisonFields.map(field => [field, event[field] ?? null]));
+export function observationOf(event: SourceObservation & { warnings?: readonly string[] }): SourceObservation {
+  return Object.fromEntries(comparisonFields.map(field => [field,
+    field === "name" && event.warnings?.includes("missing_name") ? null : event[field] ?? null]));
 }
 function normalized(value: unknown, field: Field): string | null {
   if (typeof value !== "string" || !value.trim() || (field === "modality" && value === "unknown")) return null;

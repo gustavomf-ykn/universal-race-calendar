@@ -1,5 +1,6 @@
 import { repairMojibake, sourceModality } from "./text-normalization.js";
 import { countryEvidenceForRaw } from "./country-evidence.js";
+import { dateLocationEvidenceForRaw, editionTextForRaw, relatedJsonLdForEdition } from "./date-location-evidence.js";
 import { randomUUID } from "node:crypto";
 import { createAIProviderFromEnv, type AIProvider } from "@race-calendar/ai";
 import {
@@ -11,6 +12,7 @@ import {
   hasPublicationReference,
   validPublicationDate,
   validPublicationCity,
+  brazilianStateCodes,
   validBrazilianPublicationLocation,
   getCurationSummary,
   getLatestRawExtractionForEvent,
@@ -1188,27 +1190,28 @@ export function normalizeRaceEventExtraction(
   extraction: RaceEventExtraction,
   raw: RawSourceExtraction,
 ): CanonicalRaceEvent {
-  const name = cleanText(extraction.name.value) || raw.title || "Evento sem nome";
-  const date = normalizeDate(extraction.date.value);
-  const city = cleanText(extraction.city.value) || null;
-  const state = cleanText(extraction.state.value)?.toUpperCase() || null;
+  const observedName = cleanText(repairMojibake(raw.title));
+  const name = observedName || "Evento sem nome";
+  const observed = dateLocationEvidenceForRaw(raw, parseTicketSportsLocation);
+  const sourceText = editionTextForRaw(raw, observed);
+  const { date, city, state } = observed;
   const countryEvidence = countryEvidenceForRaw(raw, { city, state,
     claimedCountry: cleanText(extraction.country.value)?.toUpperCase() || null });
   const country = countryEvidence.country;
   // Model output and a generated description cannot serve as their own evidence.
-  const modality = modalityFromSourceText(raw.title ?? "", repairMojibake(raw.importantText) ?? "").modality;
+  const modality = modalityFromSourceText(raw.title ?? "", sourceText).modality;
   const registrationUrl = absolutizeUrl(extraction.registrationUrl?.value, raw.url);
   const officialUrl = absolutizeUrl(extraction.officialUrl?.value, raw.url) ?? raw.url;
   const regulationUrl = absolutizeUrl(extraction.regulationUrl?.value, raw.url);
   const organizerUrl = absolutizeUrl(extraction.organizerUrl?.value, raw.url);
   const locationName = cleanText(extraction.locationName?.value) || null;
-  const description = cleanText(extraction.description?.value) || cleanText(raw.importantText).slice(0, 2000) || null;
+  const description = cleanText(extraction.description?.value) || cleanText(sourceText).slice(0, 2000) || null;
   const startTime = normalizeTime(extraction.startTime?.value) ?? normalizeTime(extraction.date.sourceText);
   const distances = extraction.distances.map((distance) => ({
     ...distance,
     distanceKm: distance.distanceKm,
     modality: modality === "mixed"
-      ? verifiedDistanceModality(distance, raw)
+      ? verifiedDistanceModality(distance, { ...raw, importantText: sourceText })
       : modality,
     startTime: normalizeTime(distance.startTime),
   }));
@@ -1224,7 +1227,15 @@ export function normalizeRaceEventExtraction(
     return absolute ? [absolute] : [];
   });
   const warnings = normalizeCurationWarnings(unique([
-    ...extraction.warnings.filter(value => !["modality_unconfirmed", "multiple_modalities", "modality_evidence_mismatch", "country_unconfirmed", "conflicting_country", "country_evidence_mismatch"].includes(value)),
+    ...extraction.warnings.filter(value => !["missing_name", "missing_date", "missing_city", "missing_state", "conflicting_date", "conflicting_location", "date_evidence_mismatch", "location_evidence_mismatch", "modality_unconfirmed", "multiple_modalities", "modality_evidence_mismatch", "country_unconfirmed", "conflicting_country", "country_evidence_mismatch"].includes(value)),
+    ...observed.warnings,
+    ...(!observedName ? ["missing_name"] : []),
+    ...(!date ? ["missing_date"] : []),
+    ...(!city ? ["missing_city"] : []),
+    ...(!state ? ["missing_state"] : []),
+    ...(date && extraction.date.value && normalizeDate(extraction.date.value) !== date ? ["date_evidence_mismatch"] : []),
+    ...((city && extraction.city.value && normalizeLocation(extraction.city.value) !== normalizeLocation(city)) ||
+        (state && extraction.state.value && cleanText(extraction.state.value).toUpperCase() !== state) ? ["location_evidence_mismatch"] : []),
     ...(countryEvidence.conflicting ? ["conflicting_country"] : []),
     ...(countryEvidence.mismatch ? ["country_evidence_mismatch"] : []),
     ...(modality === "unknown" ? ["modality_unconfirmed"] : []),
@@ -1347,7 +1358,11 @@ export function evaluatePublishability(
   return { canPublish: false, publicationStatus: "pending_review", reasons };
 }
 
-const criticalWarnings = new Set(["missing_date", "conflicting_date", "conflicting_location", "conflicting_country", "country_evidence_mismatch", "suspicious_city"]);
+const criticalWarnings = new Set(["missing_name", "missing_date", "conflicting_date", "conflicting_location", "date_evidence_mismatch", "location_evidence_mismatch", "edition_observation_unconfirmed", "conflicting_country", "country_evidence_mismatch", "suspicious_city"]);
+
+function normalizeLocation(value: string | null) {
+  return cleanText(repairMojibake(value)).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
 
 export function shouldPersistCanonicalEvent(event: Pick<CanonicalRaceEvent, "country">): boolean {
   return !event.country || event.country.toUpperCase() === "BR";
@@ -1568,16 +1583,16 @@ function ticketSportsExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtra
 function corridasBRExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtraction {
   const root = asRecord(raw.rawSourceData);
   const record = asRecord(root.corridasbr);
-  const official = asRecord(root.officialPage);
-  const jsonLd = asRecord(official.jsonLdEvent);
+  const observed = dateLocationEvidenceForRaw(raw, parseTicketSportsLocation);
+  const page = asRecord(root.officialPage);
+  const jsonLd = relatedJsonLdForEdition(page, { ...observed, name: stringValue(record.name) ?? raw.title });
+  const official = Object.keys(jsonLd).length ? page : {};
   const jsonLocation = asRecord(jsonLd.location);
   const jsonAddress = asRecord(jsonLocation.address);
   const name = cleanText(stringValue(record.name) ?? raw.title ?? stringValue(official.title) ?? "Evento CorridasBR");
-  const date = stringValue(record.date) ?? stringValue(jsonLd.startDate);
-  const city = cleanText(stringValue(record.city) ?? stringValue(jsonAddress.addressLocality));
-  const state = cleanText(stringValue(record.state) ?? stringValue(jsonAddress.addressRegion)).toUpperCase();
+  const { date, city, state } = observed;
   const countryEvidence = countryEvidenceForRaw(raw, { city, state });
-  const modality = modalityFromSourceText(raw.title ?? "", repairMojibake(raw.importantText) ?? "").modality;
+  const modality = modalityFromSourceText(raw.title ?? "", editionTextForRaw(raw, observed)).modality;
   const locationName = cleanText(stringValue(record.locationName) ?? stringValue(jsonLocation.name));
   const distanceText = cleanText(stringValue(record.distanceText));
   const organizerName = cleanText(stringValue(record.organizerName) ?? nestedString(jsonLd.organizer, "name"));
@@ -1603,7 +1618,7 @@ function corridasBRExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtract
 
   return raceEventExtractionSchema.parse({
     name: evidence(name, 0.96),
-    description: evidence(description || raw.importantText, description ? 0.82 : 0.68),
+    description: evidence(description || editionTextForRaw(raw, observed), description ? 0.82 : 0.68),
     date: evidence(date, date ? 0.95 : 0),
     startTime: evidence(stringValue(jsonLd.startDate), jsonLd.startDate ? 0.85 : 0),
     endTime: evidence(stringValue(jsonLd.endDate), jsonLd.endDate ? 0.8 : 0),
@@ -1667,7 +1682,8 @@ function parseTicketSportsLocation(address: string): {
 } {
   const text = cleanText(address);
   if (!text) return { city: null, state: null, country: null, locationName: null, suspiciousCity: false };
-  const state = text.match(/,\s*([A-Z]{2})(?:,|\b)/)?.[1]?.toUpperCase() ?? null;
+  const state = [...text.matchAll(/,\s*([A-Z]{2})(?=,|\b)/g)]
+    .map(match => match[1]!).find(value => brazilianStateCodes.some(code => code === value)) ?? null;
   const country = countryFromLocationText(text).country;
   const locationName = stripCountrySuffix(text.split(":")[0] ?? "") || null;
   if (!state) {
@@ -1682,7 +1698,9 @@ function parseTicketSportsLocation(address: string): {
     locationName && text.includes(":") ? locationName : null,
     cleanText(beforeState.split(",").at(-1)),
   ].filter((candidate): candidate is string => Boolean(candidate));
-  const city = candidates.find((candidate) => !looksLikeVenueOrStreet(candidate)) ?? null;
+  // The city component immediately before UF can be Lagoa Santa or Centro
+  // Novo. Those words alone are ambiguous, unlike an explicit street prefix.
+  const city = candidates.find((candidate) => !looksLikeVenueOrStreet(candidate, true)) ?? null;
   return { city, state, country, locationName, suspiciousCity: !city };
 }
 
@@ -1769,7 +1787,7 @@ function formatDistanceLabel(distanceKm: number): string {
   return `${Number.isInteger(distanceKm) ? distanceKm : Number(distanceKm.toFixed(2))} km`;
 }
 
-function looksLikeVenueOrStreet(value: string | null): boolean {
+function looksLikeVenueOrStreet(value: string | null, municipalityComponent = false): boolean {
   const text = cleanText(value)
     .toLowerCase()
     .normalize("NFD")
@@ -1797,7 +1815,8 @@ function looksLikeVenueOrStreet(value: string | null): boolean {
     "posto ",
     "km ",
   ];
-  return venuePrefixes.some((prefix) => text.startsWith(prefix));
+  return venuePrefixes.some((prefix) =>
+    !(municipalityComponent && ["lagoa ", "centro "].includes(prefix)) && text.startsWith(prefix));
 }
 
 function pricesFromText(text: string, options: { endDate?: string | null } = {}): RaceEventExtraction["prices"] {

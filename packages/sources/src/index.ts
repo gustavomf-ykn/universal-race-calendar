@@ -299,6 +299,10 @@ export class TicketSportsAdapter implements SourceAdapter {
       ? await this.client.getJson(sourceUrl, { headers: ticketSportsHeaders(), delayMs: 300 })
       : await this.fetchGenericPagePayload(input.url);
     const record = asRecord(payload);
+    const observedId = numberOrString(record.eventId);
+    const observedUrlId = eventIdFromTicketSportsUrl(registrationUrlFromTicketSportsPayload(record, input.url));
+    if (eventId && ((observedId && observedId !== eventId) || (observedUrlId && observedUrlId !== eventId)))
+      throw Error("edition_source_identity_conflict");
     const title =
       cleanText(stringValue(record.title) ?? stringValue(record.name) ?? stringValue(record.eventName)) || null;
     const sections = sectionsFromTicketSports(record.eventContents);
@@ -579,7 +583,8 @@ async function fetchOfficialEventPageUncached(url: string, client: SourceHttpCli
   const jsonLdEvents = $("script[type='application/ld+json']")
     .toArray()
     .flatMap((script) => jsonLdEventRecords($(script).text()));
-  const event = jsonLdEvents[0] ?? {};
+  const selection = selectPageJsonLdEvent(jsonLdEvents, url);
+  const event = selection.event;
   const title =
     cleanText(stringValue(event.name)) ||
     cleanText($("meta[property='og:title']").attr("content")) ||
@@ -614,11 +619,39 @@ async function fetchOfficialEventPageUncached(url: string, client: SourceHttpCli
       description,
       images,
       jsonLdEvent: event,
+      jsonLdSelection: selection.reason,
     },
   };
 }
 
 const officialPageCache = new Map<string, { expiresAt: number; value: OfficialPageResult }>();
+
+function selectPageJsonLdEvent(events: Record<string, unknown>[], pageUrl: string) {
+  const identityUrl = (value: unknown) => {
+    if (typeof value !== "string" || !value) return null;
+    try {
+      const url = new URL(value, pageUrl);
+      if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return null;
+      url.hash = "";
+      url.hostname = url.hostname.replace(/^www\./, "");
+      for (const key of [...url.searchParams.keys()]) if (key.startsWith("utm_")) url.searchParams.delete(key);
+      url.searchParams.sort();
+      return url.href.replace(/\/$/, "");
+    } catch { return null; }
+  };
+  const current = identityUrl(pageUrl);
+  // A declared URL is stronger than a JSON-LD node identifier. A matching
+  // fragment @id must not override an explicit URL of another edition.
+  const links = (event: Record<string, unknown>) =>
+    [typeof event.url === "string" && event.url ? event.url : event["@id"]].map(identityUrl).filter(Boolean);
+  const matched = events.filter(event => links(event).includes(current));
+  if (matched.length === 1) return { event: matched[0]!, reason: "url" };
+  if (matched.length > 1 || events.length > 1) return { event: {}, reason: "ambiguous" };
+  if (!events.length) return { event: {}, reason: "absent" };
+  return links(events[0]!).length || events[0]!.url
+    ? { event: {}, reason: "url_mismatch" } : { event: events[0]!, reason: "single" };
+}
+
 const officialDomainQueues = new Map<string, Promise<void>>();
 
 export function ticketSportsDetailUrl(eventId: string): string {

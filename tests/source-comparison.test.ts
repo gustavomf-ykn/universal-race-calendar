@@ -23,4 +23,10 @@ describe("field-level comparison of verified source observations", () => {
     expect(JSON.stringify(value)).not.toContain("secret");
     expect(value.name).toBe("Corrida");
   });
+  it("does not compare a missing-name placeholder as an observed source name", () => {
+    const observation = observationOf({ name: "Evento sem nome", warnings: ["missing_name"] });
+    expect(observation.name).toBeNull();
+    expect(compareSourceObservations({ name: "Nome validado" }, [source(observation)]).find(row => row.field === "name"))
+      .toMatchObject({ conflict: false, missingEvidence: true });
+  });
 });

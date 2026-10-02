@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma, saveCanonicalEvent } from "@race-calendar/database";
 import type { CanonicalRaceEvent } from "@race-calendar/schemas";
+import { raceEventExtractionSchema, rawSourceExtractionSchema } from "@race-calendar/schemas";
+import { normalizeRaceEventExtraction } from "@race-calendar/curation";
 const enabled = Boolean(process.env.DATABASE_URL);
 const prefix = "metadata-test-" + randomUUID();
 describe.skipIf(!enabled)("recurring catalog metadata preserves valid and reviewed values", () => {
@@ -41,6 +43,33 @@ describe.skipIf(!enabled)("recurring catalog metadata preserves valid and review
     });
     const ref = await prisma.eventSourceReference.findFirstOrThrow({ where: { eventId: id } });
     expect(ref.observation).toMatchObject({ city: null, date: null, modality: "unknown" });
+  });
+  it("does not turn model-only identity into a source observation when refreshing existing data", async () => {
+    const { canonical, id } = await fixture("unobserved");
+    const proposal = raceEventExtractionSchema.parse({
+      name: { value: canonical.name, confidence: 1 }, date: { value: canonical.date, confidence: 1 },
+      city: { value: "Cidade inventada", sourceText: "Cidade inventada", confidence: 1 },
+      state: { value: "SP", confidence: 1 }, country: { value: "BR", confidence: 1 }, modality: "road", confidence: 1,
+    });
+    const observed = normalizeRaceEventExtraction(proposal, rawSourceExtractionSchema.parse({
+      sourceType: canonical.sourceType, sourceId: canonical.sourceId, sourceExternalId: canonical.sourceExternalId,
+      url: canonical.sourceUrl, title: canonical.name, importantText: "Inscrições abertas", rawSourceData: {},
+      adapter: "ticketsports", adapterVersion: "1.1.0", fetchedAt: new Date().toISOString(), contentHash: "unobserved-test-hash",
+    }));
+    await saveCanonicalEvent({ ...canonical, date: observed.date, city: observed.city, state: observed.state,
+      country: observed.country, modality: observed.modality, warnings: observed.warnings, publicationStatus: "pending_review" });
+    expect(await prisma.event.findUniqueOrThrow({ where: { id } })).toMatchObject({
+      date: new Date("2026-10-10"), city: "Garuva", state: "SC", country: "BR", modality: "road",
+    });
+    expect((await prisma.eventSourceReference.findFirstOrThrow({ where: { eventId: id } })).observation)
+      .toMatchObject({ date: null, city: null, state: null, country: null, modality: "unknown" });
+  });
+  it("preserves a known name when the source no longer supplies it, without calling the placeholder evidence", async () => {
+    const { canonical, id } = await fixture("missing-name");
+    await saveCanonicalEvent({ ...canonical, name: "Evento sem nome", warnings: ["missing_name"], publicationStatus: "pending_review" });
+    expect((await prisma.event.findUniqueOrThrow({ where: { id } })).name).toBe(canonical.name);
+    expect((await prisma.eventSourceReference.findFirstOrThrow({ where: { eventId: id } })).observation)
+      .toMatchObject({ name: null });
   });
   it("preserves specific audited corrections and intentional nulls while recording the source's conflicting values", async () => {
     const { canonical, id } = await fixture("reviewed");

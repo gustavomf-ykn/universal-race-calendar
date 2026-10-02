@@ -7,6 +7,7 @@ import {
   normalizeKey,
 } from "@race-calendar/utils";
 import { repairMojibake } from "./text-normalization.js";
+import { relatedJsonLdForEdition, selectedJsonLdEvent } from "./date-location-evidence.js";
 
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -45,7 +46,10 @@ export function countryEvidenceForRaw(
     else explicit(parsed.countrySourceText);
   }
   for (const page of [root, record(root.officialPage)]) {
-    const jsonLd = record(page.jsonLdEvent);
+    const parsed = record(root.corridasbr);
+    const jsonLd = page !== root && raw.sourceType === "corridasbr"
+      ? relatedJsonLdForEdition(page, { ...location, date: normalizeDate(text(parsed.date)), name: text(parsed.name) ?? raw.title })
+      : selectedJsonLdEvent(page);
     const eventAddress = record(record(jsonLd.location).address);
     // An organizer's linked page may now describe a different edition. It cannot
     // confirm country unless its dated location is compatible with this edition.
@@ -53,7 +57,7 @@ export function countryEvidenceForRaw(
       const parsed = record(root.corridasbr);
       if (
         !parsed.date ||
-        normalizeDate(text(jsonLd.startDate)) !== parsed.date ||
+        normalizeDate(text(jsonLd.startDate)) !== normalizeDate(text(parsed.date)) ||
         !location.city ||
         normalizeKey(text(eventAddress.addressLocality)) !== normalizeKey(location.city) ||
         (location.state && normalizeKey(text(eventAddress.addressRegion)) !== normalizeKey(location.state))
