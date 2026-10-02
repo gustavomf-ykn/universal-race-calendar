@@ -84,7 +84,7 @@ describe("mock AI pipeline", () => {
       date: "2026-10-18",
       city: "Campinas",
       state: "SP",
-      country: "BR",
+      country: null,
       publicationStatus: "pending_review",
       modality: "unknown",
       mainImageUrl: null,
@@ -279,7 +279,7 @@ describe("mock AI pipeline", () => {
     expect(result.normalizedEvent.curationStatus).toBe("manual_review");
     expect(result.normalizedEvent.curationProvider).toBe("deterministic");
     expect(result.normalizedEvent.curationModel).toBe("ticketsports-v1");
-    expect(result.normalizedEvent.curationVersion).toBe("1.4.0");
+    expect(result.normalizedEvent.curationVersion).toBe("1.5.0");
     expect(result.normalizedEvent.curatedAt).toBeTruthy();
     expect(result.normalizedEvent.registrationUrl).toContain("ticketsports.com.br");
     expect(result.normalizedEvent.distances.map((distance) => distance.distanceKm)).toContain(21);

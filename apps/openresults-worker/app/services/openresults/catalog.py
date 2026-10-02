@@ -15,7 +15,7 @@ from app.models import CatalogDiscoveryResult, EventSummary, StructureChangedErr
 from app.services.openresults_client import OpenResultsClient, payload_value
 from app.services.parser import MONTHS_PT, clean_text, normalized_key
 from app.services.url_validation import validate_event_url
-from app.services.country import country_from_card
+from app.services.country import country_from_card, country_evidence_from_card
 
 
 CatalogProgress = Callable[[str, int, dict[str, int]], Any]
@@ -110,7 +110,7 @@ def parse_catalog_html(html: str, base_url: str = "https://openresults.run/") ->
                 event_slug=slug,
                 expected_total=int(total_match.group(1).replace(".", "")) if total_match else None,
                 modalities=modalities,
-                raw_metadata={"catalog_text": text},
+                raw_metadata={"catalog_text": text, "country_evidence": country_evidence_from_card(card)},
                 discovered_at=datetime.now(timezone.utc),
             )
         )

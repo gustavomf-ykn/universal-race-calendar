@@ -35,9 +35,10 @@ def update_edition(task, metadata, connection, fenced):
         # Supplemental references fill gaps and retain their own observation.
         audits = conn.execute('''SELECT details FROM "AdminAudit" WHERE "eventId"=%s AND action='review_event' ''', (event_id,)).fetchall()
         protected = {field for audit in audits for field in (audit['details'].get('changes') or {})}
+        observation = edition_observation(metadata)
         incoming = {
             'name': metadata.name, 'date': metadata.event_date, 'city': metadata.city, 'state': metadata.state,
-            'country': metadata.country, 'description': metadata.description,
+            'country': observation['country'], 'modality': observation['modality'], 'description': metadata.description,
             'mainImageUrl': metadata.image_url, 'locationName': metadata.location_name, 'address': metadata.address,
         }
         # A deliberately cleared administrative field must stay null as well.
@@ -45,15 +46,18 @@ def update_edition(task, metadata, connection, fenced):
             if field in incoming:
                 incoming[field] = None
         conn.execute('''UPDATE "EventSourceReference" SET observation=%s,"lastValidatedAt"=now(),
-            "lastSeenAt"=now(),"updatedAt"=now() WHERE id=%s''', (Jsonb(edition_observation(metadata)), ref['id']))
+            "lastSeenAt"=now(),"updatedAt"=now() WHERE id=%s''', (Jsonb(observation), ref['id']))
         primary = event['sourceType'] == 'openresults' and event['sourceId'] == ref['sourceId']
         assignments, values = [], []
         for field, value in incoming.items():
             if value is None or value == '':
                 continue
             column = sql.Identifier(field)
-            assignments.append(sql.SQL('{}=%s').format(column) if primary else
-                               sql.SQL('{}=coalesce({},%s)').format(column, column))
+            if field == 'modality' and not primary:
+                assignments.append(sql.SQL("{}=CASE WHEN {}='unknown' THEN %s ELSE {} END").format(column, column, column))
+            else:
+                assignments.append(sql.SQL('{}=%s').format(column) if primary else
+                                   sql.SQL('{}=coalesce({},%s)').format(column, column))
             values.append(value)
         if assignments:
             assignments.append(sql.SQL('"updatedAt"=now()'))

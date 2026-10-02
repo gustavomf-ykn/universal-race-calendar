@@ -4,7 +4,7 @@ export const ADAPTER_VERSION_TICKETSPORTS = process.env.ADAPTER_VERSION_TICKETSP
 export const ADAPTER_VERSION_CORRIDASBR = process.env.ADAPTER_VERSION_CORRIDASBR ?? "1.0.0";
 export const ADAPTER_VERSION_OFFICIAL_PAGE = process.env.ADAPTER_VERSION_OFFICIAL_PAGE ?? "1.0.0";
 export const CANONICAL_SCHEMA_VERSION = process.env.CANONICAL_SCHEMA_VERSION ?? "1.0.0";
-export const CURATION_PIPELINE_VERSION = atLeastSemver(process.env.CURATION_PIPELINE_VERSION, "1.4.0");
+export const CURATION_PIPELINE_VERSION = atLeastSemver(process.env.CURATION_PIPELINE_VERSION, "1.5.0");
 
 export function cleanText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
@@ -59,24 +59,34 @@ export function modalityFromSourceText(title: string, text: string): {
   return { modality: "unknown", evidence: [] };
 }
 
+const countryLabels: Record<string, string> = {
+  brasil: "BR", brazil: "BR", br: "BR", portugal: "PT", pt: "PT", argentina: "AR",
+  chile: "CL", uruguai: "UY", uruguay: "UY", paraguai: "PY", paraguay: "PY",
+  bolivia: "BO", peru: "PE", colombia: "CO", mexico: "MX", "estados unidos": "US",
+  eua: "US", usa: "US", "united states": "US", espanha: "ES", spain: "ES",
+};
+
+/** A labelled country field may use a recognised ISO code; never apply this to a UF. */
+export function countryFromExplicitValue(value: string | null | undefined): { country: string | null; sourceText: string | null } {
+  const sourceText = cleanText(value).replace(/[.]+$/, "");
+  const key = stripAccents(sourceText.toLowerCase());
+  const country = Object.hasOwn(countryLabels, key) ? countryLabels[key]!
+    : Object.values(countryLabels).includes(sourceText.toUpperCase()) ? sourceText.toUpperCase() : null;
+  return { country, sourceText: sourceText || null };
+}
+
 /** Only explicit country components in a location; a UF, domain or request filter is not evidence. */
 export function countryFromLocationText(value: string | null | undefined): {
   country: string | null;
   sourceText: string | null;
   conflicting: boolean;
 } {
-  const names: Record<string, string> = {
-    brasil: "BR", brazil: "BR", br: "BR", portugal: "PT", pt: "PT", argentina: "AR",
-    chile: "CL", uruguai: "UY", uruguay: "UY", paraguai: "PY", paraguay: "PY",
-    bolivia: "BO", peru: "PE", colombia: "CO", mexico: "MX", "estados unidos": "US",
-    eua: "US", usa: "US", "united states": "US", espanha: "ES", spain: "ES",
-  };
   const components: Array<{ country: string; sourceText: string }> = [];
   for (const component of (value ?? "").split(/[,;\n]/).reverse()) {
     const sourceText = cleanText(component).replace(/[.]+$/, "");
     if (!sourceText) continue;
     const key = stripAccents(sourceText.toLowerCase());
-    const country = Object.hasOwn(names, key) ? names[key] : undefined;
+    const country = Object.hasOwn(countryLabels, key) ? countryLabels[key] : undefined;
     if (!country) break;
     components.unshift({ country, sourceText });
   }
@@ -126,7 +136,9 @@ function parseSemver(value: string | null | undefined): [number, number, number]
 
 export function normalizeDate(value: string | null | undefined, fallbackYear = new Date().getFullYear()): string | null {
   const text = cleanText(value);
-  const iso = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  // JSON-LD startDate commonly has a T-separated time. A word boundary alone
+  // misses those dates; preserve the source's calendar day without timezone shifts.
+  const iso = text.match(/\b(\d{4})-(\d{2})-(\d{2})(?=\b|T\d{2}:\d{2})/);
   if (iso?.[0] && isValidIsoDate(iso[0])) return iso[0];
 
   const br = text.match(/\b(\d{1,2})[/.](\d{1,2})(?:[/.](\d{2,4}))?\b/);

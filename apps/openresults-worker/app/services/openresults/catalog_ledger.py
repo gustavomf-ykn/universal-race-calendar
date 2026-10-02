@@ -13,7 +13,7 @@ BRAZIL_STATES = set('AC AL AM AP BA CE DF ES GO MA MG MS MT PA PB PE PI PR RJ RN
 
 
 def checkpoint(snapshot, page: int, cursor: int) -> dict:
-    if isinstance(snapshot, dict) and snapshot.get('openresultsVersion') == 1:
+    if isinstance(snapshot, dict) and snapshot.get('openresultsVersion') == 2:
         required = ('rows', 'seenURLs', 'pageHashes', 'pageReceipts', 'totals', 'receipts')
         if any(not isinstance(snapshot.get(key), list) for key in required):
             raise ValueError('catalog_checkpoint_incompatible')
@@ -37,27 +37,17 @@ def checkpoint(snapshot, page: int, cursor: int) -> dict:
                                      not isinstance(snapshot['receipts'][0], dict)):
             raise ValueError('catalog_checkpoint_incompatible')
         return deepcopy(snapshot)
-    # Preserve an old partial page; its historical denominator cannot be rebuilt
-    # from a processed count. It may finish processing but cannot prove coverage.
+    # Previous country extraction accepted Brasil in venue names and conflicting
+    # structured labels. Never convert those candidates into fresh confirmed evidence.
     initial = snapshot == [] and page == 1 and cursor == 0
-    if not isinstance(snapshot, list) and not (
-        isinstance(snapshot, dict) and set(snapshot) <= {'previous'}
-    ):
+    if not initial:
         raise ValueError('catalog_checkpoint_incompatible')
-    rows = snapshot if isinstance(snapshot, list) else []
-    if cursor < 0 or cursor > len(rows):
-        raise ValueError('catalog_checkpoint_incompatible')
-    previous = snapshot.get('previous') if isinstance(snapshot, dict) else None
-    current_hash = rows[0].get('_pageHash') if rows else previous
     return {
-        'openresultsVersion': 1, 'rows': deepcopy(rows),
-        'currentPage': page if rows else None,
-        'seenURLs': sorted({r['url'].rstrip('/') for r in rows}),
-        'pageHashes': [current_hash] if current_hash else [],
+        'openresultsVersion': 2, 'rows': [],
+        'currentPage': None, 'seenURLs': [], 'pageHashes': [],
         'pageReceipts': [], 'totals': [], 'receipts': [],
-        'rawCount': len(rows), 'duplicates': 0, 'outOfScope': 0,
-        'unknownCountry': sum(not r.get('country') for r in rows),
-        'legacyEvidenceMissing': not initial,
+        'rawCount': 0, 'duplicates': 0, 'outOfScope': 0, 'unknownCountry': 0,
+        'legacyEvidenceMissing': False,
         'terminal': False, 'reason': 'native_pages',
     }
 

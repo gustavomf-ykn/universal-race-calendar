@@ -120,7 +120,7 @@ describe.skipIf(!process.env.DATABASE_URL)("country confirmation through authent
   it("audits confirmation, prevents erasing published modality and preserves country review together", async () => {
     const event = await edition(null);
     await prisma.event.update({ where: { id: event.id }, data: { modality: "unknown",
-      warnings: ["country_unconfirmed", "modality_unconfirmed", "modality_evidence_mismatch"],
+      warnings: ["country_unconfirmed", "country_evidence_mismatch", "modality_unconfirmed", "modality_evidence_mismatch"],
       publishabilityReasons: ["country_unconfirmed", "modality_unconfirmed"] } });
     const result = await patch(event.id, adminToken, { country: "BR", modality: "trail", publicationStatus: "published",
       reason: "País e modalidade conferidos na fonte" });

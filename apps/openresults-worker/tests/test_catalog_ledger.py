@@ -47,6 +47,10 @@ def test_country_needs_explicit_evidence_even_with_brazilian_uf():
     metadata = EventMetadata('Corrida', None, 'Cidade', 'SC', 'https://openresults.run/evento/prova/', 'prova')
     assert not metadata.country
     apply_related_metadata(metadata, {'location': {'address': {'addressCountry': {'name': 'Brazil'}}}})
+    assert not metadata.country  # An undated related page does not identify the edition.
+    metadata.event_date = date(2026, 1, 1)
+    apply_related_metadata(metadata, {'startDate': '2026-01-01', 'location': {'address': {
+        'addressLocality': 'Cidade', 'addressRegion': 'SC', 'addressCountry': {'name': 'Brazil'}}}})
     assert metadata.country == 'BR'
     assert normalize_country(None) == ''
 
@@ -113,14 +117,13 @@ def test_missing_last_page_total_still_reconciles_previous_advertised_total():
     assert ledger['reason'] == 'catalog_total_mismatch'
 
 
-def test_legacy_checkpoint_preserves_partial_work_but_not_invented_history():
+def test_legacy_checkpoint_is_not_reinterpreted_as_confirmed_country_evidence():
     row = {'name': 'Corrida', 'url': 'https://openresults.run/evento/legacy/', '_pageHash': 'old'}
-    ledger = checkpoint([row], 3, 1)
-    assert ledger['rows'] == [row] and ledger['legacyEvidenceMissing']
-    ledger = record_page(ledger, 4, [], None, False, OPTIONS, 1000)
-    assert ledger['reason'] == 'catalog_legacy_evidence_missing'
-    with pytest.raises(ValueError, match='catalog_checkpoint_incompatible'):
-        checkpoint({'openresultsVersion': 2}, 1, 0)
+    for snapshot, page, cursor in [([row], 3, 1), ({'openresultsVersion': 1}, 1, 0), ({'openresultsVersion': 2}, 1, 0)]:
+        with pytest.raises(ValueError, match='catalog_checkpoint_incompatible'):
+            checkpoint(snapshot, page, cursor)
+    assert row == {'name': 'Corrida', 'url': 'https://openresults.run/evento/legacy/', '_pageHash': 'old'}
+    assert checkpoint([], 1, 0)['openresultsVersion'] == 2
 
 
 def test_invalid_checkpoint_cannot_fetch_next_page_and_skip_unprocessed_candidates():

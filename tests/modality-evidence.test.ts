@@ -7,6 +7,8 @@ import { MockAIProvider } from "@race-calendar/ai";
 const raw = (title: string, importantText: string) => rawSourceExtractionSchema.parse({
   sourceType: "ticketsports", sourceId: "modality-evidence", sourceExternalId: "123456",
   url: "https://www.ticketsports.com.br/e/prova-123456", title, importantText,
+  // Controlled country evidence: these tests isolate modality, not inferred location.
+  rawSourceData: { address: "Campinas, SP, Brasil" },
   fetchedAt: "2026-10-02T12:00:00.000Z", contentHash: "modality-evidence-test-hash", adapter: "ticketsports", adapterVersion: "1.0.0",
 });
 const extraction = raceEventExtractionSchema.parse({

@@ -54,28 +54,32 @@ async def test_url_identity_checkpoint_and_stale_executor(monkeypatch):
             assert len(inspections) == 2 and all(r['payload']['eventId'] for r in inspections)
             assert all(r['country'] is None for r in db.execute('SELECT country FROM "Event" WHERE "sourceUrl" LIKE %s', ('%' + ident + '%',)).fetchall())
             editions = db.execute('SELECT id,"sourceUrl",date FROM "Event" WHERE "sourceUrl" LIKE %s ORDER BY date', ('%' + ident + '%',)).fetchall()
-            db.execute('UPDATE "Event" SET name=\'Nome revisado\',city=NULL,country=NULL,"publicationStatus"=\'hidden\' WHERE id=%s', (editions[0]['id'],))
+            db.execute('UPDATE "Event" SET name=\'Nome revisado\',city=NULL,country=NULL,modality=\'trail\',"publicationStatus"=\'hidden\' WHERE id=%s', (editions[0]['id'],))
             db.execute('''INSERT INTO "AdminAudit" (id,"actorId",action,"eventId",details) VALUES (%s,%s,'review_event',%s,%s)''',
-                       (str(uuid.uuid4()), ident, editions[0]['id'], Jsonb({'changes': {'name': 'Nome revisado', 'city': None, 'country': None}})))
+                       (str(uuid.uuid4()), ident, editions[0]['id'], Jsonb({'changes': {'name': 'Nome revisado', 'city': None, 'country': None, 'modality': 'trail'}})))
         for edition in editions:
             metadata = EventMetadata('Nome extraído', edition['date'].date(), 'Cidade extraída', 'SC',
-                                     edition['sourceUrl'], 'teste', country='BR')
+                                     edition['sourceUrl'], 'teste', country='Brasil', event_type='Corrida de rua')
             inspection = {**task, 'payload': {'eventId': edition['id']}}
             update_edition(inspection, metadata, worker.connection, worker.fenced)
         with worker.connection() as db:
-            protected = db.execute('SELECT name,city,country,"publicationStatus" FROM "Event" WHERE id=%s', (editions[0]['id'],)).fetchone()
-            assert protected == {'name': 'Nome revisado', 'city': None, 'country': None, 'publicationStatus': 'hidden'}
-            assert db.execute('SELECT name,city,country FROM "Event" WHERE id=%s', (editions[1]['id'],)).fetchone() == {
-                'name': 'Nome extraído', 'city': 'Cidade extraída', 'country': 'BR'}
+            protected = db.execute('SELECT name,city,country,modality,"publicationStatus" FROM "Event" WHERE id=%s', (editions[0]['id'],)).fetchone()
+            assert protected == {'name': 'Nome revisado', 'city': None, 'country': None, 'modality': 'trail', 'publicationStatus': 'hidden'}
+            assert db.execute('SELECT name,city,country,modality FROM "Event" WHERE id=%s', (editions[1]['id'],)).fetchone() == {
+                'name': 'Nome extraído', 'city': 'Cidade extraída', 'country': 'BR', 'modality': 'road'}
             assert all(r['observation']['country'] == 'BR' for r in db.execute('''SELECT observation FROM "EventSourceReference" WHERE "eventId"=ANY(%s)''', ([e['id'] for e in editions],)).fetchall())
             # A supplemental observation cannot replace the primary calendar metadata.
             db.execute('UPDATE "Event" SET "sourceType"=\'ticketsports\' WHERE id=%s', (editions[1]['id'],))
         supplemental = EventMetadata('Outra descrição da fonte', editions[1]['date'].date(), 'Outra cidade', 'SC',
-                                     editions[1]['sourceUrl'], 'teste', country='BR')
+                                     editions[1]['sourceUrl'], 'teste', country='BR', event_type='Trail')
         update_edition({**task, 'payload': {'eventId': editions[1]['id']}}, supplemental, worker.connection, worker.fenced)
         with worker.connection() as db:
-            assert db.execute('SELECT name,city FROM "Event" WHERE id=%s', (editions[1]['id'],)).fetchone() == {
-                'name': 'Nome extraído', 'city': 'Cidade extraída'}
+            assert db.execute('SELECT name,city,modality FROM "Event" WHERE id=%s', (editions[1]['id'],)).fetchone() == {
+                'name': 'Nome extraído', 'city': 'Cidade extraída', 'modality': 'road'}
+            db.execute('UPDATE "Event" SET modality=\'unknown\' WHERE id=%s', (editions[1]['id'],))
+        update_edition({**task, 'payload': {'eventId': editions[1]['id']}}, supplemental, worker.connection, worker.fenced)
+        with worker.connection() as db:
+            assert db.execute('SELECT modality FROM "Event" WHERE id=%s', (editions[1]['id'],)).fetchone()['modality'] == 'trail'
             db.execute('UPDATE "Event" SET "sourceType"=\'openresults\' WHERE id=%s', (editions[1]['id'],))
             # A new intentional synchronization enriches existing identities without new editions.
             db.execute('''INSERT INTO "CatalogSync" (id,source,"ownerId",options) VALUES (%s,'openresults',%s,%s)''',

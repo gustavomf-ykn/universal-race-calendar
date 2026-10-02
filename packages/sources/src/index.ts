@@ -27,6 +27,7 @@ import {
   ADAPTER_VERSION_OFFICIAL_PAGE,
   ADAPTER_VERSION_TICKETSPORTS,
   cleanText,
+  countryFromExplicitValue,
   countryFromLocationText,
   normalizeDate,
   unique,
@@ -76,7 +77,7 @@ export type CorridasBRDiscoveredEvent = {
   externalId: string;
   name: string;
   url: string;
-  country: "BR";
+  country: string | null;
   state: string;
   city: string | null;
   date: string | null;
@@ -183,6 +184,8 @@ export class CorridasBRAdapter implements SourceAdapter {
         `<p>${escapeHtml([parsed.date, parsed.city, parsed.state].filter(Boolean).join(" - "))}</p>`,
         `<p>${escapeHtml(parsed.locationName ?? "")}</p>`,
         `<p>${escapeHtml(parsed.distanceText ?? "")}</p>`,
+        `<p>${escapeHtml(parsed.countrySourceTexts.join(" / "))}</p>`,
+        `<p>${escapeHtml(parsed.modalityText ? `Modalidade: ${parsed.modalityText}` : "")}</p>`,
         `<p>${escapeHtml(parsed.organizerName ?? "")}</p></article>`,
         officialPage?.importantHtml ?? "",
       ].join("\n"),
@@ -195,6 +198,8 @@ export class CorridasBRAdapter implements SourceAdapter {
         parsed.state,
         parsed.locationName,
         parsed.distanceText,
+        parsed.countrySourceTexts.join(" / "),
+        parsed.modalityText ? `Modalidade: ${parsed.modalityText}` : null,
         parsed.organizerName,
         officialPage?.importantText,
       ]
@@ -224,6 +229,8 @@ export class CorridasBRAdapter implements SourceAdapter {
         parsed.state,
         parsed.locationName,
         parsed.distanceText,
+        parsed.countrySourceTexts.join(" / "),
+        parsed.modalityText,
         parsed.organizerName,
         parsed.officialUrl,
         JSON.stringify(officialPage?.structured ?? null),
@@ -456,13 +463,21 @@ export function parseCorridasBRCalendar(
       null;
     const rowText = cleanText(metadataRows.map((item) => item.text()).join(" "));
     const dateText = rowText.match(/(?<!\d)\d{1,2}\/\d{1,2}\/\d{2,4}(?!\d)/)?.[0] ?? null;
+    // Only event-scoped, labelled country evidence is usable. The calendar's UF
+    // and the CorridasBR domain do not identify the country of an edition.
+    const countrySourceTexts = row.find('[itemprop="addressCountry"]').toArray()
+      .filter(node => !$(node).parents('[itemprop="organizer"]').length)
+      .map(node => cleanText($(node).attr("content") || $(node).text())).filter(Boolean);
+    const countries = unique(countrySourceTexts.map(value => countryFromExplicitValue(value).country).filter((value): value is string => Boolean(value)));
+    const country = countries.length === 1 && countrySourceTexts.every(value => countryFromExplicitValue(value).country)
+      ? countries[0]! : null;
     events.push({
       sourceType: "corridasbr",
       adapter: "corridasbr",
       externalId,
       name,
       url,
-      country: "BR",
+      country,
       state: state.toUpperCase(),
       city,
       date: normalizeDate(dateText),
@@ -472,6 +487,7 @@ export function parseCorridasBRCalendar(
         city,
         date: normalizeDate(dateText),
         rowText,
+        countrySourceTexts,
         discoveredAt: new Date().toISOString(),
       },
     });
@@ -482,6 +498,7 @@ export function parseCorridasBRCalendar(
 export function parseCorridasBRDetail(html: string, url: string) {
   const $ = cheerio.load(html);
   const fields = new Map<string, string>();
+  const countrySourceTexts: string[] = [];
   $("tr").each((_, row) => {
     const cells = $(row).children("td");
     if (cells.length < 2) return;
@@ -498,18 +515,25 @@ export function parseCorridasBRDetail(html: string, url: string) {
     const text = cleanText(valueCell.text());
     const value =
       label === "cidade" ? text.replace(/\s*\(Corridas?\s+(?:nesta Cidade|nesta Regi[aã]o)\)/gi, "").trim() : text;
+    if (["pais", "country"].includes(label) && value) countrySourceTexts.push(value);
     if (label && value && !fields.has(label)) fields.set(label, value);
   });
   const state = stateFromCorridasBRUrl(url);
   const name = cleanText($(".tipo7 strong").first().text()) || cleanText($("title").first().text()) || null;
   const officialRedirect = html.match(/function\s+paraonde\s*\(\)\s*\{\s*window\.open\(['"]([^'"]+)['"]\)/i)?.[1];
   const officialUrl = officialRedirect ? officialTargetFromCorridasBRRedirect(officialRedirect) : null;
+  const countries = unique(countrySourceTexts.map(value => countryFromExplicitValue(value).country).filter((value): value is string => Boolean(value)));
+  const country = countries.length === 1 && countrySourceTexts.every(value => countryFromExplicitValue(value).country)
+    ? countries[0]! : null;
   return {
     name,
     date: normalizeDate(fieldByLabels(fields, ["data"])),
     city: fieldByLabels(fields, ["cidade"]),
     state,
-    country: "BR",
+    country,
+    countrySourceTexts,
+    countrySourceText: countrySourceTexts.length === 1 ? countrySourceTexts[0] : null,
+    modalityText: fieldByLabels(fields, ["modalidade", "tipo de prova"]),
     locationName: fieldByLabels(fields, ["largada", "local", "local de largada"]),
     distanceText: fieldByLabels(fields, ["distancia s", "distancias", "distancia"]),
     organizerName: fieldByLabels(fields, ["organizador", "organizacao"]),

@@ -1,4 +1,5 @@
 import { repairMojibake, sourceModality } from "./text-normalization.js";
+import { countryEvidenceForRaw } from "./country-evidence.js";
 import { randomUUID } from "node:crypto";
 import { createAIProviderFromEnv, type AIProvider } from "@race-calendar/ai";
 import {
@@ -490,7 +491,8 @@ export async function importCorridasBREvents(
     ? await options.discoverEvents()
     : await discoverCorridasBREvents(discoverOptions);
   const today = new Date().toISOString().slice(0, 10);
-  const futureDiscovered = allDiscovered.filter((event) => !event.date || event.date >= today);
+  const futureDiscovered = allDiscovered.filter((event) => (!event.country || event.country === "BR") &&
+    (!event.date || event.date >= today));
   const discovered = futureDiscovered.slice(offset, offset + quantity);
   const failures: CorridasBRImportResult["failures"] = [];
   let processedCount = 0;
@@ -1186,7 +1188,9 @@ export function normalizeRaceEventExtraction(
   const date = normalizeDate(extraction.date.value);
   const city = cleanText(extraction.city.value) || null;
   const state = cleanText(extraction.state.value)?.toUpperCase() || null;
-  const country = cleanText(extraction.country.value)?.toUpperCase() || null;
+  const countryEvidence = countryEvidenceForRaw(raw, { city, state,
+    claimedCountry: cleanText(extraction.country.value)?.toUpperCase() || null });
+  const country = countryEvidence.country;
   // Model output and a generated description cannot serve as their own evidence.
   const modality = modalityFromSourceText(raw.title ?? "", repairMojibake(raw.importantText) ?? "").modality;
   const registrationUrl = absolutizeUrl(extraction.registrationUrl?.value, raw.url);
@@ -1216,7 +1220,9 @@ export function normalizeRaceEventExtraction(
     return absolute ? [absolute] : [];
   });
   const warnings = normalizeCurationWarnings(unique([
-    ...extraction.warnings.filter(value => !["modality_unconfirmed", "multiple_modalities", "modality_evidence_mismatch"].includes(value)),
+    ...extraction.warnings.filter(value => !["modality_unconfirmed", "multiple_modalities", "modality_evidence_mismatch", "country_unconfirmed", "conflicting_country", "country_evidence_mismatch"].includes(value)),
+    ...(countryEvidence.conflicting ? ["conflicting_country"] : []),
+    ...(countryEvidence.mismatch ? ["country_evidence_mismatch"] : []),
     ...(modality === "unknown" ? ["modality_unconfirmed"] : []),
     ...(modality === "mixed" ? ["multiple_modalities"] : []),
     ...(extraction.modality !== "unknown" && extraction.modality !== modality ? ["modality_evidence_mismatch"] : []),
@@ -1336,7 +1342,7 @@ export function evaluatePublishability(
   return { canPublish: false, publicationStatus: "pending_review", reasons };
 }
 
-const criticalWarnings = new Set(["missing_date", "conflicting_date", "conflicting_location", "conflicting_country", "suspicious_city"]);
+const criticalWarnings = new Set(["missing_date", "conflicting_date", "conflicting_location", "conflicting_country", "country_evidence_mismatch", "suspicious_city"]);
 
 export function shouldPersistCanonicalEvent(event: Pick<CanonicalRaceEvent, "country">): boolean {
   return !event.country || event.country.toUpperCase() === "BR";
@@ -1566,6 +1572,8 @@ function corridasBRExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtract
   const date = stringValue(record.date) ?? stringValue(jsonLd.startDate);
   const city = cleanText(stringValue(record.city) ?? stringValue(jsonAddress.addressLocality));
   const state = cleanText(stringValue(record.state) ?? stringValue(jsonAddress.addressRegion)).toUpperCase();
+  const countryEvidence = countryEvidenceForRaw(raw, { city, state });
+  const modality = modalityFromSourceText(raw.title ?? "", repairMojibake(raw.importantText) ?? "").modality;
   const locationName = cleanText(stringValue(record.locationName) ?? stringValue(jsonLocation.name));
   const distanceText = cleanText(stringValue(record.distanceText));
   const organizerName = cleanText(stringValue(record.organizerName) ?? nestedString(jsonLd.organizer, "name"));
@@ -1597,7 +1605,8 @@ function corridasBRExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtract
     endTime: evidence(stringValue(jsonLd.endDate), jsonLd.endDate ? 0.8 : 0),
     city: evidence(city, city ? 0.95 : 0),
     state: evidence(state, state ? 0.98 : 0),
-    country: evidence("BR", 1),
+    country: { value: countryEvidence.country, confidence: countryEvidence.country ? 0.9 : 0,
+      sourceText: countryEvidence.sourceText },
     locationName: evidence(locationName, locationName ? 0.9 : 0),
     address: evidence(
       nestedAddress(jsonLd.location) ?? locationName,
@@ -1605,10 +1614,10 @@ function corridasBRExtractionFromRaw(raw: RawSourceExtraction): RaceEventExtract
     ),
     latitude: numberOrNull(asRecord(jsonLocation.geo).latitude),
     longitude: numberOrNull(asRecord(jsonLocation.geo).longitude),
-    modality: modalityFromTicketSportsText(name, `${name} ${distanceText} ${description}`),
+    modality,
     distances: distances.map((distance) => ({
       ...distance,
-      modality: modalityFromTicketSportsText(name, `${name} ${distanceText} ${description}`),
+      modality,
     })),
     prices,
     lots: prices,

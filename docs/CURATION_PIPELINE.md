@@ -34,6 +34,8 @@ Curadoria 1.4.0 não classifica nomes genéricos (corrida, run, maratona), ender
 
 Warnings criticos iniciais incluem data/local conflitante e cidade suspeita. Na TicketSports, endereco que parece rua, avenida, parque ou venue sem cidade clara nao deve virar `city`; o evento fica para revisao.
 
+Curadoria 1.5.0 também confere o país contra dados recebidos da fonte, independentemente do valor/citação propostos pelo modelo. `country_evidence_mismatch` é crítico; campos desconhecidos não ganham BR. CorridasBR preserva rótulos País/Country, sem usar UF/domínio como confirmação. Página oficial vinculada só confirma país via JSON-LD quando data/cidade/UF são compatíveis. Texto composto de páginas diferentes não confirma país. ISO com horário separado por T preserva o dia informado. Países/rótulos não reconhecidos ficam em revisão. Confirmação humana auditada é uma decisão administrativa, não uma alteração da observação original.
+
 Distancias extraidas de texto sao canonizadas por quilometragem. Variantes como `5K`, `5 km` e `5 Km` viram uma unica distancia `5 km`.
 
 A API publica monta um objeto `display` conservador. Precos, lotes, distancias, kits e localizacao so entram em `display` quando ha evidencia e confianca suficiente; dados duvidosos seguem disponiveis apenas em endpoints internos/admin para auditoria.
@@ -44,7 +46,7 @@ Valores iniciais:
 
 - `ADAPTER_VERSION_TICKETSPORTS=1.0.0`
 - `CANONICAL_SCHEMA_VERSION=1.0.0`
-- `CURATION_PIPELINE_VERSION=1.4.0`
+- `CURATION_PIPELINE_VERSION=1.5.0`
 
 ## Dry-run e batch
 

@@ -25,6 +25,12 @@ describe("utils", () => {
   it("normalizes Brazilian dates", () => {
     expect(normalizeDate("16/08/2026")).toBe("2026-08-16");
   });
+  it("recognizes JSON-LD timestamps without changing their local calendar day", () => {
+    expect(normalizeDate("2026-10-18T23:30:00-03:00")).toBe("2026-10-18");
+    expect(normalizeDate("2026-10-18T07:00:00Z")).toBe("2026-10-18");
+    expect(normalizeDate("2026-02-30T07:00:00-03:00")).toBeNull();
+    expect(normalizeDate("2026-10-18Tomorrow")).toBeNull();
+  });
 
   it("normalizes BRL prices", () => {
     expect(normalizePrice("R$ 120,50")).toBe(120.5);

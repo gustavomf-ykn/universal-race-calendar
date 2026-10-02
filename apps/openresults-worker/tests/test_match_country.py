@@ -50,6 +50,9 @@ def test_inspection_persists_country_evidence_without_inference_and_fences_stale
 @pytest.mark.parametrize(('change', 'value'), [
     ('country', 'PT'), ('country', ''), ('city', 'Outra cidade'),
     ('state', 'PR'), ('event_date', date(2041, 10, 10)), ('event_date', None),
+    ('country', 'País não reconhecido'),
+    ('raw_metadata', {'country_evidence': {'status': 'conflicting'}}),
+    ('raw_metadata', {'country_evidence': {'status': 'unrecognized'}}),
 ])
 def test_reinspection_does_not_hide_conflicts_in_previously_resolved_identity(monkeypatch, change, value):
     uri = os.environ['DATABASE_URL'].split('?')[0]

@@ -261,6 +261,8 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
           async getText(url) {
             if (url.includes("escolha=99123")) {
               return corridasBRDetailFixture
+                // Explicit source evidence is required for this positive cross-source fixture.
+                .replace("<table>", "<table><tr><td>País:</td><td>Brasil</td></tr>")
                 .replaceAll("98765", "74641")
                 .replaceAll("Campinas", "Florianopolis")
                 .replaceAll("Corrida das Águas 2026", "Meia Maratona de Florianopolis");

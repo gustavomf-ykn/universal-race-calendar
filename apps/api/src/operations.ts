@@ -238,7 +238,7 @@ export async function registerOperations(app: FastifyInstance) {
         const countryReview = "country" in changes ? {
           warnings: [...new Set([
             ...(Array.isArray(latest.warnings) ? latest.warnings as string[] : [])
-              .filter(value => !["country_unconfirmed", "conflicting_country"].includes(value)),
+              .filter(value => !["country_unconfirmed", "conflicting_country", "country_evidence_mismatch"].includes(value)),
             ...(!changes.country ? ["country_unconfirmed"] : []),
           ])],
           publishabilityReasons: [...new Set([

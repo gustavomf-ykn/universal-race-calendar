@@ -67,7 +67,7 @@ describe.skipIf(!enabled)("national prefix checkpoint on isolated PostgreSQL", (
     const secondUrl = "https://www.corridasbr.com.br/sc/calendario2.asp";
     const candidate = (n: number) => ({ sourceType: "corridasbr" as const, adapter: "corridasbr" as const,
       externalId: prefix + "corridas-" + n, name: "Corrida", url: `https://www.corridasbr.com.br/SC/mostracorrida.asp?escolha=${n}`,
-      city: "Garuva", state: "SC", country: "BR", date: "2026-10-01", metadata: {} });
+      city: "Garuva", state: "SC", country: null, date: "2026-10-01", metadata: {} });
     await syncNationalCorridasBR(sync, async () => ({ url: firstUrl, nextUrls: [secondUrl], events: [candidate(1)] }));
     const resumed = await prisma.catalogSync.findUniqueOrThrow({ where: { id: sync.id } });
     expect(resumed.status).toBe("ready");
@@ -79,6 +79,7 @@ describe.skipIf(!enabled)("national prefix checkpoint on isolated PostgreSQL", (
     expect(final).toMatchObject({ status: "completed", discovered: 2, processed: 2 });
     expect((final.snapshot as { receipts: unknown[] }).receipts).toEqual([{
       state: "SC", status: "completed", reason: "explicit_calendar_navigation_end", requested: 2, rawCount: 3, unique: 2,
+      scope: "source_partition", unknownCountry: 2, outOfScope: 0,
     }]);
     expect(await prisma.collectionTask.count({ where: { ownerId: prefix, source: "corridasbr", kind: "check-source" } })).toBe(2);
   });
@@ -147,5 +148,51 @@ describe.skipIf(!enabled)("national prefix checkpoint on isolated PostgreSQL", (
   it("refuses old checkpoints whose countries may have been presumed", () => {
     expect(() => nationalSnapshot({ nationalVersion: 1, candidates: [], seenIds: [], receipts: [] }))
       .toThrow("catalog_checkpoint_incompatible");
+  });
+  it("records unknown and foreign CorridasBR countries before period filters, resets receipts per UF and enriches once", async () => {
+    const { sync, task } = await fixture("corridas-country", ["SC", "ES"], "corridasbr");
+    const scopedSync = await prisma.catalogSync.update({ where: { id: sync.id }, data: {
+      options: { ...(sync.options as object), from: "2026-10-01" } } });
+    setTaskLease(task);
+    const candidate = (id: string, state: string, country: string | null) => ({
+      sourceType: "corridasbr" as const, adapter: "corridasbr" as const, externalId: prefix + id,
+      name: "Corrida", url: `https://www.corridasbr.com.br/${state}/mostracorrida.asp?escolha=1`,
+      city: "Cidade", state, country, date: "2026-10-01", metadata: {},
+    });
+    const unknown = candidate("corridas-unknown", "SC", null), foreign = candidate("corridas-foreign", "SC", "PT");
+    const old = { ...candidate("corridas-before-period", "SC", null), date: "2020-01-01" };
+    const firstUrl = "https://www.corridasbr.com.br/sc/calendario.asp";
+    const secondUrl = "https://www.corridasbr.com.br/sc/calendario2.asp";
+    await syncNationalCorridasBR(scopedSync, async () => ({ url: firstUrl, nextUrls: [secondUrl], events: [unknown, foreign, old] }));
+    const resumed = await prisma.catalogSync.findUniqueOrThrow({ where: { id: sync.id } });
+    await syncNationalCorridasBR(resumed, async () => ({ url: secondUrl, nextUrls: [firstUrl], events: [unknown, foreign, old] }));
+    const nextState = await prisma.catalogSync.findUniqueOrThrow({ where: { id: sync.id } });
+    await syncNationalCorridasBR(nextState, async () => ({ url: "https://www.corridasbr.com.br/es/calendario.asp",
+      nextUrls: [], events: [candidate("corridas-es", "ES", "BR")] }));
+    const final = await prisma.catalogSync.findUniqueOrThrow({ where: { id: sync.id } });
+    expect(final).toMatchObject({ status: "completed", discovered: 2, processed: 2 });
+    expect((final.snapshot as { receipts: unknown[] }).receipts).toEqual([
+      expect.objectContaining({ state: "SC", scope: "source_partition", rawCount: 6, unique: 3, unknownCountry: 2, outOfScope: 1 }),
+      expect.objectContaining({ state: "ES", scope: "source_partition", rawCount: 1, unique: 1, unknownCountry: 0, outOfScope: 0 }),
+    ]);
+    expect(await prisma.event.findUniqueOrThrow({ where: { sourceType_sourceExternalId: {
+      sourceType: "corridasbr", sourceExternalId: unknown.externalId } } })).toMatchObject({
+        country: null, state: "SC", publicationStatus: "pending_review", warnings: ["country_unconfirmed"],
+      });
+    expect(await prisma.event.count({ where: { sourceType: "corridasbr", sourceExternalId: foreign.externalId } })).toBe(0);
+    expect(await prisma.event.count({ where: { sourceType: "corridasbr", sourceExternalId: old.externalId } })).toBe(0);
+    expect(await prisma.collectionTask.count({ where: { ownerId: prefix, kind: "check-source",
+      payload: { path: ["syncId"], equals: sync.id } } })).toBe(2);
+  });
+  it("rejects the old CorridasBR checkpoint before discovery without destroying its history", async () => {
+    const { sync, task } = await fixture("corridas-old-country", ["SC"], "corridasbr");
+    const previous = { corridasVersion: 1, candidates: [], seenIds: [], visitedUrls: [], receipts: [] };
+    const current = await prisma.catalogSync.update({ where: { id: sync.id }, data: { snapshot: previous } });
+    setTaskLease(task);
+    let calls = 0;
+    await expect(syncNationalCorridasBR(current, async () => { calls++; throw Error("unexpected_discovery"); }))
+      .rejects.toThrow("catalog_checkpoint_incompatible");
+    expect(calls).toBe(0);
+    expect((await prisma.catalogSync.findUniqueOrThrow({ where: { id: sync.id } })).snapshot).toEqual(previous);
   });
 });

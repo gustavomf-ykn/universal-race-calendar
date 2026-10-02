@@ -134,7 +134,9 @@ def store_match(task, metadata):
         def normalized(value):
             return ' '.join(''.join(c for c in unicodedata.normalize('NFD', value or '')
                                    if not unicodedata.combining(c)).casefold().split())
-        compatible = bool(reference and match['date'] and reference['date']
+        evidence = metadata.raw_metadata.get('country_evidence') or {}
+        invalid_country = evidence.get('status') in ('conflicting', 'unrecognized') or bool(metadata.country and not normalize_country(metadata.country))
+        compatible = bool(reference and not invalid_country and match['date'] and reference['date']
                           and match['date'].astimezone(timezone.utc).date() == reference['date'].date()
                           and all(normalized(match[field]) and normalized(match[field]) == normalized(reference[field])
                                   for field in ('city', 'state', 'country')))

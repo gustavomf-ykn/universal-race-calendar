@@ -4,9 +4,11 @@ import { discoverCorridasBRCatalogPage, corridasBRCalendarUrl, type CorridasBRCa
 
 type Sync = Awaited<ReturnType<typeof prisma.catalogSync.findUniqueOrThrow>>;
 type Snapshot = {
-  corridasVersion: 1; candidates: CorridasBRCatalogPage["events"]; seenIds: string[];
+  corridasVersion: 2; candidates: CorridasBRCatalogPage["events"]; seenIds: string[];
   pageUrl: string; pendingUrls: string[]; visitedUrls: string[]; stateIds: string[]; rawCount: number;
-  receipts: Array<{ state: string; status: string; reason: string; requested: number; rawCount: number; unique: number }>;
+  unknownCountryIds: string[]; excludedCountryIds: string[];
+  receipts: Array<{ state: string; status: string; reason: string; requested: number; rawCount: number; unique: number;
+    unknownCountry: number; outOfScope: number; scope: "source_partition" }>;
 };
 export async function syncNationalCorridasBR(sync: Sync, discover = discoverCorridasBRCatalogPage) {
   if (sync.status !== "ready") return { stage: sync.status, syncId: sync.id, processed: 0 };
@@ -15,12 +17,14 @@ export async function syncNationalCorridasBR(sync: Sync, discover = discoverCorr
   if (!state) throw Error("catalog_checkpoint_incompatible");
   let snapshot: Snapshot;
   if (Array.isArray(sync.snapshot) && !sync.snapshot.length) snapshot = {
-    corridasVersion: 1, candidates: [], seenIds: [], pageUrl: corridasBRCalendarUrl(state),
+    corridasVersion: 2, candidates: [], seenIds: [], pageUrl: corridasBRCalendarUrl(state),
     pendingUrls: [], visitedUrls: [], stateIds: [], rawCount: 0, receipts: [],
+    unknownCountryIds: [], excludedCountryIds: [],
   };
   else {
     snapshot = sync.snapshot as unknown as Snapshot;
-    if (snapshot.corridasVersion !== 1 || !Array.isArray(snapshot.candidates) || !Array.isArray(snapshot.visitedUrls))
+    if (snapshot.corridasVersion !== 2 || !Array.isArray(snapshot.candidates) || !Array.isArray(snapshot.visitedUrls) ||
+        !Array.isArray(snapshot.unknownCountryIds) || !Array.isArray(snapshot.excludedCountryIds))
       throw Error("catalog_checkpoint_incompatible");
   }
   if (!snapshot.candidates.length && sync.cursor === 0) {
@@ -28,11 +32,14 @@ export async function syncNationalCorridasBR(sync: Sync, discover = discoverCorr
     if (page.events.some(e => e.state !== state)) throw Error("catalog_region_ignored");
     const visited = new Set([...snapshot.visitedUrls, page.url]);
     const seen = new Set(snapshot.seenIds);
-    const eligible = page.events.filter(e => !e.date || ((!options.from || e.date >= options.from) && (!options.to || e.date <= options.to)));
+    const eligible = page.events.filter(e => (!e.country || e.country === "BR") &&
+      (!e.date || ((!options.from || e.date >= options.from) && (!options.to || e.date <= options.to))));
     snapshot = { ...snapshot, pageUrl: page.url, candidates: eligible.filter(e => !seen.has(e.externalId)),
       seenIds: [...new Set([...seen, ...eligible.map(e => e.externalId)])],
       visitedUrls: [...visited], pendingUrls: [...new Set([...snapshot.pendingUrls, ...page.nextUrls])].filter(url => !visited.has(url)),
       stateIds: [...new Set([...snapshot.stateIds, ...page.events.map(e => e.externalId)])], rawCount: snapshot.rawCount + page.events.length,
+      unknownCountryIds: [...new Set([...snapshot.unknownCountryIds, ...page.events.filter(e => !e.country).map(e => e.externalId)])],
+      excludedCountryIds: [...new Set([...snapshot.excludedCountryIds, ...page.events.filter(e => e.country && e.country !== "BR").map(e => e.externalId)])],
     };
     await prisma.$transaction(async tx => {
       await assertTaskLease(tx, 65536 + Buffer.byteLength(JSON.stringify(snapshot)) * 8);
@@ -59,9 +66,11 @@ export async function syncNationalCorridasBR(sync: Sync, discover = discoverCorr
       const digest = createHash("sha256").update(`corridasbr:${candidate.externalId}`).digest("hex");
       const event = await tx.event.upsert({ where: { sourceType_sourceExternalId: identity }, update: {}, create: {
         id: "evt_" + digest.slice(0, 24), slug: "corridasbr-" + digest.slice(0, 24), name: candidate.name,
-        date: candidate.date ? new Date(candidate.date) : null, city: candidate.city, state: candidate.state, country: "BR",
+        date: candidate.date ? new Date(candidate.date) : null, city: candidate.city, state: candidate.state, country: candidate.country,
         sourceId: source.id, ...identity, sourceUrl: candidate.url, canonicalFingerprint: digest,
-        warnings: [], publishabilityReasons: ["metadata_validation_required"], publicationStatus: "pending_review", administrativeReview: false,
+        warnings: candidate.country ? [] : ["country_unconfirmed"],
+        publishabilityReasons: ["metadata_validation_required", ...(!candidate.country ? ["country_unconfirmed"] : [])],
+        publicationStatus: "pending_review", administrativeReview: false,
       } });
       await tx.eventSourceReference.create({ data: { eventId: event.id, sourceId: source.id, ...identity, url: candidate.url } }); created++;
     }
@@ -75,10 +84,12 @@ export async function syncNationalCorridasBR(sync: Sync, discover = discoverCorr
     const receipts = nextPage ? snapshot.receipts : [...snapshot.receipts, {
       state, status: "completed", reason: "explicit_calendar_navigation_end", requested: snapshot.visitedUrls.length,
       rawCount: snapshot.rawCount, unique: snapshot.stateIds.length,
+      unknownCountry: snapshot.unknownCountryIds.length, outOfScope: snapshot.excludedCountryIds.length, scope: "source_partition" as const,
     }];
     const nextSnapshot: Snapshot = { ...snapshot, candidates: [], receipts,
       ...(nextPage ? { pageUrl: nextPage, pendingUrls: snapshot.pendingUrls.slice(1) } : {}),
-      ...(nextState ? { pageUrl: corridasBRCalendarUrl(options.states[sync.page]!), pendingUrls: [], visitedUrls: [], stateIds: [], rawCount: 0 } : {}),
+      ...(nextState ? { pageUrl: corridasBRCalendarUrl(options.states[sync.page]!), pendingUrls: [], visitedUrls: [], stateIds: [], rawCount: 0,
+        unknownCountryIds: [], excludedCountryIds: [] } : {}),
     };
     await prisma.$transaction(async tx => {
       await assertTaskLease(tx, 65536 + Buffer.byteLength(JSON.stringify(snapshot)) * 8);
