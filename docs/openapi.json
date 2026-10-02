@@ -15435,6 +15435,12 @@
                               "string"
                             ]
                           },
+                          "country": {
+                            "type": [
+                              "null",
+                              "string"
+                            ]
+                          },
                           "status": {
                             "enum": [
                               "pending",
@@ -15670,6 +15676,12 @@
                       ]
                     },
                     "state": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "country": {
                       "type": [
                         "null",
                         "string"

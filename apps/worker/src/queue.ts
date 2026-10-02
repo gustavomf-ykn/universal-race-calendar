@@ -7,6 +7,7 @@ import {
   newWorkerId,
   workerPresence,
   coordinateCatalogSyncs,
+  editionFailureCode,
 } from "@race-calendar/database";
 import { syncCatalog } from "./catalog.js";
 import { existsSync } from "node:fs";
@@ -145,6 +146,8 @@ export async function runQueue() {
           const result = await runSourceCheck(String(input.sourceId));
           progress = { stage: result.status };
           if (result.reasons.includes("source_access_blocked")) throw Error("source_access_blocked");
+          const editionFailure = result.reasons.find(code => editionFailureCode(new Error(code)));
+          if (editionFailure) throw Error(editionFailure);
           if (result.status.includes("failed")) status = "failed";
         } else if (task.kind === "curate-event") {
           const result = await runAICurationForEvent(String(input.eventId), input);

@@ -6,6 +6,7 @@ import {
   createExtractionJob,
   findSuccessfulCurationJob,
   findCanonicalEventMatch,
+  editionFailureCode,
   getCurationSummary,
   getLatestRawExtractionForEvent,
   getSource,
@@ -309,7 +310,8 @@ export async function runSourceCheck(
       throw error;
     }
     await markSourceFailed(source.id);
-    const failedStatus = error instanceof Error && error.name === "ZodError" ? "validation_failed" : "provider_failed";
+    const editionFailure = editionFailureCode(error);
+    const failedStatus = editionFailure || (error instanceof Error && error.name === "ZodError") ? "validation_failed" : "provider_failed";
     const blocked =
       error instanceof Error &&
       (error.message === "source_access_blocked" ||
@@ -317,11 +319,12 @@ export async function runSourceCheck(
           [401, 403, 429].includes((error as Error & { statusCode?: number }).statusCode ?? 0)));
     if (blocked && requestSources.includes(source.adapter as RequestSource))
       await blockSourceRequests(source.adapter as RequestSource);
-    const reasons = [blocked ? "source_access_blocked" : "source_check_failed"];
+    const failureReason = blocked ? "source_access_blocked" : editionFailure ?? "source_check_failed";
+    const reasons = [failureReason];
     const completed = await completeExtractionJob({
       jobId: job.id,
       status: failedStatus,
-      errorMessage: blocked ? "source_access_blocked" : error instanceof Error ? error.message : String(error),
+      errorMessage: failureReason,
       reasons,
     });
     return {

@@ -7,3 +7,8 @@ it("stops automatic retries on blocking and catalog corruption without exposing 
   expect(taskError(new Error("catalog_end_unconfirmed"))).toEqual({ code: "catalog_end_unconfirmed", retryable: false });
   expect(taskError(new Error("URL with private details"))).toEqual({ code: "collection_failed", retryable: true });
 });
+it("requires review rather than retrying changed edition evidence", () => {
+  for (const code of ["edition_date_mismatch", "edition_location_conflict", "edition_observation_unconfirmed",
+    "source_identifier_reused_for_different_edition"])
+    expect(taskError(new Error(code))).toEqual({ code, retryable: false });
+});

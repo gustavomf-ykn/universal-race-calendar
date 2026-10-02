@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma, setTaskLease } from "@race-calendar/database";
+import { prisma, setTaskLease, heartbeatTask } from "@race-calendar/database";
 import { syncNationalTicketSports } from "../apps/worker/src/national-catalog.js";
 import { syncNationalCorridasBR } from "../apps/worker/src/corridas-catalog.js";
 import type { TicketSportsCatalogPage } from "@race-calendar/sources";
@@ -45,6 +45,7 @@ describe.skipIf(!enabled)("national prefix checkpoint on isolated PostgreSQL", (
     const quantities: number[] = [];
     const discover = async ({ quantity }: { quantity: number }) => { quantities.push(quantity); return page(quantity, 26); };
     for (let i = 0; i < 8; i++) {
+      expect(await heartbeatTask(task, { stage: "test_catalog_step" })).toBe(true);
       const current = await prisma.catalogSync.findUniqueOrThrow({ where: { id: sync.id } });
       await syncNationalTicketSports(current, discover);
     }
@@ -57,7 +58,7 @@ describe.skipIf(!enabled)("national prefix checkpoint on isolated PostgreSQL", (
     await syncNationalTicketSports(final, discover);
     expect(quantities.length).toBe(before);
     expect((final.snapshot as { receipts: unknown[] }).receipts).toHaveLength(2);
-  });
+  }, 90000);
   it("follows the explicit next CorridasBR calendar once, resumes and deduplicates a link back", async () => {
     const { sync, task } = await fixture("corridas-pages", ["SC"], "corridasbr");
     setTaskLease(task);

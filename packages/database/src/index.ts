@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { assertTaskLease } from "./lease.js";
 import { capacityGrowth } from "./capacity.js";
+import { editionLinks, editionUrlVariants, crossSourceEditionReason } from "./edition-evidence.js";
+export { editionIdentity, editionLinks, editionLocationEvidence, editionFailureCode } from "./edition-evidence.js";
 export { setTaskLease, assertTaskLease } from "./lease.js";
 export { assertCapacity, CapacityDeferred, capacityReasons, deferCapacityTask, readCapacity, controlCapacity } from "./capacity.js";
 export { listWorkers, workerPresence, newWorkerId } from "./presence.js";
@@ -253,7 +255,7 @@ export async function saveCanonicalEvent(
   }
   const crossSourceMatch = existingBySource ? null : await findCanonicalEventMatch(event);
   if (crossSourceMatch?.automatic) {
-    const linked = await mergeCrossSourceEvent(crossSourceMatch.event.id, event);
+    const linked = await mergeCrossSourceEvent(crossSourceMatch.event.id, event, true);
     const role =
       sourcePriority(event.sourceType) > sourcePriority(crossSourceMatch.event.sourceType) ? "primary" : "supplemental";
     await upsertEventSourceReference(linked.event.id, event, role, options.contentHash);
@@ -271,7 +273,7 @@ export async function saveCanonicalEvent(
     dedupeStatus,
     duplicateOfEventId,
     publishabilityReasons: duplicate
-      ? [...new Set([...event.publishabilityReasons, "possible_duplicate"])]
+      ? [...new Set([...event.publishabilityReasons, "possible_duplicate", ...(crossSourceMatch?.reason ? [crossSourceMatch.reason] : [])])]
       : event.publishabilityReasons,
   };
 
@@ -337,6 +339,7 @@ export async function findCanonicalEventMatch(event: CanonicalRaceEvent): Promis
   score: number;
   automatic: boolean;
   sameSource: boolean;
+  reason?: string;
 } | null> {
   if (event.sourceType && event.sourceExternalId) {
     const sameSource = await prisma.event.findFirst({
@@ -352,43 +355,42 @@ export async function findCanonicalEventMatch(event: CanonicalRaceEvent): Promis
   }
   if (!event.date) return null;
   const editionDate = new Date(`${event.date}T00:00:00.000Z`);
-  const ticketSportsId = ticketSportsIdFromEvent(event);
-  if (ticketSportsId) {
-    const byTicketSportsId = await prisma.event.findMany({
-      take: 2,
-      where: {
-        date: editionDate,
-        OR: [
-          { sourceType: "ticketsports", sourceExternalId: ticketSportsId },
-          { sourceReferences: { some: { sourceType: "ticketsports", sourceExternalId: ticketSportsId } } },
-        ],
-        publicationStatus: { not: "rejected" },
-      },
-      select: { id: true, sourceType: true },
-    });
-    if (byTicketSportsId.length)
-      return { event: byTicketSportsId[0]!, score: 1, automatic: byTicketSportsId.length === 1, sameSource: false };
-  }
-
-  const urls = [event.registrationUrl, event.officialUrl, event.sourceUrl].filter((value): value is string =>
-    Boolean(value),
-  );
-  if (urls.length) {
+  const links = editionLinks(event);
+  const ticketSportsIds = [...new Set(links.filter(link => link.source === "ticketsports").map(link => link.externalId))];
+  const urls = [...new Set(links.flatMap(editionUrlVariants))];
+  if (urls.length || ticketSportsIds.length) {
     const byUrl = await prisma.event.findMany({
       take: 2,
       where: {
         date: editionDate,
-        publicationStatus: { not: "rejected" },
         OR: [
+          { sourceType: "ticketsports", sourceExternalId: { in: ticketSportsIds } },
+          { sourceReferences: { some: { sourceType: "ticketsports", sourceExternalId: { in: ticketSportsIds } } } },
           { registrationUrl: { in: urls } },
           { officialUrl: { in: urls } },
           { sourceUrl: { in: urls } },
           { sourceReferences: { some: { url: { in: urls } } } },
         ],
       },
-      select: { id: true, sourceType: true },
+      select: { id: true, sourceType: true, sourceExternalId: true, sourceUrl: true, registrationUrl: true, officialUrl: true,
+        date: true, city: true, state: true, country: true, publicationStatus: true,
+        sourceReferences: { select: { sourceType: true, sourceExternalId: true, url: true, observation: true, lastValidatedAt: true } } },
+      orderBy: { id: "asc" },
     });
-    if (byUrl.length) return { event: byUrl[0]!, score: 1, automatic: byUrl.length === 1, sameSource: false };
+    if (byUrl.length) {
+      const candidate = byUrl[0]!;
+      const reason = byUrl.length !== 1 ? "edition_link_ambiguous" : crossSourceEditionReason(event, candidate);
+      return { event: candidate, score: 1, automatic: reason === null, sameSource: false, reason: reason ?? "edition_link_confirmed" };
+    }
+  }
+  // A generic official/organizer URL is useful for review, never an edition identity.
+  const reviewUrls = [event.registrationUrl, event.officialUrl, event.sourceUrl].filter((value): value is string => Boolean(value));
+  if (reviewUrls.length) {
+    const byGenericUrl = await prisma.event.findMany({ take: 2, where: { date: editionDate,
+      publicationStatus: { not: "rejected" }, OR: [{ registrationUrl: { in: reviewUrls } }, { officialUrl: { in: reviewUrls } },
+        { sourceUrl: { in: reviewUrls } }, { sourceReferences: { some: { url: { in: reviewUrls } } } }] },
+      select: { id: true, sourceType: true }, orderBy: { id: "asc" } });
+    if (byGenericUrl.length) return { event: byGenericUrl[0]!, score: 1, automatic: false, sameSource: false, reason: "edition_link_unconfirmed" };
   }
 
   const exact = await prisma.event.findMany({
@@ -401,7 +403,7 @@ export async function findCanonicalEventMatch(event: CanonicalRaceEvent): Promis
     orderBy: { createdAt: "asc" },
     select: { id: true, sourceType: true },
   });
-  if (exact.length) return { event: exact[0]!, score: 1, automatic: exact.length === 1, sameSource: false };
+  if (exact.length) return { event: exact[0]!, score: 1, automatic: false, sameSource: false, reason: "edition_fingerprint_review" };
   if (!event.date || !event.city || !event.state) return null;
 
   const candidates = await prisma.event.findMany({
@@ -430,6 +432,7 @@ export async function findCanonicalEventMatch(event: CanonicalRaceEvent): Promis
 async function mergeCrossSourceEvent(
   existingEventId: string,
   incoming: CanonicalRaceEvent,
+  requireEditionEvidence = false,
 ): Promise<{ event: { id: string }; canonicalEvent: CanonicalRaceEvent; duplicateOfEventId: null }> {
   const existing = await prisma.event.findUnique({
     where: { id: existingEventId },
@@ -536,6 +539,7 @@ async function mergeCrossSourceEvent(
     const current = await tx.event.findUniqueOrThrow({
       where: { id: existing.id },
       include: {
+        sourceReferences: true,
         distances: true,
         prices: true,
         kits: true,
@@ -545,6 +549,10 @@ async function mergeCrossSourceEvent(
         images: true,
       },
     });
+    if (requireEditionEvidence) {
+      const reason = crossSourceEditionReason(incoming, current);
+      if (reason) throw new Error(reason);
+    }
     await preserveValidatedMetadata(tx, canonicalEvent, current);
     if (current.administrativeReview || ["hidden", "rejected"].includes(current.publicationStatus))
       canonicalEvent.publicationStatus = current.publicationStatus;
@@ -1186,21 +1194,6 @@ function existingKitPickup(pickup: any | undefined): CanonicalRaceEvent["kitPick
     sourceText: pickup.sourceText,
     confidence: pickup.confidence,
   };
-}
-
-function ticketSportsIdFromEvent(event: CanonicalRaceEvent): string | null {
-  for (const value of [event.registrationUrl, event.officialUrl, event.sourceUrl]) {
-    if (!value) continue;
-    try {
-      const parsed = new URL(value);
-      if (!parsed.hostname.includes("ticketsports.com.br")) continue;
-      const id = parsed.searchParams.get("eventId") ?? parsed.pathname.match(/(\d{3,})(?:\D*)$/)?.[1];
-      if (id) return id;
-    } catch {
-      // Ignore malformed optional URLs.
-    }
-  }
-  return null;
 }
 
 function tokenSimilarity(left: string, right: string): number {

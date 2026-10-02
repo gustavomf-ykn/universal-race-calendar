@@ -105,9 +105,11 @@ export async function registerOperations(app: FastifyInstance) {
     "/v1/admin/source-matches/:id/register",
     { onRequest: requireAdmin, schema: schema() },
     async (req, reply) => {
-      const match = await prisma.sourceMatch.findUnique({ where: { id: (req.params as { id: string }).id } });
-      if (!match) return reply.code(404).send({ error: "match_not_found" });
+      const matchId = (req.params as { id: string }).id;
       return prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "SourceMatch" WHERE id=${matchId} FOR UPDATE`;
+        const match = await tx.sourceMatch.findUnique({ where: { id: matchId } });
+        if (!match) return reply.code(404).send({ error: "match_not_found" });
         const identity = { sourceType: match.source, sourceExternalId: match.externalId };
         const ref = await tx.eventSourceReference.findFirst({
           where: { sourceType: match.source, OR: [{ sourceExternalId: match.externalId }, { url: match.url }] },
@@ -137,13 +139,13 @@ export async function registerOperations(app: FastifyInstance) {
             date: match.date,
             city: match.city,
             state: match.state,
-            country: "BR",
+            country: match.country,
             sourceId: source.id,
             ...identity,
             sourceUrl: match.url,
             canonicalFingerprint: digest,
             warnings: [],
-            publishabilityReasons: ["administrative_review_required"],
+            publishabilityReasons: ["administrative_review_required", ...(!match.country ? ["country_unconfirmed"] : [])],
             publicationStatus: "pending_review",
             administrativeReview: true,
           },

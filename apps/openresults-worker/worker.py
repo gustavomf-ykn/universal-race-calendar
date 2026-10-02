@@ -8,6 +8,7 @@ import json
 import os
 import signal
 import uuid
+import unicodedata
 from datetime import date, datetime, timezone
 from dataclasses import replace
 
@@ -28,6 +29,7 @@ from app.services.source_requests import request_hooks, SourceBudgetDeferred, So
 from source_requests import database_request_hooks
 from capacity import CapacityDeferred, check_capacity, database_capacity, storage_capacity
 from result_checkpoints import ResultCheckpoints, ResultCheckpointError, cleanup_checkpoints
+from app.services.country import normalize_country
 
 
 def storage_headers():
@@ -116,15 +118,31 @@ def store_match(task, metadata):
     external_id=str(metadata.event_id) if metadata.event_id else 'url:'+hashlib.sha256(metadata.source_url.encode()).hexdigest()
     with connection() as conn:
         fenced(conn,task)
-        conn.execute('''INSERT INTO "SourceMatch" (id,source,"externalId",url,name,date,city,state,status,"updatedAt")
-            VALUES (%s,'openresults',%s,%s,%s,%s,%s,%s,'pending',now()) ON CONFLICT (source,"externalId") DO UPDATE SET
-            url=EXCLUDED.url,name=EXCLUDED.name,date=EXCLUDED.date,city=EXCLUDED.city,state=EXCLUDED.state,"updatedAt"=now()''',
-            (str(uuid.uuid4()),external_id,metadata.source_url,metadata.name,metadata.event_date,metadata.city,metadata.state))
-        # Only an existing exact source identity is reused automatically. Names are not sufficient.
-        conn.execute('''UPDATE "SourceMatch" m SET status='resolved',"eventId"=r."eventId","resolvedBy"='exact_reference'
-            FROM "EventSourceReference" r JOIN "Event" e ON e.id=r."eventId"
-            WHERE m.source=r."sourceType" AND m."externalId"=r."sourceExternalId" AND (m.date AT TIME ZONE 'UTC')::date=e.date::date
-            AND m.source='openresults' AND m."externalId"=%s''',(external_id,))
+        reference = conn.execute('''SELECT r."eventId",e.date,e.city,e.state,e.country FROM "EventSourceReference" r
+            JOIN "Event" e ON e.id=r."eventId" WHERE r."sourceType"='openresults' AND r."sourceExternalId"=%s
+            FOR SHARE OF e,r''', (external_id,)).fetchone()
+        match = conn.execute('''INSERT INTO "SourceMatch" (id,source,"externalId",url,name,date,city,state,country,status,"updatedAt")
+            VALUES (%s,'openresults',%s,%s,%s,%s,%s,%s,%s,'pending',now()) ON CONFLICT (source,"externalId") DO UPDATE SET
+            url=EXCLUDED.url,name=EXCLUDED.name,date=EXCLUDED.date,city=EXCLUDED.city,state=EXCLUDED.state,
+            country=coalesce(EXCLUDED.country,"SourceMatch".country),"updatedAt"=now() RETURNING *''',
+            (str(uuid.uuid4()),external_id,metadata.source_url,metadata.name,metadata.event_date,metadata.city,metadata.state,
+             normalize_country(metadata.country) or None)).fetchone()
+        # A reused provider ID still needs compatible edition evidence. An old resolved status
+        # must not hide a newly observed conflict; references/results remain untouched for review.
+        def normalized(value):
+            return ' '.join(''.join(c for c in unicodedata.normalize('NFD', value or '')
+                                   if not unicodedata.combining(c)).casefold().split())
+        compatible = bool(reference and match['date'] and reference['date']
+                          and match['date'].astimezone(timezone.utc).date() == reference['date'].date()
+                          and all(normalized(match[field]) and normalized(match[field]) == normalized(reference[field])
+                                  for field in ('city', 'state', 'country')))
+        if compatible:
+            conn.execute('''UPDATE "SourceMatch" SET status='resolved',"eventId"=%s,
+                "resolvedBy"=CASE WHEN "eventId"=%s AND status='resolved' THEN "resolvedBy" ELSE 'exact_reference' END
+                WHERE id=%s''', (reference['eventId'],reference['eventId'],match['id']))
+        elif reference:
+            conn.execute('''UPDATE "SourceMatch" SET status='pending',"eventId"=NULL,"resolvedBy"=NULL
+                WHERE id=%s''', (match['id'],))
 
 
 def excel_cell(value):

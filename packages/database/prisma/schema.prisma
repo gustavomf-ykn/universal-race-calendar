@@ -643,6 +643,7 @@ model SourceMatch {
   date       DateTime? @db.Timestamptz(3)
   city       String?
   state      String?
+  country    String?
   status     String @default("pending")
   eventId    String?
   resolvedBy String?

@@ -84,6 +84,10 @@ Resposta `202`, `Location: /v1/tasks/<id>`:
 
 3. Consultar pendências e enviar `{"eventId":"id-interno"}` a `/resolve`.
 Datas conhecidas devem coincidir. Nome parecido não autoriza associação automática.
+
+Na branch nacional, a pendência também retorna `country` nullable: mostrar nome, data, cidade, UF e país antes da seleção. País ausente deve aparecer como não confirmado; UF brasileira não substitui evidência de país. `/register` mantém o país observado ao cadastrar edição independente pending_review. Exige migration `20261002000000_source_match_country` e atualização da API/executor Python; ainda sem publicação. Registros antigos permanecem sem país na pendência até nova observação, sem preenchimento presumido.
+
+`/resolve` rejeita `409 edition_location_conflict` quando cidade, UF ou país conhecidos divergem; não insistir no mesmo vínculo. Datas divergentes retornam `edition_date_mismatch`. A decisão relê os dados bloqueados e registra auditoria uma única vez para a associação efetivada. Reinspeção pode devolver a pendência a `pending` por conflito/evidência incompleta, sem apagar a referência nem resultados anteriores. Conflitos de edição no executor TypeScript são falhas terminais para revisão, não atualização concluída.
 4. Solicitar a extração:
 
 ```http

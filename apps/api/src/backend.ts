@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { enqueueTask, prisma, publicTask, TaskConflict, listWorkers, readResultCheckpoint } from "@race-calendar/database";
+import { enqueueTask, prisma, publicTask, TaskConflict, listWorkers, readResultCheckpoint, editionLocationEvidence } from "@race-calendar/database";
 import { authorize, keyHash, requireAdmin } from "./auth.js";
 import { resultSchema, disciplineSchema, matchSchema } from "./contracts.js";
 
@@ -462,17 +462,23 @@ export async function registerBackend(app: FastifyInstance) {
       },
     },
     async (req, reply) => {
-      const match = await prisma.sourceMatch.findUnique({ where: { id: (req.params as { id: string }).id } });
+      const matchId = (req.params as { id: string }).id;
       const eventId = (req.body as { eventId: string }).eventId;
-      const event = await prisma.event.findUnique({ where: { id: eventId } });
-      if (!match || !event) return reply.code(404).send({ error: "match_or_event_not_found" });
-      if (!match.date || !event.date || match.date.toISOString().slice(0, 10) !== event.date.toISOString().slice(0, 10))
-        return reply.code(409).send({ error: "edition_date_mismatch" });
-      const existing = await prisma.eventSourceReference.findUnique({
-        where: { sourceType_sourceExternalId: { sourceType: match.source, sourceExternalId: match.externalId } },
-      });
-      if (existing && existing.eventId !== eventId) return reply.code(409).send({ error: "already_associated" });
       return prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Event" WHERE id=${eventId} FOR UPDATE`;
+        await tx.$queryRaw`SELECT id FROM "SourceMatch" WHERE id=${matchId} FOR UPDATE`;
+        const match = await tx.sourceMatch.findUnique({ where: { id: matchId } });
+        const event = await tx.event.findUnique({ where: { id: eventId } });
+        if (!match || !event) return reply.code(404).send({ error: "match_or_event_not_found" });
+        if (!match.date || !event.date || match.date.toISOString().slice(0, 10) !== event.date.toISOString().slice(0, 10))
+          return reply.code(409).send({ error: "edition_date_mismatch" });
+        if (editionLocationEvidence(match, event) === "edition_location_conflict")
+          return reply.code(409).send({ error: "edition_location_conflict" });
+        const existing = await tx.eventSourceReference.findUnique({
+          where: { sourceType_sourceExternalId: { sourceType: match.source, sourceExternalId: match.externalId } },
+        });
+        if (existing && existing.eventId !== eventId) return reply.code(409).send({ error: "already_associated" });
+        if (existing && match.status === "resolved" && match.eventId === eventId) return match;
         const source = await tx.source.upsert({
           where: { adapter_externalId: { adapter: match.source, externalId: match.externalId } },
           update: {},
@@ -496,10 +502,13 @@ export async function registerBackend(app: FastifyInstance) {
           },
         });
         if (linked.eventId !== eventId) throw Object.assign(new Error("already_associated"), { statusCode: 409 });
-        return tx.sourceMatch.update({
+        const resolved = await tx.sourceMatch.update({
           where: { id: match.id },
           data: { eventId, status: "resolved", resolvedBy: req.principal!.id, updatedAt: new Date() },
         });
+        await tx.adminAudit.create({ data: { actorId: req.principal!.id, eventId, action: "resolve_source_match",
+          details: { matchId: match.id, source: match.source, externalId: match.externalId } } });
+        return resolved;
       });
     },
   );
