@@ -50,7 +50,7 @@ describe.skipIf(!process.env.DATABASE_URL)("country confirmation through authent
       city: "Garuva", state: "SC", country, sourceType: "ticketsports", sourceExternalId: id,
       sourceUrl: "https://www.ticketsports.com.br/e/test-123", canonicalFingerprint: id,
       warnings: ["country_unconfirmed"], publishabilityReasons: ["country_unconfirmed"],
-      publicationStatus: "pending_review" } });
+      publicationStatus: "pending_review", modality: "road" } });
   }
   const patch = (id: string, token: string | null, body: object) => app.inject({ method: "PATCH",
     url: `/v1/admin/catalog/events/${id}`, headers: token ? { authorization: `Bearer ${token}` } : {}, payload: body });
@@ -98,5 +98,40 @@ describe.skipIf(!process.env.DATABASE_URL)("country confirmation through authent
     const hide = await patch(event.id, adminToken, { country: null, publicationStatus: "hidden", reason: "Remover país não comprovado" });
     expect(hide.statusCode, hide.body).toBe(200);
     expect(hide.json().event).toMatchObject({ country: null, publicationStatus: "hidden" });
+  });
+  it("requires confirmed modality on both publication paths and includes unknown candidates in review", async () => {
+    const event = await edition("BR");
+    await prisma.event.update({ where: { id: event.id }, data: { modality: "unknown",
+      warnings: ["modality_unconfirmed"], publishabilityReasons: ["modality_unconfirmed"] } });
+    const list = await app.inject({ url: `/v1/admin/catalog/events?q=${event.id}&incomplete=true`,
+      headers: { authorization: `Bearer ${adminToken}` } });
+    expect(list.json().pagination.total).toBe(1);
+    const request = { publicationStatus: "published", reason: "Revisar edição" };
+    expect((await patch(event.id, adminToken, request)).json().error).toBe("publication_requires_confirmed_modality");
+    const legacy = await app.inject({ method: "POST", url: `/v1/admin/events/${event.id}/publish`,
+      headers: { "x-api-key": "test-internal-key" } });
+    expect(legacy.statusCode).toBe(409);
+    expect(legacy.json().error).toBe("publication_requires_confirmed_modality");
+    expect((await patch(event.id, userToken, { modality: "trail", reason: "Confirmar trilha" })).statusCode).toBe(403);
+    expect((await patch(event.id, adminToken, { modality: "asphalt", reason: "Confirmar rua" })).statusCode).toBe(400);
+    expect((await patch(event.id, adminToken, { modality: "trail" })).statusCode).toBe(400);
+    expect(await prisma.adminAudit.count({ where: { eventId: event.id } })).toBe(0);
+  });
+  it("audits confirmation, prevents erasing published modality and preserves country review together", async () => {
+    const event = await edition(null);
+    await prisma.event.update({ where: { id: event.id }, data: { modality: "unknown",
+      warnings: ["country_unconfirmed", "modality_unconfirmed", "modality_evidence_mismatch"],
+      publishabilityReasons: ["country_unconfirmed", "modality_unconfirmed"] } });
+    const result = await patch(event.id, adminToken, { country: "BR", modality: "trail", publicationStatus: "published",
+      reason: "País e modalidade conferidos na fonte" });
+    expect(result.statusCode, result.body).toBe(200);
+    expect(result.json().event).toMatchObject({ country: "BR", modality: "trail", warnings: [], publishabilityReasons: [] });
+    expect((await prisma.adminAudit.findFirstOrThrow({ where: { eventId: event.id } })).details)
+      .toMatchObject({ before: { country: null, modality: "unknown" }, changes: { country: "BR", modality: "trail" } });
+    expect((await patch(event.id, adminToken, { modality: "unknown", reason: "Remover dado não comprovado" })).statusCode).toBe(409);
+    const hide = await patch(event.id, adminToken, { modality: "unknown", publicationStatus: "hidden", reason: "Remover dado não comprovado" });
+    expect(hide.statusCode, hide.body).toBe(200);
+    expect(hide.json().event).toMatchObject({ modality: "unknown", publicationStatus: "hidden" });
+    expect(hide.json().event.warnings).toContain("modality_unconfirmed");
   });
 });

@@ -4,7 +4,7 @@ export const ADAPTER_VERSION_TICKETSPORTS = process.env.ADAPTER_VERSION_TICKETSP
 export const ADAPTER_VERSION_CORRIDASBR = process.env.ADAPTER_VERSION_CORRIDASBR ?? "1.0.0";
 export const ADAPTER_VERSION_OFFICIAL_PAGE = process.env.ADAPTER_VERSION_OFFICIAL_PAGE ?? "1.0.0";
 export const CANONICAL_SCHEMA_VERSION = process.env.CANONICAL_SCHEMA_VERSION ?? "1.0.0";
-export const CURATION_PIPELINE_VERSION = atLeastSemver(process.env.CURATION_PIPELINE_VERSION, "1.3.0");
+export const CURATION_PIPELINE_VERSION = atLeastSemver(process.env.CURATION_PIPELINE_VERSION, "1.4.0");
 
 export function cleanText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
@@ -12,6 +12,51 @@ export function cleanText(value: string | null | undefined): string {
 
 export function stripAccents(value: string): string {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+export type SourceModality = "road" | "trail" | "mixed" | "kids" | "walk" | "unknown";
+
+/** Classify only explicit race/route evidence, never an address or a generic race name. */
+export function modalityFromSourceText(title: string, text: string): {
+  modality: SourceModality;
+  evidence: Array<{ modality: Exclude<SourceModality, "mixed" | "unknown">; sourceText: string }>;
+} {
+  const evidence: Array<{ modality: Exclude<SourceModality, "mixed" | "unknown">; sourceText: string }> = [];
+  const patterns: Array<["road" | "trail", RegExp]> = [
+    ["road", /\b(?:corrida(?:s)?|maratona(?:s)?|prova(?:s)?)\s+de\s+rua\b|\b(?:road|street)\s+(?:running|race|run)\b|\b(?:percurso(?:s)?|corrida(?:s)?)\s+(?:em|no|de)\s+asfalto\b|\bmodalidade\s*:\s*(?:rua|road)\b/gi],
+    ["trail", /\btrail\s+(?:running|run|race)\b|\b(?:corrida(?:s)?|prova(?:s)?)\s+de\s+montanha\b|\b(?:corrida(?:s)?|percurso(?:s)?)\s+(?:em|de|pela(?:s)?|com)\s+trilha(?:s)?\b|\bmodalidade\s*:\s*trail\b/gi],
+  ];
+  // Keep the original text offsets, including decomposed accents and Unicode before a quote.
+  for (const original of [title, text]) {
+    const normalized = original;
+    for (const [modality, pattern] of patterns) {
+      for (const match of normalized.matchAll(pattern)) {
+        const index = match.index;
+        const prefix = normalized.slice(Math.max(0, index - 100), index);
+        const clause = prefix.split(/[.!?;\n]/).at(-1) ?? "";
+        if (/\b(?:nao|not|sem|acesse|clique|veja tambem|outras provas|menu)\b[^.!?;\n]*$/i.test(stripAccents(clause))) continue;
+        evidence.push({ modality, sourceText: original.slice(index, index + match[0].length) });
+      }
+    }
+  }
+  // A standalone Trail in the event title is evidence; a navigation link in the body is not.
+  if (!evidence.some(item => item.modality === "trail") && /\btrail\b/i.test(title)
+    && !/\b(?:nao|not|sem)\b/i.test(stripAccents(title))) {
+    const match = title.match(/\btrail\b/i)!;
+    evidence.push({ modality: "trail", sourceText: match[0] });
+  }
+  const surfaces = new Set(evidence.map(item => item.modality));
+  if (surfaces.size > 1) return { modality: "mixed", evidence };
+  if (surfaces.has("road")) return { modality: "road", evidence };
+  if (surfaces.has("trail")) return { modality: "trail", evidence };
+  const titleOnly = stripAccents(title);
+  const kids = title.match(/\b(?:kids?|infantil)\b/i);
+  if (kids && !/\b(?:nao|not|sem)\b/i.test(titleOnly))
+    return { modality: "kids", evidence: [{ modality: "kids", sourceText: kids[0] }] };
+  const walk = title.match(/\bcaminhada\b/i);
+  if (walk && !/\b(?:corrida|maratona|run|trail|nao|not|sem)\b/i.test(titleOnly))
+    return { modality: "walk", evidence: [{ modality: "walk", sourceText: walk[0] }] };
+  return { modality: "unknown", evidence: [] };
 }
 
 /** Only explicit country components in a location; a UF, domain or request filter is not evidence. */

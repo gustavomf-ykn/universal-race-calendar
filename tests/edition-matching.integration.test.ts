@@ -348,7 +348,7 @@ describe.skipIf(!process.env.DATABASE_URL)("edition matching and country evidenc
   it("a real isolated executor stops at a reused annual identity, preserves results and records the safe cause", async () => {
     process.env.AI_PROVIDER = "mock";
     const text = (year: number) =>
-      `Corrida Mock. Data 10/10/${year}. Florianopolis, SC, Brasil. Distancias 5 km. Inscricoes em https://example.test/inscricao.`;
+      `Corrida Mock. Corrida de rua. Data 10/10/${year}. Florianopolis, SC, Brasil. Distancias 5 km. Inscricoes em https://example.test/inscricao.`;
     const source = await prisma.source.create({
       data: {
         name: prefix,

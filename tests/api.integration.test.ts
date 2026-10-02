@@ -12,6 +12,12 @@ const ticketsportsFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports
 // The list, detail response and linked registration page describe one provider identity.
 ticketsportsFixture.eventId = "74641";
 ticketsportsFixture.uri = "https://www.ticketsports.com.br/e/meia-maratona-florianopolis-74641";
+// This controlled positive-publication case supplies explicit surface evidence.
+// The original fixture without evidence remains covered by mock-ai-pipeline.
+ticketsportsFixture.eventContents = [
+  ...(ticketsportsFixture.eventContents as object[]),
+  { title: "Modalidade", description: "<p>Corrida de rua.</p>" },
+];
 const ticketsportsListFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports-list.json", "utf-8")) as Array<
   Record<string, unknown>
 >;
@@ -69,7 +75,7 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
         metadata: {
           title: "Meia Maratona de Florianopolis",
           importantText:
-            "Meia Maratona de Florianopolis. Data 16/08/2026. Florianopolis, SC, Brasil. Distancias 5 km e 21 km. Inscricoes em https://example.test/inscricao.",
+            "Meia Maratona de Florianopolis. Corrida de rua. Data 16/08/2026. Florianopolis, SC, Brasil. Distancias 5 km e 21 km. Inscricoes em https://example.test/inscricao.",
         },
       },
     });
@@ -108,7 +114,7 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
         metadata: {
           title: "Meia Maratona de Florianopolis",
           importantText:
-            "Meia Maratona de Florianopolis. Data 16/08/2026. Florianopolis, SC, Brasil. Distancias 5 km e 21 km. Inscricoes em https://example.test/inscricao.",
+            "Meia Maratona de Florianopolis. Corrida de rua. Data 16/08/2026. Florianopolis, SC, Brasil. Distancias 5 km e 21 km. Inscricoes em https://example.test/inscricao.",
         },
       },
     });
@@ -215,7 +221,7 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
       eventContents: [
         {
           title: "O Evento",
-          description: "<p>Meia Maratona de Florianopolis atualizada com percursos de 5 km e 10 km.</p>",
+          description: "<p>Meia Maratona de Florianopolis atualizada: corrida de rua com percursos de 5 km e 10 km.</p>",
         },
       ],
     };
@@ -282,12 +288,13 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
       },
     ];
     const first = await importCorridasBREvents({ registry, discoverEvents: exclusiveDiscovery, delayMs: 0, force: true });
-    expect(first.publishedEvents).toBe(1);
+    expect(first.publishedEvents).toBe(0);
     const exclusive = await prisma.event.findFirstOrThrow({
       where: { sourceType: "corridasbr", sourceExternalId: "98765" },
       include: { sourceReferences: true },
     });
-    expect(exclusive.publicationStatus).toBe("published");
+    expect(exclusive.publicationStatus).toBe("pending_review");
+    expect(exclusive.modality).toBe("unknown");
     expect(exclusive.mainImageUrl).toBeNull();
     expect(exclusive.sourceReferences).toHaveLength(1);
 
@@ -413,7 +420,7 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
   });
 
   it("supports admin event, curation job, and import run endpoints", async () => {
-    const event = await prisma.event.findFirstOrThrow();
+    const event = await prisma.event.findFirstOrThrow({ where: { sourceType: "ticketsports", sourceExternalId: "74641" } });
 
     const unauthorized = await app.inject({ method: "GET", url: "/v1/admin/events" });
     expect(unauthorized.statusCode).toBe(401);

@@ -16738,6 +16738,16 @@
                     ],
                     "pattern": "^[A-Z]{2}$"
                   },
+                  "modality": {
+                    "enum": [
+                      "road",
+                      "trail",
+                      "mixed",
+                      "kids",
+                      "walk",
+                      "unknown"
+                    ]
+                  },
                   "publicationStatus": {
                     "enum": [
                       "draft",

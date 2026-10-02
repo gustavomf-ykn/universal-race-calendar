@@ -47,16 +47,17 @@ describe.skipIf(!enabled)("recurring catalog metadata preserves valid and review
     await prisma.event.update({ where: { id }, data: {
       name: "Nome revisado", city: "Cidade revisada", date: new Date("2026-10-11"), registrationUrl: null,
       publicationStatus: "hidden", administrativeReview: true,
+      modality: "trail",
     } });
     await prisma.adminAudit.create({ data: { actorId: prefix, eventId: id, action: "review_event",
-      details: { changes: { name: "Nome revisado", city: "Cidade revisada", date: "2026-10-11", registrationUrl: null } } } });
+      details: { changes: { name: "Nome revisado", city: "Cidade revisada", date: "2026-10-11", registrationUrl: null, modality: "trail" } } } });
     await saveCanonicalEvent({ ...canonical, description: "Descrição nova" });
     expect(await prisma.event.findUnique({ where: { id } })).toMatchObject({
       name: "Nome revisado", city: "Cidade revisada", date: new Date("2026-10-11"), registrationUrl: null,
-      publicationStatus: "hidden", description: "Descrição nova",
+      publicationStatus: "hidden", description: "Descrição nova", modality: "trail",
     });
     expect((await prisma.eventSourceReference.findFirstOrThrow({ where: { eventId: id } })).observation)
-      .toMatchObject({ name: canonical.name, city: canonical.city, date: canonical.date });
+      .toMatchObject({ name: canonical.name, city: canonical.city, date: canonical.date, modality: "road" });
   });
   it("a refresh through a supplemental reference cannot replace the primary source", async () => {
     const { canonical, id } = await fixture("primary");

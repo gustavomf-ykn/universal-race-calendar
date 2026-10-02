@@ -62,7 +62,7 @@ describe("mock AI pipeline", () => {
     expect(result.normalizedEvent).toMatchObject({ country: null, publicationStatus: "pending_review" });
     expect(result.publishability.reasons).toContain("country_unconfirmed");
   });
-  it("publishes an exclusive CorridasBR event without inventing banner, lot, price, or kit", async () => {
+  it("retains an exclusive CorridasBR event without inventing modality, banner, lot, price, or kit", async () => {
     const adapter = new CorridasBRAdapter({
       async getText() {
         return corridasBRDetailFixture;
@@ -85,7 +85,8 @@ describe("mock AI pipeline", () => {
       city: "Campinas",
       state: "SP",
       country: "BR",
-      publicationStatus: "published",
+      publicationStatus: "pending_review",
+      modality: "unknown",
       mainImageUrl: null,
       prices: [],
       kits: [],
@@ -129,7 +130,8 @@ describe("mock AI pipeline", () => {
     const result = await curateSourceExtraction(raw, new MockAIProvider());
     expect(result.normalizedEvent.name).toBe("Meia Maratona de Florianopolis");
     expect(result.normalizedEvent.date).toBe("2026-08-16");
-    expect(result.normalizedEvent.publicationStatus).toBe("published");
+    expect(result.normalizedEvent.publicationStatus).toBe("pending_review");
+    expect(result.normalizedEvent.publishabilityReasons).toContain("modality_unconfirmed");
     expect(result.normalizedEvent.registrationUrl).toBe("https://example.test/inscricao");
     expect(result.normalizedEvent.distances.map((distance) => distance.label)).toContain("21 km");
   });
@@ -141,6 +143,7 @@ describe("mock AI pipeline", () => {
       city: "Florianopolis",
       state: "SC",
       country: "BR",
+      modality: "unknown",
       locationName: null,
       registrationUrl: null,
       officialUrl: "https://example.test",
@@ -271,18 +274,19 @@ describe("mock AI pipeline", () => {
     expect(result.normalizedEvent.startTime).toBe("06:30");
     expect(result.normalizedEvent.city).toBe("Florianopolis");
     expect(result.normalizedEvent.state).toBe("SC");
-    expect(result.normalizedEvent.modality).toBe("road");
+    expect(result.normalizedEvent.modality).toBe("unknown");
     expect(result.normalizedEvent.eventStatus).toBe("scheduled");
-    expect(result.normalizedEvent.curationStatus).toBe("curated");
+    expect(result.normalizedEvent.curationStatus).toBe("manual_review");
     expect(result.normalizedEvent.curationProvider).toBe("deterministic");
     expect(result.normalizedEvent.curationModel).toBe("ticketsports-v1");
-    expect(result.normalizedEvent.curationVersion).toBe("1.3.0");
+    expect(result.normalizedEvent.curationVersion).toBe("1.4.0");
     expect(result.normalizedEvent.curatedAt).toBeTruthy();
     expect(result.normalizedEvent.registrationUrl).toContain("ticketsports.com.br");
     expect(result.normalizedEvent.distances.map((distance) => distance.distanceKm)).toContain(21);
     expect(result.normalizedEvent.distances.map((distance) => distance.label)).toEqual(["5 km", "10 km", "21 km"]);
     expect(result.normalizedEvent.prices[0]?.price).toBe(120);
-    expect(result.normalizedEvent.publicationStatus).toBe("published");
+    expect(result.normalizedEvent.publicationStatus).toBe("pending_review");
+    expect(result.normalizedEvent.publishabilityReasons).toContain("modality_unconfirmed");
   });
 
   it("extracts rich TicketSports details from structured payloads", async () => {
@@ -431,7 +435,7 @@ describe("mock AI pipeline", () => {
 
     expect(result.normalizedEvent.city).toBeNull();
     expect(result.normalizedEvent.locationName).toBe("Avenida Delfim Moreira, RJ, Brasil");
-    expect(result.normalizedEvent.modality).toBe("road");
+    expect(result.normalizedEvent.modality).toBe("unknown");
     expect(result.normalizedEvent.distances.map((distance) => distance.label)).toEqual(["5 km", "10 km"]);
     expect(result.normalizedEvent.publicationStatus).toBe("pending_review");
     expect(result.normalizedEvent.publishabilityReasons).toContain("critical_warning");

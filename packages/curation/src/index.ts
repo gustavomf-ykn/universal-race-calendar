@@ -49,6 +49,7 @@ import {
   countryFromLocationText,
   CURATION_PIPELINE_VERSION,
   generateEventFingerprint,
+  modalityFromSourceText,
   normalizeDate,
   normalizeDistanceKm,
   normalizePrice,
@@ -1186,6 +1187,8 @@ export function normalizeRaceEventExtraction(
   const city = cleanText(extraction.city.value) || null;
   const state = cleanText(extraction.state.value)?.toUpperCase() || null;
   const country = cleanText(extraction.country.value)?.toUpperCase() || null;
+  // Model output and a generated description cannot serve as their own evidence.
+  const modality = modalityFromSourceText(raw.title ?? "", repairMojibake(raw.importantText) ?? "").modality;
   const registrationUrl = absolutizeUrl(extraction.registrationUrl?.value, raw.url);
   const officialUrl = absolutizeUrl(extraction.officialUrl?.value, raw.url) ?? raw.url;
   const regulationUrl = absolutizeUrl(extraction.regulationUrl?.value, raw.url);
@@ -1196,6 +1199,9 @@ export function normalizeRaceEventExtraction(
   const distances = extraction.distances.map((distance) => ({
     ...distance,
     distanceKm: distance.distanceKm,
+    modality: modality === "mixed"
+      ? verifiedDistanceModality(distance, raw)
+      : modality,
     startTime: normalizeTime(distance.startTime),
   }));
   const prices = withCompatibleLots(extraction).prices.map((price) => ({
@@ -1209,7 +1215,12 @@ export function normalizeRaceEventExtraction(
     const absolute = absolutizeUrl(url, raw.url);
     return absolute ? [absolute] : [];
   });
-  const warnings = normalizeCurationWarnings(extraction.warnings, { city, state, country, locationName });
+  const warnings = normalizeCurationWarnings(unique([
+    ...extraction.warnings.filter(value => !["modality_unconfirmed", "multiple_modalities", "modality_evidence_mismatch"].includes(value)),
+    ...(modality === "unknown" ? ["modality_unconfirmed"] : []),
+    ...(modality === "mixed" ? ["multiple_modalities"] : []),
+    ...(extraction.modality !== "unknown" && extraction.modality !== modality ? ["modality_evidence_mismatch"] : []),
+  ]), { city, state, country, locationName });
   const confidence = normalizeCurationConfidence(extraction, {
     name,
     date,
@@ -1235,7 +1246,7 @@ export function normalizeRaceEventExtraction(
     address: cleanText(extraction.address?.value) || null,
     latitude: extraction.latitude,
     longitude: extraction.longitude,
-    modality: extraction.modality,
+    modality,
     eventStatus: extraction.eventStatus,
     publicationStatus: "draft",
     registrationUrl,
@@ -1275,6 +1286,16 @@ export function normalizeRaceEventExtraction(
   });
 }
 
+function verifiedDistanceModality(distance: RaceEventExtraction["distances"][number], raw: RawSourceExtraction) {
+  const quote = cleanText(distance.sourceText);
+  const source = cleanText(repairMojibake(raw.importantText));
+  if (!quote || !source.toLowerCase().includes(quote.toLowerCase())) return "unknown" as const;
+  if (!distance.distanceKm || !(quote.match(/\b\d+(?:[,.]\d+)?\s*km\b/gi) ?? [])
+    .some(value => normalizeDistanceKm(value) === distance.distanceKm)) return "unknown" as const;
+  const observed = modalityFromSourceText("", quote).modality;
+  return observed === "road" || observed === "trail" ? observed : "unknown";
+}
+
 export function evaluatePublishability(
   normalizedEvent: Pick<
     CanonicalRaceEvent,
@@ -1283,6 +1304,7 @@ export function evaluatePublishability(
     | "city"
     | "state"
     | "country"
+    | "modality"
     | "locationName"
     | "registrationUrl"
     | "officialUrl"
@@ -1298,6 +1320,8 @@ export function evaluatePublishability(
   if (!normalizedEvent.date) reasons.push("missing_date");
   if (!normalizedEvent.country) reasons.push("country_unconfirmed");
   else if (normalizedEvent.country.toUpperCase() !== "BR") reasons.push("non_brazil_event");
+  if (normalizedEvent.modality === "unknown") reasons.push("modality_unconfirmed");
+  else if (!["road", "trail"].includes(normalizedEvent.modality)) reasons.push("modality_requires_review");
   if (!hasPublishableLocation(normalizedEvent)) {
     reasons.push("missing_location");
   }

@@ -57,7 +57,7 @@ export function adminEventFilter(q: Record<string, any>) {
       },
     });
   if (q.incomplete)
-    AND.push({ OR: [{ date: null }, { city: null }, { state: null }, { country: null },
+    AND.push({ OR: [{ date: null }, { city: null }, { state: null }, { country: null }, { modality: "unknown" },
       { sourceExternalId: { startsWith: "url:" } }] });
   return { AND };
 }
@@ -203,6 +203,7 @@ export async function registerOperations(app: FastifyInstance) {
             city: { type: ["string", "null"] },
             state: { type: ["string", "null"], pattern: "^[A-Z]{2}$" },
             country: { type: ["string", "null"], pattern: "^[A-Z]{2}$" },
+            modality: { enum: ["road", "trail", "mixed", "kids", "walk", "unknown"] },
             publicationStatus: filter.publicationStatus,
             reason: { type: "string", minLength: 3, maxLength: 500 },
           },
@@ -222,6 +223,8 @@ export async function registerOperations(app: FastifyInstance) {
         return reply.code(409).send({ error: "publication_requires_date_city_state" });
       if (merged.publicationStatus === "published" && merged.country !== "BR")
         return reply.code(409).send({ error: "publication_requires_brazil_country" });
+      if (merged.publicationStatus === "published" && merged.modality === "unknown")
+        return reply.code(409).send({ error: "publication_requires_confirmed_modality" });
       return prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Event" WHERE id=${id} FOR UPDATE`;
         const latest = await tx.event.findUniqueOrThrow({ where: { id } });
@@ -230,6 +233,8 @@ export async function registerOperations(app: FastifyInstance) {
           throw Object.assign(new Error("publication_requires_date_city_state"), { statusCode: 409 });
         if (next.publicationStatus === "published" && next.country !== "BR")
           throw Object.assign(new Error("publication_requires_brazil_country"), { statusCode: 409 });
+        if (next.publicationStatus === "published" && next.modality === "unknown")
+          throw Object.assign(new Error("publication_requires_confirmed_modality"), { statusCode: 409 });
         const countryReview = "country" in changes ? {
           warnings: [...new Set([
             ...(Array.isArray(latest.warnings) ? latest.warnings as string[] : [])
@@ -242,11 +247,24 @@ export async function registerOperations(app: FastifyInstance) {
             ...(!changes.country ? ["country_unconfirmed"] : changes.country !== "BR" ? ["non_brazil_event"] : []),
           ])],
         } : {};
+        const modalityReview = "modality" in changes ? {
+          warnings: [...new Set([
+            ...(countryReview.warnings ?? (Array.isArray(latest.warnings) ? latest.warnings as string[] : []))
+              .filter(value => !["modality_unconfirmed", "modality_evidence_mismatch", "multiple_modalities"].includes(value)),
+            ...(changes.modality === "unknown" ? ["modality_unconfirmed"] : []),
+          ])],
+          publishabilityReasons: [...new Set([
+            ...(countryReview.publishabilityReasons ?? (Array.isArray(latest.publishabilityReasons) ? latest.publishabilityReasons as string[] : []))
+              .filter(value => !["modality_unconfirmed", "modality_requires_review"].includes(value)),
+            ...(changes.modality === "unknown" ? ["modality_unconfirmed"] : []),
+          ])],
+        } : {};
         const event = await tx.event.update({
           where: { id },
           data: {
             ...changes,
             ...countryReview,
+            ...modalityReview,
             administrativeReview: true,
             ...("publicationStatus" in changes
               ? { publishedAt: changes.publicationStatus === "published" ? (latest.publishedAt ?? new Date()) : null }
@@ -267,6 +285,7 @@ export async function registerOperations(app: FastifyInstance) {
                   city: latest.city,
                   state: latest.state,
                   country: latest.country,
+                  modality: latest.modality,
                   publicationStatus: latest.publicationStatus,
                 },
                 changes,

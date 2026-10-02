@@ -14,6 +14,6 @@ describe("source text normalization", () => {
     expect(sourceModality("Corrida da Serra", "trail running")).toBe("trail");
     expect(sourceModality("Evento desconhecido", "inscrições abertas")).toBe("unknown");
     expect(sourceModality("Corrida da Cidade", "corrida de rua")).toBe("road");
-    expect(sourceModality("Corrida de Verão", "Acesse Trilha do Líder clicando aqui")).toBe("road");
+    expect(sourceModality("Corrida de Verão", "Acesse Trilha do Líder clicando aqui")).toBe("unknown");
   });
 });

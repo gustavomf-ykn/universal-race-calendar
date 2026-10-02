@@ -113,6 +113,8 @@ describe.skipIf(!process.env.DATABASE_URL)("unified backend with PostgreSQL and 
     const detail = JSON.parse(readFileSync("tests/fixtures/ticketsports-simple.json", "utf8"));
     detail.eventId = "integrated-fixture";
     detail.uri = "https://www.ticketsports.com.br/e/integrated-fixture";
+    // Positive publication fixture: source text explicitly identifies the race surface.
+    detail.eventContents.push({ title: "Modalidade", description: "<p>Corrida de rua.</p>" });
     const adapter = new TicketSportsAdapter({ getJson: async () => detail, getText: async () => "" });
     const registry = new SourceAdapterRegistry({ adapters: [adapter] });
     // Exercise the same importer used by the TS executor without a real collection.
