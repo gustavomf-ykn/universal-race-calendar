@@ -18,10 +18,15 @@ try {
  if($LASTEXITCODE -ne 0){throw "Geração do cliente de banco falhou."}
  if(Test-Path $bundled){& node $bundled -r build}else{& pnpm -r build}
  if($LASTEXITCODE -ne 0){throw 'Build falhou. Os executores não foram iniciados.'}
- & python -c 'import psycopg,httpx,openpyxl,playwright'
+ & python -c 'import psycopg,httpx,openpyxl,playwright,psutil'
  if($LASTEXITCODE -ne 0){throw 'Instale as dependências de requirements-worker.txt antes de iniciar.'}
- & python apps/openresults-worker/browser_smoke.py
- if($LASTEXITCODE -ne 0){throw 'Chromium indisponível. Execute python -m playwright install chromium e tente novamente.'}
+ & python -c 'import sys; sys.path.insert(0,"apps/openresults-worker"); from local_resources import inspect_resources; sys.exit(3 if inspect_resources()["reason"] else 0)'
+ if($LASTEXITCODE -eq 0){
+  & python apps/openresults-worker/browser_smoke.py
+  if($LASTEXITCODE -ne 0){throw 'Chromium indisponível. Execute python -m playwright install chromium e tente novamente.'}
+ } elseif($LASTEXITCODE -eq 3){
+  Write-Host 'Recursos locais insuficientes ou medição indisponível. O teste do Chromium foi adiado; executores aguardarão sem adquirir tarefas.'
+ } else {throw 'Confira os limites locais WORKER_MIN_FREE_MEMORY_MB, WORKER_MIN_FREE_TEMP_MB e WORKER_MAX_RSS_MB.'}
  $env:WORKER_CODE_VERSION=(& git rev-parse HEAD)
  & (Join-Path $PSScriptRoot 'with-staging-secrets.ps1') -Action executors -ProjectRef sggrijhyblejlgimgzzc
 } finally {

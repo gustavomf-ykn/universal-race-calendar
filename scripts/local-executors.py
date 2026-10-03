@@ -51,7 +51,8 @@ def main():
                 selected = json.loads(Path(selection_file).read_text(encoding='utf-8'))
                 if not isinstance(selected, list) or len(selected)>100 or any(not isinstance(i,str) or not i or len(i)>100 for i in selected):
                     raise ValueError('task_selection_invalid')
-            db.execute('SELECT id FROM "WorkerPresence" LIMIT 0')
+            db.execute('SELECT id,resources FROM "WorkerPresence" LIMIT 0')
+            db.execute("SELECT 'defer_local_resource_task(text,text,jsonb,text)'::regprocedure")
             db.execute("SELECT task_queue_priority('catalog-sync',now(),now())")
             db.execute('SELECT id FROM "CatalogSync" LIMIT 0')
             db.execute('SELECT id,"parserVersion",sequence FROM "CatalogReconciliation" LIMIT 0')

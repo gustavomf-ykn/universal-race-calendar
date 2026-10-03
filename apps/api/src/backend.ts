@@ -8,6 +8,17 @@ const text = { type: "string" } as const;
 const idParams = { type: "object", required: ["id"], properties: { id: text } };
 const error = { type: "object", required: ["error"], properties: { error: text } };
 const security = [{ supabaseAuth: [] }, { clientKey: [] }, { internalKey: [] }];
+const executorSummarySchema = {
+  type: "object", additionalProperties: false,
+  required: ["id", "runtime", "capabilities", "state", "lastSeenAt", "ageSeconds", "resourceReason"],
+  properties: {
+    id: text, runtime: { enum: ["typescript", "python"] },
+    capabilities: { type: "array", items: text },
+    state: { enum: ["available", "busy", "resource_wait", "stopping", "disconnected"] },
+    lastSeenAt: { type: "string", format: "date-time" }, ageSeconds: { type: "number" },
+    resourceReason: { type: ["string", "null"], enum: ["local_memory_limit", "local_disk_limit", "local_resource_measurement_unavailable", null] },
+  },
+};
 const pageQuery = {
   type: "object",
   properties: {
@@ -86,10 +97,10 @@ export async function registerBackend(app: FastifyInstance) {
   app.get("/v1/executors", {
     onRequest: authorize("tasks:read"),
     schema: { tags: ["Operations"], security, response: { 200: {
-      type: "object", properties: { data: { type: "array", items: { type: "object", additionalProperties: true } } },
+      type: "object", properties: { data: { type: "array", items: executorSummarySchema } },
     }, ...errors } },
-  }, async () => ({ data: (await listWorkers()).map(({ id, runtime, capabilities, state, lastSeenAt, ageSeconds }) =>
-    ({ id, runtime, capabilities, state, lastSeenAt, ageSeconds })) }));
+  }, async () => ({ data: (await listWorkers()).map(({ id, runtime, capabilities, state, lastSeenAt, ageSeconds, resources }) =>
+    ({ id, runtime, capabilities, state, lastSeenAt, ageSeconds, resourceReason: resources?.reason ?? null })) }));
   app.get("/v1/admin/workers", {
     onRequest: requireAdmin,
     schema: { tags: ["Operations"], security, response: { 200: {

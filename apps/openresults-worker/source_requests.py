@@ -6,6 +6,7 @@ from email.utils import parsedate_to_datetime
 
 from app.services.source_requests import RequestHooks, SourceBudgetDeferred, SourceCircuitOpen
 from capacity import database_capacity
+from local_resources import assert_resources
 
 
 def retry_after_at(value: str | None):
@@ -24,7 +25,10 @@ def retry_after_at(value: str | None):
 
 
 def database_request_hooks(query, source='openresults'):
+    async def local_before():
+        await asyncio.to_thread(assert_resources)
     async def before():
+        await local_before()
         await asyncio.to_thread(database_capacity, query)
         while True:
             row = await asyncio.to_thread(query, 'SELECT * FROM reserve_source_request(%s)', (source,), True)
@@ -42,4 +46,4 @@ def database_request_hooks(query, source='openresults'):
         if status in (401, 403, 429):
             await asyncio.to_thread(query, 'SELECT block_source_requests(%s,%s)', (source, retry_after_at(retry_after)))
 
-    return RequestHooks(before, after)
+    return RequestHooks(before, after, local_before)

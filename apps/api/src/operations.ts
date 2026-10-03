@@ -90,14 +90,17 @@ export async function registerOperations(app: FastifyInstance) {
         if (task.executionHold === hold) return publicTask(task);
         const changed = await tx.collectionTask.update({
           where: { id },
-          data: { executionHold: hold, holdReason: hold ? reason : null, updatedAt: new Date() },
+          data: { executionHold: hold, holdReason: hold ? reason : null, updatedAt: new Date(),
+            ...(!hold && task.holdReason === "local_resource_wait" ? { errorCode: null } : {}) },
         });
         await tx.adminAudit.create({
           data: {
             actorId: req.principal!.id,
             taskId: id,
             action: hold ? "hold_task" : "release_task",
-            details: { reason },
+            details: { reason, ...(!hold && task.holdReason === "local_resource_wait" ? {
+              previousHoldReason: task.holdReason, previousErrorCode: task.errorCode,
+            } : {}) },
           },
         });
         return publicTask(changed);

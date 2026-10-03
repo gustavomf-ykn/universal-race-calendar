@@ -12643,7 +12643,61 @@
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "additionalProperties": true
+                        "additionalProperties": false,
+                        "required": [
+                          "id",
+                          "runtime",
+                          "capabilities",
+                          "state",
+                          "lastSeenAt",
+                          "ageSeconds",
+                          "resourceReason"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "runtime": {
+                            "enum": [
+                              "typescript",
+                              "python"
+                            ]
+                          },
+                          "capabilities": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "state": {
+                            "enum": [
+                              "available",
+                              "busy",
+                              "resource_wait",
+                              "stopping",
+                              "disconnected"
+                            ]
+                          },
+                          "lastSeenAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "ageSeconds": {
+                            "type": "number"
+                          },
+                          "resourceReason": {
+                            "type": [
+                              "null",
+                              "string"
+                            ],
+                            "enum": [
+                              "local_memory_limit",
+                              "local_disk_limit",
+                              "local_resource_measurement_unavailable",
+                              null
+                            ]
+                          }
+                        }
                       }
                     }
                   }

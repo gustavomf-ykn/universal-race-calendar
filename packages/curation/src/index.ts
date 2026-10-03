@@ -314,8 +314,8 @@ export async function runSourceCheck(
       reasons,
     };
   } catch (error) {
-    if (error instanceof Error && ["SourceBudgetDeferred", "SourceCircuitOpen", "CapacityDeferred"].includes(error.name)) {
-      const reason = error.name === "CapacityDeferred" ? "capacity_wait" : error.name === "SourceCircuitOpen" ? "source_access_blocked" : "source_budget_wait";
+    if (error instanceof Error && ["SourceBudgetDeferred", "SourceCircuitOpen", "CapacityDeferred", "LocalResourceDeferred"].includes(error.name)) {
+      const reason = error.name === "LocalResourceDeferred" ? "local_resource_wait" : error.name === "CapacityDeferred" ? "capacity_wait" : error.name === "SourceCircuitOpen" ? "source_access_blocked" : "source_budget_wait";
       await completeExtractionJob({ jobId: job.id, status: "manual_review", errorMessage: reason, reasons: [reason] });
       throw error;
     }
@@ -413,7 +413,7 @@ export async function importTicketSportsEvents(
         if (result.status === "success" && !result.eventId) unchangedEvents += 1;
         if (result.status === "manual_review") manualReviewEvents += 1;
       } catch (error) {
-        if (error instanceof Error && (error.message === "source_access_blocked" || ["SourceBudgetDeferred", "SourceCircuitOpen", "CapacityDeferred"].includes(error.name))) throw error;
+        if (error instanceof Error && (error.message === "source_access_blocked" || ["SourceBudgetDeferred", "SourceCircuitOpen", "CapacityDeferred", "LocalResourceDeferred"].includes(error.name))) throw error;
         failures.push({
           externalId: item.externalId,
           error: error instanceof Error ? error.message : String(error),
@@ -538,7 +538,7 @@ export async function importCorridasBREvents(
         if (check.status === "success" && !check.eventId) unchangedEvents += 1;
         if (check.status === "manual_review") manualReviewEvents += 1;
       } catch (error) {
-        if (error instanceof Error && (error.message === "source_access_blocked" || ["SourceBudgetDeferred", "SourceCircuitOpen", "CapacityDeferred"].includes(error.name))) throw error;
+        if (error instanceof Error && (error.message === "source_access_blocked" || ["SourceBudgetDeferred", "SourceCircuitOpen", "CapacityDeferred", "LocalResourceDeferred"].includes(error.name))) throw error;
         failures.push({ externalId: item.externalId, error: error instanceof Error ? error.message : String(error) });
       }
     }
@@ -820,7 +820,7 @@ export async function processCatalogImportRun(
         },
       });
     } catch (error) {
-      if (error instanceof Error && (error.message === "source_access_blocked" || ["SourceBudgetDeferred", "SourceCircuitOpen", "CapacityDeferred"].includes(error.name))) throw error;
+      if (error instanceof Error && (error.message === "source_access_blocked" || ["SourceBudgetDeferred", "SourceCircuitOpen", "CapacityDeferred", "LocalResourceDeferred"].includes(error.name))) throw error;
       const message = error instanceof Error ? error.message : String(error);
       failures.push({ externalId: candidate.sourceExternalId, error: message });
       await prisma.importCandidate.update({

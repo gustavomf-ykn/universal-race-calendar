@@ -57,13 +57,18 @@ def _styled_workbook(
     *,
     sheet_name: str,
     table_name: str,
+    resource_check=None,
 ) -> Workbook:
+    if resource_check:
+        resource_check()
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = sheet_name
     headers = [label for _, label in columns]
     sheet.append(headers)
-    for row in rows:
+    for index, row in enumerate(rows):
+        if resource_check and index % 250 == 0:
+            resource_check()
         values: list[Any] = []
         for field, _ in columns:
             value = _stringify_nested(_excel_value(row.get(field)))
@@ -110,6 +115,8 @@ def _styled_workbook(
             value = sheet.cell(row_number, index).value
             width = max(width, len(str(value)) if value is not None else 0)
         sheet.column_dimensions[get_column_letter(index)].width = min(max(width + 2, 10), 50)
+    if resource_check:
+        resource_check()
     return workbook
 
 

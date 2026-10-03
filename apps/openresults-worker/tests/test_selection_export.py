@@ -54,3 +54,40 @@ def test_full_catalog_retains_nulls_and_distinguishes_ids():
     sheet=load_workbook(content).active
     assert sheet['A2'].value=='edition-1' and sheet['B2'].value=='123'
     assert sheet['J2'].value is None and count==1
+
+
+@pytest.mark.parametrize('kind',['results','catalog-full','catalog-simple'])
+def test_text_budget_splits_without_losing_rows_headers_or_styles(monkeypatch,kind):
+    events,rows,connection=fixtures()
+    if kind=='results':rows.extend([{**rows[0],'bib':str(index)} for index in range(1,4)])
+    else:events.extend([{**events[0],'id':f'edition-{index}'} for index in range(2,5)])
+    # A small configured test budget exercises real workbook/ZIP construction.
+    # One row fits; multiple rows exceed the part budget.
+    monkeypatch.setattr(exports,'MAX_PART_TEXT_BYTES',1600 if kind=='catalog-full' else 350)
+    ids=[e['id'] for e in events]
+    content,extension,_,count=exports.build_selection({'kind':kind,'selection':{'eventIds':ids}},connection)
+    assert extension=='zip' and count==4
+    expected=exports.FULL if kind=='catalog-full' else exports.SIMPLE if kind=='catalog-simple' else EXPORT_COLUMNS
+    with zipfile.ZipFile(content) as archive:
+        total=0
+        for name in archive.namelist():
+            book=load_workbook(io.BytesIO(archive.read(name)))
+            sheet=book.active
+            assert [cell.value for cell in sheet[1]]==[label for _,label in expected]
+            assert sheet.freeze_panes=='A2'
+            total+=sheet.max_row-1
+            book.close()
+        assert total==4
+
+
+def test_resource_pressure_stops_workbook_construction_before_upload(monkeypatch):
+    from local_resources import assess,LocalResourceDeferred
+    _,_,connection=fixtures()
+    snapshot=assess(dict(memoryAvailableBytes=0,tempFreeBytes=0,rssBytes=0))
+    calls=0
+    def guard():
+        nonlocal calls
+        calls+=1
+        if calls==3:raise LocalResourceDeferred(snapshot)
+    with pytest.raises(LocalResourceDeferred):exports.build_selection({'kind':'results','selection':{'eventIds':['edition-1']}},connection,resource_check=guard)
+    assert calls==3

@@ -55,6 +55,8 @@ async def run_playwright_fallback(
     control_error=None
     try:
         async with async_playwright() as playwright:
+            if hooks and hooks.local_before:
+                await hooks.local_before()
             address = await public_ip(settings.allowed_host)
             browser = await playwright.chromium.launch(headless=True, args=[f"--host-resolver-rules=MAP {settings.allowed_host} {address}, MAP * ~NOTFOUND"])
             context = await browser.new_context(user_agent=settings.user_agent, locale="pt-BR", service_workers="block", accept_downloads=False)

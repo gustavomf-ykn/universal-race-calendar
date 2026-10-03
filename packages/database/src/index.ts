@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { CURATION_PIPELINE_VERSION } from "@race-calendar/utils";
+export { inspectLocalResources, assertLocalResources, LocalResourceDeferred } from "@race-calendar/utils";
+export type { LocalResources } from "@race-calendar/utils";
 import { assertTaskLease } from "./lease.js";
 import { capacityGrowth } from "./capacity.js";
 import { editionLinks, editionUrlVariants, crossSourceEditionReason } from "./edition-evidence.js";
@@ -13,7 +15,7 @@ export { listWorkers, workerPresence, newWorkerId } from "./presence.js";
 export { compareSourceObservations, observationOf, comparisonFields } from "./source-comparison.js";
 export type { SourceObservation } from "./source-comparison.js";
 import { observationOf } from "./source-comparison.js";
-export { enqueueTask, claimTask, heartbeatTask, finishTask, publicTask, TaskConflict, stableJson } from "./tasks.js";
+export { enqueueTask, claimTask, heartbeatTask, finishTask, publicTask, TaskConflict, stableJson, deferLocalResourceTask } from "./tasks.js";
 export { catalogCheckpoint, coordinateCatalogSyncs, controlCatalogSync } from "./catalog-continuation.js";
 export { publicCatalogSync } from "./catalog-report.js";
 export { readResultCheckpoint, reserveResultCheckpoint, resultCheckpointRoot } from "./result-checkpoints.js";

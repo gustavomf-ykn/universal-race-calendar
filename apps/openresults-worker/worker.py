@@ -31,6 +31,7 @@ from result_checkpoints import ResultCheckpoints, ResultCheckpointError, cleanup
 from source_observation import edition_observation
 from edition_metadata import IDENTITY_ERRORS, metadata_identity_reason, normalized_location, reviewed_metadata_fields
 from event_aliases import payload as canonical_payload
+from local_resources import inspect_resources, assert_resources, LocalResourceDeferred
 
 
 def storage_headers():
@@ -200,7 +201,8 @@ async def export(task):
     if task['kind']=='export':
         artifact['selection']={'eventIds':[artifact['eventId']],'layout':'consolidated','administrative':False}
         artifact['kind']='results'
-    output,extension,content_type,count=await asyncio.to_thread(build_selection,artifact,connection)
+    output,extension,content_type,count=await asyncio.to_thread(build_selection,artifact,connection,resource_check=assert_resources)
+    assert_resources()
     with connection() as conn:
         fenced(conn,task)
         check_capacity(conn, len(output.getvalue()), 'storage', task)
@@ -251,6 +253,7 @@ async def execute(task):
     progress={'stage':'starting','percent':0}
     checkpoint=None
     async def report(_stage,percent):
+        await asyncio.to_thread(assert_resources)
         # Avoid logging event names, URLs or athlete data from upstream messages.
         progress.update(stage='extracting',percent=percent)
     async def heartbeat():
@@ -261,6 +264,7 @@ async def execute(task):
                 raise RuntimeError('lease_lost')
     async def work():
         nonlocal checkpoint
+        await asyncio.to_thread(assert_resources)
         await asyncio.to_thread(database_capacity, query)
         settings=replace(Settings.from_env(),scrape_concurrency=1,catalog_concurrency=1,metadata_concurrency=1)
         if task['kind']=='catalog-sync':
@@ -314,6 +318,11 @@ async def execute(task):
                 await item
         await asyncio.to_thread(query,'SELECT finish_task(%s,%s,\'completed\',%s,NULL)',(task['id'],task['leaseToken'],Jsonb(progress)))
     except Exception as exc:
+        if isinstance(exc, LocalResourceDeferred):
+            progress.update(stage='local_resource_wait',localResources=exc.snapshot)
+            await asyncio.to_thread(query,'SELECT defer_local_resource_task(%s,%s,%s,%s)',
+                (task['id'],task['leaseToken'],Jsonb(progress),exc.reason))
+            return
         if isinstance(exc, CapacityDeferred):
             progress['stage']='capacity_wait'
             progress['capacityResource']=exc.resource
@@ -370,12 +379,22 @@ async def main():
       await asyncio.to_thread(announce,query,worker_id,'available')
       presence_task=asyncio.create_task(presence_pulse())
       print('Results executor connected; waiting for panel requests.',flush=True)
-      await asyncio.to_thread(cleanup_checkpoints,connection)
+      initial_resources=await asyncio.to_thread(inspect_resources)
+      if not initial_resources['reason']:
+        await asyncio.to_thread(cleanup_checkpoints,connection)
       # Batch runs may finish before the old 60-tick cleanup cadence.
-      if run.batch and os.environ.get('SUPABASE_URL'):
+      if run.batch and os.environ.get('SUPABASE_URL') and not initial_resources['reason']:
         try: await cleanup_exports()
         except (httpx.HTTPError,KeyError): print('Export cleanup pending; verify Storage configuration.',flush=True)
       while not stopped and not stop_requested() and run.can_claim():
+        resources=await asyncio.to_thread(inspect_resources)
+        if resources['reason']:
+            await asyncio.to_thread(announce,query,worker_id,'resource_wait')
+            if run.batch:
+                run.reason='local_resource_wait'
+                break
+            await asyncio.sleep(5)
+            continue
         task=await asyncio.to_thread(claim_next_task)
         if task:
             run.claimed += 1

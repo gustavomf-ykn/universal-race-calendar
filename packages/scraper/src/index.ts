@@ -90,7 +90,13 @@ export class ScraperHttpClient {
         }
         return response;
       } catch (error) {
-        if (error instanceof Error && ["SourceBudgetDeferred", "SourceCircuitOpen", "CapacityDeferred"].includes(error.name)) throw error;
+        if (
+          error instanceof Error &&
+          ["SourceBudgetDeferred", "SourceCircuitOpen", "CapacityDeferred", "LocalResourceDeferred"].includes(
+            error.name,
+          )
+        )
+          throw error;
         lastError = error;
         if (error instanceof ScraperHttpError && error.statusCode && error.statusCode < 500) throw error;
         if (attempt < this.maxRetries) await wait(retryDelay);

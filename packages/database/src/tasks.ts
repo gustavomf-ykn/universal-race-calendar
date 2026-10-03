@@ -2,6 +2,18 @@ import { readFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { prisma } from "./index.js";
 import type { Prisma, CollectionTask } from "@prisma/client";
+import type { LocalResourceDeferred } from "@race-calendar/utils";
+
+export async function deferLocalResourceTask(
+  task: CollectionTask,
+  progress: Prisma.InputJsonValue,
+  error: LocalResourceDeferred,
+) {
+  const counters = { ...(progress as Record<string, unknown>), localResources: error.snapshot };
+  const rows = await prisma.$queryRaw<Array<{ ok: boolean }>>`
+    SELECT defer_local_resource_task(${task.id},${task.leaseToken},${JSON.stringify(counters)}::jsonb,${error.message}) AS ok`;
+  return rows[0]?.ok === true;
+}
 
 export class TaskConflict extends Error {}
 export function stableJson(value: unknown): string {

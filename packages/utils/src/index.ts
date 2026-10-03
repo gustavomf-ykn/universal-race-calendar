@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+export { localResourceLimits, assessLocalResources, inspectLocalResources, assertLocalResources, LocalResourceDeferred } from "./local-resources.js";
+export type { LocalResources, LocalResourceReason } from "./local-resources.js";
 
 export const ADAPTER_VERSION_TICKETSPORTS = atLeastSemver(process.env.ADAPTER_VERSION_TICKETSPORTS, "1.1.0");
 export const ADAPTER_VERSION_CORRIDASBR = atLeastSemver(process.env.ADAPTER_VERSION_CORRIDASBR, "1.1.0");

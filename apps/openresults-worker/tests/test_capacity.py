@@ -8,6 +8,16 @@ from app.services.openresults_client import OpenResultsClient
 from source_requests import database_request_hooks
 
 
+@pytest.fixture(autouse=True)
+def local_admission_ready_for_database_capacity_unit_tests(monkeypatch):
+    # These cases exercise database/Storage deferral, not host disk availability.
+    # Dedicated local-resource tests cover admission and fail-closed behavior.
+    import source_requests
+    ready = lambda: None
+    monkeypatch.setattr(worker, 'assert_resources', ready)
+    monkeypatch.setattr(source_requests, 'assert_resources', ready)
+
+
 @pytest.mark.asyncio
 async def test_unconfigured_worker_retains_task_without_fetching_or_finishing(monkeypatch):
     query = MagicMock(return_value={'decision': 'capacity_unconfigured'})

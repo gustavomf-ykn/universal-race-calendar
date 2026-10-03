@@ -16,6 +16,18 @@ class CapacityDeferred(ScraperError):
         super().__init__(reason)
 
 
+class LocalResourceDeferred(CapacityDeferred):
+    """Propagates through the same parser/transport paths as capacity deferral."""
+    def __init__(self, snapshot):
+        reason = snapshot.get('reason')
+        if reason not in {'local_memory_limit', 'local_disk_limit', 'local_resource_measurement_unavailable'}:
+            raise ValueError('local_resource_control_invalid')
+        self.snapshot = snapshot
+        self.reason = reason
+        self.resource = 'local'
+        ScraperError.__init__(self, reason)
+
+
 class SourceBudgetDeferred(ScraperError):
     def __init__(self, retry_at: datetime):
         super().__init__('source_budget_wait')
@@ -32,6 +44,7 @@ class SourceCircuitOpen(ScraperError):
 class RequestHooks:
     before: Callable[[], Awaitable[None]]
     after: Callable[[int, str | None], Awaitable[None]]
+    local_before: Callable[[], Awaitable[None]] | None = None
 
 
 request_hooks: ContextVar[RequestHooks | None] = ContextVar('source_request_hooks', default=None)

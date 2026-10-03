@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "./index.js";
+import type { LocalResources } from "@race-calendar/utils";
 
 export type PresenceRow = {
   id: string;
@@ -11,15 +12,21 @@ export type PresenceRow = {
   startedAt: Date;
   lastSeenAt: Date;
   ageSeconds: number;
+  resources?: LocalResources | null;
 };
 export function presentWorker(row: PresenceRow) {
   return { ...row, state: row.state === "stopped" || row.ageSeconds > 75 ? "disconnected" : row.state };
 }
-export async function workerPresence(id: string, state: string, activeTaskId: string | null) {
+export async function workerPresence(
+  id: string,
+  state: string,
+  activeTaskId: string | null,
+  resources: LocalResources | null = null,
+) {
   const version = process.env.WORKER_CODE_VERSION ?? process.env.GIT_SHA ?? "unknown";
-  await prisma.$executeRaw`INSERT INTO "WorkerPresence" (id,runtime,capabilities,state,"activeTaskId",version)
-    VALUES (${id},'typescript',ARRAY['ticketsports','corridasbr','maintenance'],${state},${activeTaskId},${version})
-    ON CONFLICT (id) DO UPDATE SET state=EXCLUDED.state,"activeTaskId"=EXCLUDED."activeTaskId","lastSeenAt"=now() WHERE "WorkerPresence".state<>'stopped'`;
+  await prisma.$executeRaw`INSERT INTO "WorkerPresence" (id,runtime,capabilities,state,"activeTaskId",version,resources)
+    VALUES (${id},'typescript',ARRAY['ticketsports','corridasbr','maintenance'],${state},${activeTaskId},${version},${JSON.stringify(resources)}::jsonb)
+    ON CONFLICT (id) DO UPDATE SET state=EXCLUDED.state,"activeTaskId"=EXCLUDED."activeTaskId",resources=EXCLUDED.resources,"lastSeenAt"=now() WHERE "WorkerPresence".state<>'stopped'`;
 }
 export async function listWorkers() {
   const rows = await prisma.$queryRaw<
