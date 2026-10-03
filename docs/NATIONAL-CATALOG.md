@@ -4,6 +4,8 @@ Este documento descreve a branch `codex/national-catalog`. Não constitui aceite
 
 ## Implementado
 
+- [Prioridade compartilhada da fila](QUEUE-PRIORITY.md): compara fontes elegíveis antes de adquirir, favorece pedidos interativos/exportações diante de etapas nacionais recentes e envelhece pedidos antigos. Holds, seleção, bloqueios e exclusão dos executores permanecem. Duas migrations aditivas aplicadas apenas em banco local; desempenho em carga real ainda não homologado.
+
 - Curadoria 1.7.0 utiliza nome/data/cidade/UF da fonte, sem preencher ausência com proposta ou citação do modelo. Data/localização divergentes ficam em revisão; dados válidos anteriores permanecem quando a observação é incompleta. Adaptadores 1.1.0 selecionam JSON-LD por URL, recusam ambiguidade e identidade TicketSports incompatível; uma página relacionada CorridasBR precisa do mesmo nome/data e localização compatível para enriquecer campos, sem substituir uma data primária ausente ou importar modalidade de outra edição. Município explícito Lagoa Santa/Centro Novo permanece reconhecível; endereço de rua não vira cidade. Nenhuma migration adicional, coleta ou correção histórica em massa. Essa validação não comprova cobertura nacional, cruzamento global ou disponibilidade real das fontes.
 
 - Curadoria 1.5.0 confere o país em campos recebidos da fonte ou em uma cláusula da mesma cidade/UF, sem aceitar o valor ou a citação gerados pelo modelo como prova. Divergência do modelo produz country_evidence_mismatch e impede publicação automática; países conflitantes ou rótulos não reconhecidos permanecem desconhecidos. ES em um endereço é UF, não Espanha. Valores de país explicitamente rotulados podem usar códigos reconhecidos. Confirmação administrativa permanece distinta da observação da fonte, com auditoria e proteção.
@@ -90,7 +92,7 @@ PATCH e publicação administrativa antiga relêem a edição e suas referência
 
 Erros 409: `publication_requires_name`, `publication_requires_date_city_state`, `publication_requires_brazil_country`, `publication_requires_confirmed_modality` e `publication_requires_valid_source_reference`. Curadoria automática registra `missing_location` ou `invalid_source_reference` e conserva o candidato em revisão. A mudança não acrescenta migration; depende das migrations anteriores deste PR e exige atualização explícita da API e executores, seguida da publicação do frontend compatível.
 
-Validação estrutural não comprova que cada campo de cidade/data produzido pelo modelo veio da fonte. Essa validação de proveniência, a reconciliação global, recursos locais, agenda e homologação real continuam como etapas obrigatórias para a meta integral.
+Validação estrutural não comprova proveniência. A branch agora confere nome/data/cidade/UF recebidos da fonte e possui reconciliação global durável; os testes controlados desses mecanismos não substituem homologação real. Recursos locais e agenda ainda precisam de implementação.
 
 Consulta limitada CorridasBR/AC em 01/10: dez candidatos, nenhuma próxima página explícita e nomes sem caractere de substituição. Sem persistência ou tarefa. O HTML SC previamente capturado contém `Calendario2.asp`, motivando a correção. Não comprova as 27 UFs.
 
@@ -103,7 +105,7 @@ Antes da varredura nacional real faltam:
 1. Homologar a barreira de capacidade de banco/Storage e os checkpoints nativos de páginas de resultados para extrações que excedam o orçamento de uma janela. Retomada do fallback DOM ainda não implementada.
 2. Validar os recibos e o término OpenResults contra a fonte real, confirmar país/modalidade dos candidatos e testar seu enriquecimento real. Os testes controlados da descoberta não comprovam catálogo completo acessível.
 3. Homologar o cruzamento global de candidatos inicialmente separados e a política de publicação com evidência. A branch tem [varredura durável](CATALOG-RECONCILIATION.md); testes controlados não comprovam cruzamento real ou cobertura.
-4. Agenda semanal durável/fuso/ocorrências perdidas, prioridade manual e resultados recentes como etapa separada.
+4. Implementar agenda semanal durável/fuso/ocorrências perdidas e proteção de memória/disco; homologar a prioridade compartilhada da fila. Resultados recentes permanecem uma etapa separada.
 5. Testes reais progressivos nas três fontes, conciliação de IDs/histórico e aceite pelo navegador após publicação.
 
 Inventário inicial de capacidade implementado e executado em staging somente leitura: [CATALOG-CAPACITY.md](CATALOG-CAPACITY.md). Resultados específicos permanecem em relatório local, fora do repositório público. Medições não confirmam cobertura/país/modalidade nem quota da organização. A ferramenta recusa produção e dados de Storage sem visibilidade completa; medição ausente não vira zero. Barreira de pausa por capacidade implementada na branch e descrita no mesmo documento; integração e validação real continuam pendentes.

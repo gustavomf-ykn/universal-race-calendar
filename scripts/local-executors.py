@@ -52,6 +52,7 @@ def main():
                 if not isinstance(selected, list) or len(selected)>100 or any(not isinstance(i,str) or not i or len(i)>100 for i in selected):
                     raise ValueError('task_selection_invalid')
             db.execute('SELECT id FROM "WorkerPresence" LIMIT 0')
+            db.execute("SELECT task_queue_priority('catalog-sync',now(),now())")
             db.execute('SELECT id FROM "CatalogSync" LIMIT 0')
             db.execute('SELECT id,"parserVersion",sequence FROM "CatalogReconciliation" LIMIT 0')
             db.execute('SELECT "runId","eventId",status FROM "CatalogReconciliationDecision" LIMIT 0')

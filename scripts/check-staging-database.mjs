@@ -9,6 +9,7 @@ try {
   process.env.DATABASE_URL = url.toString();
   ({ prisma } = await import("@race-calendar/database"));
   await prisma.$queryRawUnsafe('SELECT id FROM "CollectionTask" LIMIT 0');
+  await prisma.$queryRawUnsafe("SELECT task_queue_priority('catalog-sync',now(),now())");
   await prisma.$queryRawUnsafe('SELECT id,"parserVersion",sequence FROM "CatalogReconciliation" LIMIT 0');
   await prisma.$queryRawUnsafe('SELECT "runId","eventId",status FROM "CatalogReconciliationDecision" LIMIT 0');
   const cancellation =
