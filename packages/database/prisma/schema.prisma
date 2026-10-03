@@ -248,6 +248,7 @@ model Event {
   @@index([date])
   @@index([city, state, country])
   @@index([canonicalFingerprint])
+  @@index([createdAt, id])
   @@unique([sourceType, sourceExternalId])
 }
 
@@ -482,6 +483,44 @@ model CollectionTask {
 
 model SourceSlot {
   source String @id
+}
+
+model CatalogReconciliation {
+ id String @id
+ ownerId String
+ rootTaskId String @unique
+ status String @default("ready")
+ parserVersion Int @default(1)
+ snapshotAt DateTime @db.Timestamp(3)
+ cursorCreatedAt DateTime? @db.Timestamp(3)
+ cursorEventId String?
+ sequence Int @default(0)
+ activeTaskId String?
+ pauseRequested Boolean @default(false)
+ nextAttemptAt DateTime @default(now()) @db.Timestamptz(3)
+ scannedCount Int @default(0)
+ mergedCount Int @default(0)
+ reviewCount Int @default(0)
+ unmatchedCount Int @default(0)
+ foreignCount Int @default(0)
+ createdAt DateTime @default(now()) @db.Timestamptz(3)
+ updatedAt DateTime @default(now()) @db.Timestamptz(3)
+ finishedAt DateTime? @db.Timestamptz(3)
+ decisions CatalogReconciliationDecision[]
+ @@index([status,nextAttemptAt])
+}
+
+model CatalogReconciliationDecision {
+ id String @id @default(uuid())
+ runId String
+ run CatalogReconciliation @relation(fields: [runId], references: [id], onDelete: Restrict)
+ eventId String
+ status String
+ reason String?
+ details Json @default("{}")
+ createdAt DateTime @default(now()) @db.Timestamptz(3)
+ @@unique([runId,eventId])
+ @@index([runId,status,createdAt])
 }
 
 model CatalogCapacity {

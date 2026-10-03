@@ -102,7 +102,7 @@ Antes da varredura nacional real faltam:
 
 1. Homologar a barreira de capacidade de banco/Storage e os checkpoints nativos de páginas de resultados para extrações que excedam o orçamento de uma janela. Retomada do fallback DOM ainda não implementada.
 2. Validar os recibos e o término OpenResults contra a fonte real, confirmar país/modalidade dos candidatos e testar seu enriquecimento real. Os testes controlados da descoberta não comprovam catálogo completo acessível.
-3. Reconciliação de candidatos inicialmente separados, vínculos com evidência forte e publicação automática estrita rua/trail.
+3. Homologar o cruzamento global de candidatos inicialmente separados e a política de publicação com evidência. A branch tem [varredura durável](CATALOG-RECONCILIATION.md); testes controlados não comprovam cruzamento real ou cobertura.
 4. Agenda semanal durável/fuso/ocorrências perdidas, prioridade manual e resultados recentes como etapa separada.
 5. Testes reais progressivos nas três fontes, conciliação de IDs/histórico e aceite pelo navegador após publicação.
 

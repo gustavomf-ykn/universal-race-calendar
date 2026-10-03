@@ -3,6 +3,7 @@ import { editionFailureCode } from "@race-calendar/database";
 const terminalCatalogErrors = new Set([
   "source_access_blocked", "catalog_region_ignored", "catalog_checkpoint_incompatible", "catalog_end_unconfirmed",
   "catalog_structure_changed", "catalog_invalid_candidates", "catalog_quantity_ignored", "catalog_page_url_invalid",
+  "catalog_reconciliation_checkpoint_incompatible", "catalog_reconciliation_checkpoint_stale", "catalog_reconciliation_request_invalid",
 ]);
 export function taskError(error: unknown): { code: string; retryable: boolean } {
   const edition = editionFailureCode(error);

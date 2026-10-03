@@ -414,6 +414,10 @@ describe.skipIf(!process.env.DATABASE_URL)("unified backend with PostgreSQL and 
       app.inject({ url: "/v1/admin/source-controls", headers: { authorization: `Bearer ${jwt}` } });
     expect((await sourceControls(await token({ app_metadata: { role: "admin" } }))).statusCode).toBe(200);
     expect((await sourceControls(await token({ user_metadata: { role: "admin" } }))).statusCode).toBe(403);
+    const reconciliationScans = (jwt: string) =>
+      app.inject({ url: "/v1/admin/catalog/reconciliations/scans", headers: { authorization: `Bearer ${jwt}` } });
+    expect((await reconciliationScans(await token({ app_metadata: { role: "admin" } }))).statusCode).toBe(200);
+    expect((await reconciliationScans(await token({ user_metadata: { role: "admin" } }))).statusCode).toBe(403);
     expect((await request(await token({ app_metadata: { role: "admin" } }, "other"))).statusCode).toBe(401);
     expect((await request(await token({ app_metadata: { role: "admin" } }, "authenticated", "-1m"))).statusCode).toBe(
       401,

@@ -1,5 +1,7 @@
 # Integração do painel
 
+Contrato em desenvolvimento de [cruzamento global durável](CATALOG-RECONCILIATION.md): início/listagem/detalhes de varreduras, decisões paginadas e pausa/retomada/cancelamento via JWT admin. Depende de duas migrations aditivas e atualização explícita da API/executor TypeScript; ainda sem publicação ou aceite real. Etapa concluída não significa ciclo completo ou cobertura nacional.
+
 Implementação ainda não publicada de descoberta ampliada, continuidade, pausa/retomada e comparação por fonte: [catálogo nacional](NATIONAL-CATALOG.md). O documento distingue o contrato em desenvolvimento da cobertura realmente comprovada. Não habilitar carga nacional antes dos limites e do circuito por fonte.
 
 Painel de homologação: https://runfinder-rithmy.lovable.app. API:

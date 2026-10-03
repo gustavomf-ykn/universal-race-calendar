@@ -13,7 +13,7 @@ Implementação na branch nacional, ainda não publicada ou aplicada ao Supabase
 ## Evidência e preservação
 
 - Data e localização completas compatíveis são obrigatórias. Identidades diferentes da mesma fonte e estados hidden/rejected bloqueiam a união. Correções manuais conflitantes exigem revisão antes de nova prévia.
-- Nome, fingerprint e homepage não autorizam união automática. Link de edição reconhecido e observações validadas são necessários; uma terceira edição correspondente a um segundo link impede decisão automática. A coordenação global da reconciliação ainda precisa ser implementada.
+- Nome, fingerprint e homepage não autorizam união automática. Link de edição reconhecido e observações validadas são necessários; uma terceira edição impede a escolha automática de um par isolado. A branch tem [varredura global durável](CATALOG-RECONCILIATION.md), que exige revalidar o grupo inteiro, ainda sem homologação real.
 - A transação transfere referências, conjuntos de resultados, checkpoints, exportações, versões, extrações, curadorias, pendências de associação, candidatos e auditorias para o destino. O evento anterior passa a alias com seu slug e snapshot; o destino mantém seu ID/slug.
 - Campos revisados são preservados, inclusive nulos intencionais e decisões legadas de publicação. Uma única referência fica principal, selecionada pela prioridade da fonte; o fingerprint é recalculado. Coleções ausentes no destino são completadas; coleções divergentes da origem ficam preservadas no snapshot, sem inventar uma conciliação de preços/distâncias/imagens.
 - IDs/slugs anteriores permanecem reservados. Uniões posteriores redirecionam aliases diretamente ao destino atual. Contagens/listagens têm um único Event por edição unificada.

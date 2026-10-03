@@ -20,6 +20,8 @@ export { readResultCheckpoint, reserveResultCheckpoint, resultCheckpointRoot } f
 export { resolveEventId, resolveEventIds, resolveEventSlug, previewEventReconciliation,
   reconcileEventEditions, ReconciliationConflict } from "./event-reconciliation.js";
 export type { ReconciliationInput } from "./event-reconciliation.js";
+export { startCatalogReconciliation, processCatalogReconciliation, coordinateCatalogReconciliations,
+  controlCatalogReconciliation, publicCatalogReconciliation } from "./catalog-reconciliation.js";
 export {
   requestSource,
   requestSources,

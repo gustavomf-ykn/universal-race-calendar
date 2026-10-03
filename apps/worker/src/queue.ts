@@ -7,6 +7,8 @@ import {
   newWorkerId,
   workerPresence,
   coordinateCatalogSyncs,
+  coordinateCatalogReconciliations,
+  processCatalogReconciliation,
   editionFailureCode,
 } from "@race-calendar/database";
 import { syncCatalog } from "./catalog.js";
@@ -70,6 +72,7 @@ export async function runQueue() {
       // Selective tests must never generate or consume successors outside their approved ID list.
       if (!process.env.WORKER_TASK_SELECTION_FILE && Date.now() - coordinatedAt >= 5000) {
         await coordinateCatalogSyncs();
+        await coordinateCatalogReconciliations();
         coordinatedAt = Date.now();
       }
       const task = await claimTask(["ticketsports", "corridasbr", "maintenance"]);
@@ -103,6 +106,8 @@ export async function runQueue() {
         let status = "completed";
         if (task.kind === "catalog-sync") {
           progress = await syncCatalog(input);
+        } else if (task.kind === "catalog-reconcile") {
+          progress = await processCatalogReconciliation(task);
         } else if (task.kind === "calendar") {
           const importer = task.source === "ticketsports" ? importTicketSportsEvents : importCorridasBREvents;
           const quantity = Math.min(Number(input.quantity ?? 25), 500);

@@ -66,7 +66,7 @@ export function adminEventFilter(q: Record<string, any>) {
 export async function registerOperations(app: FastifyInstance) {
   app.addHook("onRoute", (route) => {
     if (route.url.includes(":id") && route.schema)
-      route.schema.params = object({ id: { type: "string", minLength: 1 } }, ["id"]);
+      route.schema.params ??= object({ id: { type: "string", minLength: 1 } }, ["id"]);
   });
   app.post(
     "/v1/tasks/:id/hold",
@@ -316,6 +316,8 @@ export async function registerOperations(app: FastifyInstance) {
         return reply.code(409).send({ error: "only_failed_or_partial_tasks_can_retry" });
       const mode = (req.body as any).mode;
       const payload = old.payload as any;
+      if (old.kind === "catalog-reconcile")
+        return reply.code(409).send({ error: "use_reconciliation_scan_controls" });
       if (mode === "resume" && old.kind !== "catalog-sync" && !(old.source === "openresults" && old.kind === "extract"))
         return reply.code(409).send({ error: "compatible_checkpoint_unavailable" });
       if (old.kind === "catalog-sync" && mode === "restart")

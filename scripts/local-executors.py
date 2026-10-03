@@ -53,6 +53,10 @@ def main():
                     raise ValueError('task_selection_invalid')
             db.execute('SELECT id FROM "WorkerPresence" LIMIT 0')
             db.execute('SELECT id FROM "CatalogSync" LIMIT 0')
+            db.execute('SELECT id,"parserVersion",sequence FROM "CatalogReconciliation" LIMIT 0')
+            db.execute('SELECT "runId","eventId",status FROM "CatalogReconciliationDecision" LIMIT 0')
+            if not db.execute("SELECT 1 FROM pg_constraint WHERE conrelid='\"CatalogReconciliation\"'::regclass AND conname='CatalogReconciliation_status_check' AND pg_get_constraintdef(oid) LIKE '%cancelled%'").fetchone():
+                raise ValueError('catalog_reconciliation_schema_incomplete')
             db.execute('SELECT id FROM "AdminAudit" LIMIT 0')
             db.execute('SELECT "administrativeReview" FROM "Event" LIMIT 0')
             db.execute('SELECT observation,"lastValidatedAt" FROM "EventSourceReference" LIMIT 0')
