@@ -18,6 +18,8 @@ import { observationOf } from "./source-comparison.js";
 export { enqueueTask, claimTask, heartbeatTask, finishTask, publicTask, TaskConflict, stableJson, deferLocalResourceTask } from "./tasks.js";
 export { catalogCheckpoint, coordinateCatalogSyncs, controlCatalogSync } from "./catalog-continuation.js";
 export { publicCatalogSync } from "./catalog-report.js";
+export { weeklyDefaults, readWeeklyCatalog, configureWeeklyCatalog, coordinateWeeklyCatalog, cancelWeeklyOccurrence } from "./catalog-weekly.js";
+export type { WeeklyConfiguration } from "./catalog-weekly.js";
 export { readResultCheckpoint, reserveResultCheckpoint, resultCheckpointRoot } from "./result-checkpoints.js";
 export { resolveEventId, resolveEventIds, resolveEventSlug, previewEventReconciliation,
   reconcileEventEditions, ReconciliationConflict } from "./event-reconciliation.js";

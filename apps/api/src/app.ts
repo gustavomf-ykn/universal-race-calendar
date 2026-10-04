@@ -3,6 +3,7 @@ import { registerSourceComparison } from "./source-comparison.js";
 import { registerSourceControls } from "./source-controls.js";
 import { registerCapacity } from "./capacity.js";
 import { registerReconciliation } from "./reconciliation.js";
+import { registerWeeklyCatalog } from "./catalog-weekly.js";
 import { registerBackend, acceptTask } from "./backend.js";
 import { installLegacyContracts } from "./legacy-contracts.js";
 import { installCalendarContracts } from "./contracts.js";
@@ -741,6 +742,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   await registerSourceControls(app);
   await registerCapacity(app);
   await registerReconciliation(app);
+  await registerWeeklyCatalog(app);
   return app;
 }
 

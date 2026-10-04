@@ -87,6 +87,8 @@ Progresso comum tem stage, percent ou processed/failed/requested; catálogo incl
 
 ## Retenção
 
+Na branch nacional, não remover recibos/tarefas de ciclos de descoberta ou cruzamento ainda ativos: a agenda semanal depende desses históricos para distinguir enriquecimento, falhas vigentes e confirmação do executor. O exemplo de limpeza abaixo é legado; antes de aplicá-lo após a integração nacional, excluir da seleção as tarefas vinculadas aos ciclos não terminais e conservar a evidência de cobertura/auditoria necessária. Nenhuma limpeza é executada automaticamente por esta orientação.
+
 Eventos e resultados permanecem até ação administrativa deliberada; não têm TTL. Exclusão de CollectionTask não apaga ResultSet/RaceResult. Exportações expiram 24h após solicitação; API deixa de assinar imediatamente. Worker percorre artefatos expirados em lotes e apaga objetos, inclusive uploads órfãos de leases antigos. Se Storage ficar indisponível, acesso continua expirado e limpeza física será repetida. Histórico operacional recomendado: 30 dias; chave de idempotência deixa de existir quando o histórico é removido.
 
 Limpeza controlada, com workers ativos e sem remover tarefas queued/running:
@@ -100,6 +102,8 @@ DELETE FROM "CollectionTask" WHERE status IN ('completed','partial','failed','ca
 Os registros ExportArtifact são mantidos para permitir nova varredura de uploads tardios. Não apagar resultados nem a edição ao fazer manutenção de tarefas.
 
 ## Diagnóstico e rollback
+
+Atualização semanal na branch nacional: [CATALOG-WEEKLY.md](CATALOG-WEEKLY.md). Agenda desativada por padrão; exige migration aditiva, API/executores compatíveis e Frontend #3 publicado após integração autorizada. Salvar habilitada pelo painel permite criar etapas das três fontes no horário enquanto a sessão contínua local estiver aberta. Desativar novas ocorrências e cancelar o ciclo ativo são controles distintos. Não habilitar schedule GitHub, serviço/autostart ou ping de suspensão.
 
 `GET /health` verifica processo, não banco. `GET /v1/version` identifica SHA e backendVersion=2.0.0; compare com imagem/branch antes de disparar coletas. `/docs` e `/v1/openapi.json` documentam o serviço.
 

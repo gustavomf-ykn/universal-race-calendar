@@ -333,6 +333,12 @@ export async function registerOperations(app: FastifyInstance) {
           const prior = await tx.collectionTask.findUnique({
             where: { ownerId_idempotencyKey: { ownerId: req.principal!.id, idempotencyKey: key } },
           });
+          if (typeof payload.syncId === "string" && !prior) {
+            const cycle = await tx.$queryRaw<Array<{ status: string; cancelled: boolean }>>`
+              SELECT status,options @> '{"weeklyCancelled":true}'::jsonb AS cancelled
+              FROM "CatalogSync" WHERE id=${payload.syncId} FOR UPDATE`;
+            if (cycle[0]?.status === "cancelled" || cycle[0]?.cancelled) throw new TaskConflict("weekly_occurrence_cancelled");
+          }
           const rootId = old.source === "openresults" && old.kind === "extract" && mode === "resume"
             ? resultCheckpointRoot(old) : null;
           if (rootId && !prior) await reserveResultCheckpoint(old, tx);

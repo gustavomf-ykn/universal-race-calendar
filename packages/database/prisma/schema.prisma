@@ -738,6 +738,48 @@ model CatalogSync {
  createdAt DateTime @default(now()) @db.Timestamptz(6)
  updatedAt DateTime @default(now()) @db.Timestamptz(6)
 }
+
+model CatalogWeeklySchedule {
+ id Int @id
+ enabled Boolean @default(false)
+ revision Int @default(0)
+ coordinatorVersion Int @default(1)
+ ownerId String @default("")
+ weekday Int @default(1)
+ hour Int @default(8)
+ minute Int @default(0)
+ options Json @default("{}")
+ nextLocalDate String?
+ nextScheduledAt DateTime? @db.Timestamptz(3)
+ lastSuccessAt DateTime? @db.Timestamptz(3)
+ waitReason String?
+ updatedAt DateTime @default(now()) @db.Timestamptz(3)
+ occurrences CatalogWeeklyOccurrence[]
+}
+
+model CatalogWeeklyOccurrence {
+ id String @id
+ scheduleId Int @default(1)
+ schedule CatalogWeeklySchedule @relation(fields: [scheduleId], references: [id], onDelete: Restrict)
+ revision Int
+ coordinatorVersion Int @default(1)
+ ownerId String
+ localDate String
+ firstDueLocalDate String
+ scheduledAt DateTime @db.Timestamptz(3)
+ coalescedWeeks Int @default(0)
+ shiftedMinutes Int @default(0)
+ status String @default("discovery")
+ options Json
+ sourceSyncs Json
+ reconciliationId String?
+ summary Json @default("{}")
+ createdAt DateTime @default(now()) @db.Timestamptz(3)
+ updatedAt DateTime @default(now()) @db.Timestamptz(3)
+ finishedAt DateTime? @db.Timestamptz(3)
+ @@unique([scheduleId,revision,localDate])
+ @@index([scheduleId,createdAt])
+}
 model AdminAudit {
  id String @id @default(uuid())
  actorId String

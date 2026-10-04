@@ -1,4 +1,4 @@
-"""One foreground supervisor. No scheduler, service or Windows startup registration."""
+"""Foreground supervisor; calendar worker coordinates only explicitly enabled weekly schedules."""
 import json
 import os
 from pathlib import Path
@@ -55,6 +55,10 @@ def main():
             db.execute("SELECT 'defer_local_resource_task(text,text,jsonb,text)'::regprocedure")
             db.execute("SELECT task_queue_priority('catalog-sync',now(),now())")
             db.execute('SELECT id FROM "CatalogSync" LIMIT 0')
+            weekly = db.execute('SELECT enabled,"nextScheduledAt","coordinatorVersion" FROM "CatalogWeeklySchedule" WHERE id=1').fetchone()
+            if not weekly or weekly[2] != 1:
+                raise ValueError('weekly_schedule_schema_incompatible')
+            db.execute('SELECT "sourceSyncs","reconciliationId" FROM "CatalogWeeklyOccurrence" LIMIT 0')
             db.execute('SELECT id,"parserVersion",sequence FROM "CatalogReconciliation" LIMIT 0')
             db.execute('SELECT "runId","eventId",status FROM "CatalogReconciliationDecision" LIMIT 0')
             if not db.execute("SELECT 1 FROM pg_constraint WHERE conrelid='\"CatalogReconciliation\"'::regclass AND conname='CatalogReconciliation_status_check' AND pg_get_constraintdef(oid) LIKE '%cancelled%'").fetchone():
@@ -83,6 +87,8 @@ def main():
             log('Outro executor recente ou tarefa em execução detectada. Não iniciamos concorrentes; confira o painel e aguarde a presença expirar.')
             return 2
         log(f'Conexão aprovada. {len(pending)} pedidos elegíveis; {protected} pedidos protegidos; nenhum executor recente.')
+        if weekly[0] and selected is None:
+            log('Agenda semanal habilitada pelo painel: poderá criar etapas das três fontes enquanto esta sessão estiver aberta.')
         if selected is not None:
             log('Modo seletivo: somente IDs do arquivo informado poderão ser adquiridos.')
         for tid, kind, source, payload in pending:

@@ -106,6 +106,8 @@ export async function controlCatalogSync(id: string, actorId: string, action: "p
         throw new TaskConflict("idempotency_conflict");
       return sync;
     }
+    if (sync.status === "cancelled" || (sync.options as { weeklyCancelled?: boolean }).weeklyCancelled)
+      throw new TaskConflict("weekly_occurrence_cancelled");
     if (["completed", "limited"].includes(sync.status)) throw new TaskConflict("scope_completed_or_limited");
     const options = sync.options as Record<string, unknown>;
     const where = { kind: "catalog-sync", payload: { path: ["syncId"], equals: id } };

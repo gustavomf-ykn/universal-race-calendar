@@ -14,11 +14,11 @@ const terminal = (run: CatalogReconciliation) =>
 const taskWhere = (id: string) => ({ kind: "catalog-reconcile", payload: { path: ["runId"], equals: id } });
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 
-export async function startCatalogReconciliation(ownerId: string, key: string, reason: string) {
+export async function startCatalogReconciliation(ownerId: string, key: string, reason: string, db?: Prisma.TransactionClient) {
   if (!ownerId || !key || key.length > 128 || reason.trim().length < 3 || reason.length > 500)
     throw new TaskConflict("reconciliation_request_invalid");
   const id = "reconcile_" + hash(JSON.stringify([ownerId, key])).slice(0, 32);
-  return prisma.$transaction(async (tx) => {
+  const start = async (tx: Prisma.TransactionClient) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('race_catalog_reconciliation_start',0))`;
     const previous = await tx.catalogReconciliation.findUnique({ where: { id } });
     if (!previous) {
@@ -58,7 +58,8 @@ export async function startCatalogReconciliation(ownerId: string, key: string, r
         },
       });
     return { run: publicCatalogReconciliation(run), taskId: task.id };
-  });
+  };
+  return db ? start(db) : prisma.$transaction(start);
 }
 export function publicCatalogReconciliation(run: CatalogReconciliation) {
   return {

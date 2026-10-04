@@ -8,6 +8,7 @@ import {
   workerPresence,
   coordinateCatalogSyncs,
   coordinateCatalogReconciliations,
+  coordinateWeeklyCatalog,
   processCatalogReconciliation,
   editionFailureCode,
   inspectLocalResources,
@@ -101,6 +102,7 @@ export async function runQueue() {
       }
       // Selective tests must never generate or consume successors outside their approved ID list.
       if (!process.env.WORKER_TASK_SELECTION_FILE && Date.now() - coordinatedAt >= 5000) {
+        if (!run.options.batch) await coordinateWeeklyCatalog();
         await coordinateCatalogSyncs();
         await coordinateCatalogReconciliations();
         coordinatedAt = Date.now();
