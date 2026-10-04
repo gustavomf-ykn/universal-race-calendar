@@ -1,6 +1,8 @@
 # Homologação race-platform-staging
 
-API de homologação: https://universal-race-calendar.onrender.com (Render Free). Workers executados manualmente no GitHub Actions; agendamentos não foram habilitados. Comparação de hospedagem: [HOSTING.md](HOSTING.md).
+API de homologação: https://universal-race-calendar.onrender.com (Render Free). A rodada inicial abaixo usou workflows manuais; a operação atual prevista usa executores locais e os testes nacionais não usam runners para coleta. Agendas permanecem desativadas. Comparação de hospedagem: [HOSTING.md](HOSTING.md).
+
+Em 03/10/2026, consulta pública `/v1/version` confirmou API no commit `91e9941c91ac7a4230ddd55ae3e11876aeb3c1d1`, curadoria 1.2.0 e adaptadores 1.0.0. Os PRs nacionais Backend #12 e Frontend #3 ainda não foram integrados/publicados. A agenda persistida, cruzamento global, proteções e controles descritos em [NATIONAL-CATALOG.md](NATIONAL-CATALOG.md) e [CATALOG-WEEKLY.md](CATALOG-WEEKLY.md) são implementação de branch, não funcionalidades homologadas nesse serviço. Os relatos seguintes são históricos e não substituem inventário atualizado da fila, versões ou um novo aceite real.
 
 ## Complemento em 20/09/2026 — API hospedada e worker local
 

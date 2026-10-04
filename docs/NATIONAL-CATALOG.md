@@ -60,7 +60,7 @@ OpenResults: recibo com `scope=source_catalog`, páginas em `requested`, `rawCou
 
 `POST /v1/admin/syncs/{id}/continue` continua manualmente. Replay devolve a tarefa original mesmo depois de avançar checkpoint. Rejeita ciclo pausado, concluído/limitado ou com passo ativo.
 
-`GET /v1/admin/catalog/events/{id}/comparison` mostra valores canônicos e validados por fonte para nome, data, cidade, UF, país, modalidade e URLs. Compara referências já associadas; a união manual de registros separados utiliza a prévia/confirmacão documentada em EVENT-RECONCILIATION.md. Reconciliação automática do catálogo inteiro ainda está pendente.
+`GET /v1/admin/catalog/events/{id}/comparison` mostra valores canônicos e validados por fonte para nome, data, cidade, UF, país, modalidade e URLs. Compara referências já associadas; a união manual de registros separados utiliza a prévia/confirmacão documentada em EVENT-RECONCILIATION.md. A [varredura durável do catálogo inteiro](CATALOG-RECONCILIATION.md) está implementada na branch, com união por evidências e revisão de ambiguidades; integração e aceite real continuam pendentes.
 
 `PATCH /v1/admin/catalog/events/{id}` permite acrescentar country (ISO-2 maiúsculo ou null) aos campos revisáveis existentes, com reason obrigatório. Country=BR exige confirmação administrativa na fonte; não é valor padrão do formulário. Publicar sem BR retorna 409 publication_requires_brazil_country. Campos de país intencionalmente nulos também ficam protegidos pela auditoria. Confirmação remove avisos de país desconhecido/conflitante do canônico, mantendo os dados originais na proveniência. Confirmar país não confirma modalidade nem correspondência entre fontes.
 
