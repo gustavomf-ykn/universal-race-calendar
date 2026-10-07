@@ -1,23 +1,27 @@
 from unittest.mock import MagicMock
 import pytest
 import worker
-from app.models import AccessBlockedError
+from app.models import AccessBlockedError, StructureChangedError
+from edition_metadata import IDENTITY_ERRORS
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('error,expected,outcome,disable_retry', [
     (AccessBlockedError('upstream-private-detail'), 'source_access_blocked', 'failed', True),
+    (StructureChangedError('upstream-private-detail'), 'source_structure_changed', 'failed', True),
     (ValueError('incomplete_extraction'), 'incomplete_extraction', 'partial', False),
     (RuntimeError('upstream-private-detail'), 'collection_failed', 'failed', False),
+    *[(ValueError(code), code, 'failed', True) for code in sorted(IDENTITY_ERRORS)],
 ])
 async def test_worker_records_safe_failure_and_does_not_retry_blocked_source(monkeypatch, error, expected, outcome, disable_retry):
-    async def scrape(*args):
+    async def scrape(*args, **kwargs):
         raise error
     monkeypatch.setattr(worker.OpenResultsScraper, 'scrape', scrape)
-    query = MagicMock()
+    query = MagicMock(return_value={'decision':'allowed'})
     connection = MagicMock()
     monkeypatch.setattr(worker, 'query', query)
     monkeypatch.setattr(worker, 'connection', connection)
+    monkeypatch.setattr(worker.ResultCheckpoints, 'invalidate', lambda *args: None)
     await worker.execute({'id': 'test-task', 'leaseToken': 'test-lease', 'kind': 'extract', 'payload': {'url': 'https://openresults.run/evento/test/'}})
     params = query.call_args.args[1]
     assert params[2] == outcome and params[4] == expected

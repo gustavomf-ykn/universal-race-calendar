@@ -38,6 +38,7 @@ export const matchSchema = obj({
   date: ns,
   city: ns,
   state: ns,
+  country: ns,
   status: { enum: ["pending", "resolved"] },
   eventId: ns,
   resolvedBy: ns,

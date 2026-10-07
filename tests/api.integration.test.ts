@@ -9,6 +9,15 @@ const ticketsportsFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports
   string,
   unknown
 >;
+// The list, detail response and linked registration page describe one provider identity.
+ticketsportsFixture.eventId = "74641";
+ticketsportsFixture.uri = "https://www.ticketsports.com.br/e/meia-maratona-florianopolis-74641";
+// This controlled positive-publication case supplies explicit surface evidence.
+// The original fixture without evidence remains covered by mock-ai-pipeline.
+ticketsportsFixture.eventContents = [
+  ...(ticketsportsFixture.eventContents as object[]),
+  { title: "Modalidade", description: "<p>Corrida de rua.</p>" },
+];
 const ticketsportsListFixture = JSON.parse(readFileSync("tests/fixtures/ticketsports-list.json", "utf-8")) as Array<
   Record<string, unknown>
 >;
@@ -36,7 +45,7 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     await prisma.$disconnect();
   });
 
-  it("creates sources, exposes published events, skips unchanged content, and links exact duplicates", async () => {
+  it("creates sources, exposes published events, skips unchanged content, and reviews unproven duplicates", async () => {
     const health = await app.inject({ method: "GET", url: "/health" });
     expect(health.statusCode).toBe(200);
 
@@ -66,7 +75,7 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
         metadata: {
           title: "Meia Maratona de Florianopolis",
           importantText:
-            "Meia Maratona de Florianopolis. Data 16/08/2026. Florianopolis, SC, Brasil. Distancias 5 km e 21 km. Inscricoes em https://example.test/inscricao.",
+            "Meia Maratona de Florianopolis. Corrida de rua. Data 16/08/2026. Florianopolis, SC, Brasil. Distancias 5 km e 21 km. Inscricoes em https://example.test/inscricao.",
         },
       },
     });
@@ -74,8 +83,21 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     const source = createdSource.json<{ id: string }>();
 
     const job = await runSourceCheck(source.id);
-    expect(job.status).toBe("success");
+    expect(job.status).toBe("manual_review");
+    expect(job.reasons).toContain("invalid_source_reference");
     eventId = job.eventId!;
+
+    // A mock:// transport does not identify an approved edition. Keep that
+    // candidate in review, then exercise explicit audited publication using a
+    // registered controlled OpenResults URL identity, without fetching it.
+    expect((await app.inject({ method: "GET", url: `/v1/events/${eventId}` })).statusCode).toBe(404);
+    const reviewedSource = await prisma.source.create({ data: { name: "Referência controlada", adapter: "openresults",
+      externalId: "url:api-publication-fixture", url: "https://openresults.run/evento/api-publication-fixture/", type: "official_page" } });
+    await prisma.eventSourceReference.create({ data: { eventId, sourceId: reviewedSource.id, sourceType: "openresults",
+      sourceExternalId: reviewedSource.externalId!, url: reviewedSource.url } });
+    const publish = await app.inject({ method: "POST", url: `/v1/admin/events/${eventId}/publish`,
+      headers: { "x-api-key": "test-internal-key" } });
+    expect(publish.statusCode, publish.body).toBe(200);
 
     const list = await app.inject({ method: "GET", url: "/v1/events?city=Florianopolis" });
     expect(list.statusCode).toBe(200);
@@ -105,16 +127,19 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
         metadata: {
           title: "Meia Maratona de Florianopolis",
           importantText:
-            "Meia Maratona de Florianopolis. Data 16/08/2026. Florianopolis, SC, Brasil. Distancias 5 km e 21 km. Inscricoes em https://example.test/inscricao.",
+            "Meia Maratona de Florianopolis. Corrida de rua. Data 16/08/2026. Florianopolis, SC, Brasil. Distancias 5 km e 21 km. Inscricoes em https://example.test/inscricao.",
         },
       },
     });
     const duplicateSource = duplicateSourceResponse.json<{ id: string }>();
     const duplicateJob = await runSourceCheck(duplicateSource.id);
-    expect(duplicateJob.status).toBe("success");
-    expect(duplicateJob.eventId).toBe(eventId);
-    expect(duplicateJob.reasons).not.toContain("possible_duplicate");
-    expect(await prisma.event.count()).toBe(1);
+    expect(duplicateJob.status).toBe("manual_review");
+    expect(duplicateJob.eventId).not.toBe(eventId);
+    expect(duplicateJob.reasons).toContain("possible_duplicate");
+    expect(await prisma.event.count()).toBe(2);
+    expect(await prisma.event.findUnique({ where: { id: duplicateJob.eventId! } })).toMatchObject({
+      publicationStatus: "pending_review", duplicateOfEventId: eventId,
+    });
   });
 
   it("imports TicketSports street races and exposes them through the public API", async () => {
@@ -209,7 +234,7 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
       eventContents: [
         {
           title: "O Evento",
-          description: "<p>Meia Maratona de Florianopolis atualizada com percursos de 5 km e 10 km.</p>",
+          description: "<p>Meia Maratona de Florianopolis atualizada: corrida de rua com percursos de 5 km e 10 km.</p>",
         },
       ],
     };
@@ -249,7 +274,10 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
           async getText(url) {
             if (url.includes("escolha=99123")) {
               return corridasBRDetailFixture
+                // Explicit source evidence is required for this positive cross-source fixture.
+                .replace("<table>", "<table><tr><td>País:</td><td>Brasil</td></tr>")
                 .replaceAll("98765", "74641")
+                .replaceAll("Campinas", "Florianopolis")
                 .replaceAll("Corrida das Águas 2026", "Meia Maratona de Florianopolis");
             }
             return corridasBRDetailFixture;
@@ -275,12 +303,13 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
       },
     ];
     const first = await importCorridasBREvents({ registry, discoverEvents: exclusiveDiscovery, delayMs: 0, force: true });
-    expect(first.publishedEvents).toBe(1);
+    expect(first.publishedEvents).toBe(0);
     const exclusive = await prisma.event.findFirstOrThrow({
       where: { sourceType: "corridasbr", sourceExternalId: "98765" },
       include: { sourceReferences: true },
     });
-    expect(exclusive.publicationStatus).toBe("published");
+    expect(exclusive.publicationStatus).toBe("pending_review");
+    expect(exclusive.modality).toBe("unknown");
     expect(exclusive.mainImageUrl).toBeNull();
     expect(exclusive.sourceReferences).toHaveLength(1);
 
@@ -290,6 +319,9 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     const ticketSports = await prisma.event.findFirstOrThrow({ where: { sourceType: "ticketsports", sourceExternalId: "74641" } });
     // Both fixtures represent the same future edition, independent of the import cutoff.
     await prisma.event.update({ where: { id: ticketSports.id }, data: { date: new Date("2026-10-18") } });
+    await prisma.eventSourceReference.updateMany({ where: { eventId: ticketSports.id, sourceType: "ticketsports" },
+      data: { observation: { date: "2026-10-18", city: ticketSports.city, state: ticketSports.state, country: ticketSports.country },
+        lastValidatedAt: new Date() } });
     const countBeforeLink = await prisma.event.count();
     await importCorridasBREvents({
       registry,
@@ -403,7 +435,7 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
   });
 
   it("supports admin event, curation job, and import run endpoints", async () => {
-    const event = await prisma.event.findFirstOrThrow();
+    const event = await prisma.event.findFirstOrThrow({ where: { sourceType: "ticketsports", sourceExternalId: "74641" } });
 
     const unauthorized = await app.inject({ method: "GET", url: "/v1/admin/events" });
     expect(unauthorized.statusCode).toBe(401);

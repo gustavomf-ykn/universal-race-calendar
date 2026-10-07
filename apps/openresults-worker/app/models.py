@@ -64,7 +64,7 @@ class EventMetadata:
     expected_total: int | None = None
     event_id: str | None = None
     end_date: date | None = None
-    country: str = "BR"
+    country: str = ""
     address: str = ""
     location_name: str = ""
     latitude: float | None = None
@@ -116,6 +116,7 @@ class ExtractionResult:
     by_group: dict[str, int]
     warnings: list[str] = field(default_factory=list)
     extracted_at: datetime | None = None
+    checkpoint_root_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -128,7 +129,7 @@ class EventSummary:
     event_slug: str
     event_id: str | None = None
     end_date: date | None = None
-    country: str = "BR"
+    country: str = ""
     expected_total: int | None = None
     modalities: list[dict[str, Any]] = field(default_factory=list)
     raw_metadata: dict[str, Any] = field(default_factory=dict)

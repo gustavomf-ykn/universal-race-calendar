@@ -5,6 +5,11 @@ RUN pip install --no-cache-dir -r requirements-worker.txt && playwright install 
 COPY apps/openresults-worker/app ./app
 COPY apps/openresults-worker/worker.py apps/openresults-worker/batch.py apps/openresults-worker/browser_smoke.py ./
 COPY apps/openresults-worker/presence.py apps/openresults-worker/catalog_sync.py apps/openresults-worker/edition_metadata.py apps/openresults-worker/selection_export.py ./
+COPY apps/openresults-worker/source_requests.py apps/openresults-worker/source_observation.py apps/openresults-worker/capacity.py apps/openresults-worker/result_checkpoints.py apps/openresults-worker/event_aliases.py ./
+COPY apps/openresults-worker/local_resources.py ./
+# Check imports used at startup and deferred by inspection/export paths, without
+# connecting to the database or a source. A successful image build must include them.
+RUN python -c "import worker, catalog_sync, edition_metadata, selection_export"
 RUN useradd --create-home runner && cp -r /root/.cache /home/runner/.cache && chown -R runner:runner /home/runner/.cache
 USER runner
 ENV PYTHONUNBUFFERED=1

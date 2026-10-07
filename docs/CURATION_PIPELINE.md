@@ -21,14 +21,25 @@ Publica automaticamente se:
 
 - tem nome;
 - tem data;
-- tem cidade/estado/pais ou localizacao clara;
+- tem país BR confirmado na extração;
+- tem modalidade road/trail comprovada no título/texto da fonte;
+- tem cidade não vazia, UF entre as 27 brasileiras e país BR; nome do local não substitui cidade/UF;
 - tem `registrationUrl` ou `officialUrl`;
+- tem referência reconhecida da edição em TicketSports, CorridasBR ou OpenResults, com identidade e UF compatíveis quando verificáveis;
 - `confidence >= AUTO_PUBLISH_MIN_CONFIDENCE`;
 - nao tem warning critico.
 
 Caso contrario, `publicationStatus = pending_review`.
 
+Curadoria 1.7.0 mantém os requisitos estruturais compartilhados com a publicação administrativa e valida nome/data/cidade/UF contra a extração recebida da fonte. Valores ou citações gerados pelo modelo não preenchem campos ausentes; divergências de data/localização geram `date_evidence_mismatch`/`location_evidence_mismatch` e revisão. Datas TicketSports `realDate`/`date` conflitantes permanecem desconhecidas. Data impossível, cidade com navegação/caracteres corrompidos, UF inválida, homepage e URL de edição incompatível não permitem publicação. PATCH e rota antiga de publicação relêem edição e referências sob lock. Revisão manual pode confirmar modalidades fora do escopo automático com motivo e auditoria, mas não pode ignorar esses requisitos estruturais.
+
+Adaptadores 1.1.0 selecionam JSON-LD por URL da página quando há vários eventos; ambiguidade e URL incompatível não usam o primeiro evento nem fallback textual para data/localização. URL declarada prevalece sobre `@id`. CorridasBR conserva a data primária e aceita dados de página relacionada apenas com nome/data/localização conhecidos compatíveis; página relacionada não fornece uma data primária ausente. Texto composto não importa modalidade de outra edição. TicketSports recusa payload com ID/URL diferente do solicitado, com erro terminal sanitizado. Um município explícito como Lagoa Santa não é descartado como venue; endereço de rua continua sem cidade confirmada. As versões mínimas impedem cache anterior mesmo com variável antiga configurada. Não inicia nova coleta nem corrige o histórico em massa; nenhuma migration adicional nesta revisão. Atualizar API e executor TypeScript explicitamente após integração autorizada.
+
+Curadoria 1.4.0 não classifica nomes genéricos (corrida, run, maratona), endereços com Rua/asfalto ou links de navegação como corrida de rua. Texto gerado pelo modelo não é evidência de modalidade. Rua+trail vira mixed para revisão; kids/walk/unknown também permanecem candidatos em revisão. Em edições mistas, modalidade de distância precisa de trecho presente na fonte com a quilometragem correspondente. Esses controles não completam a política de localização/referência nem os caminhos Python ainda em desenvolvimento. Não corrigem registros históricos em massa.
+
 Warnings criticos iniciais incluem data/local conflitante e cidade suspeita. Na TicketSports, endereco que parece rua, avenida, parque ou venue sem cidade clara nao deve virar `city`; o evento fica para revisao.
+
+Curadoria 1.5.0 também confere o país contra dados recebidos da fonte, independentemente do valor/citação propostos pelo modelo. `country_evidence_mismatch` é crítico; campos desconhecidos não ganham BR. CorridasBR preserva rótulos País/Country, sem usar UF/domínio como confirmação. Página oficial vinculada só confirma país via JSON-LD quando data/cidade/UF são compatíveis. Texto composto de páginas diferentes não confirma país. ISO com horário separado por T preserva o dia informado. Países/rótulos não reconhecidos ficam em revisão. Confirmação humana auditada é uma decisão administrativa, não uma alteração da observação original.
 
 Distancias extraidas de texto sao canonizadas por quilometragem. Variantes como `5K`, `5 km` e `5 Km` viram uma unica distancia `5 km`.
 
@@ -40,7 +51,7 @@ Valores iniciais:
 
 - `ADAPTER_VERSION_TICKETSPORTS=1.0.0`
 - `CANONICAL_SCHEMA_VERSION=1.0.0`
-- `CURATION_PIPELINE_VERSION=1.2.0`
+- `CURATION_PIPELINE_VERSION=1.7.0`
 
 ## Dry-run e batch
 

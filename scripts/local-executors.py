@@ -1,4 +1,4 @@
-"""One foreground supervisor. No scheduler, service or Windows startup registration."""
+"""Foreground supervisor; calendar worker coordinates only explicitly enabled weekly schedules."""
 import json
 import os
 from pathlib import Path
@@ -51,20 +51,44 @@ def main():
                 selected = json.loads(Path(selection_file).read_text(encoding='utf-8'))
                 if not isinstance(selected, list) or len(selected)>100 or any(not isinstance(i,str) or not i or len(i)>100 for i in selected):
                     raise ValueError('task_selection_invalid')
-            db.execute('SELECT id FROM "WorkerPresence" LIMIT 0')
+            db.execute('SELECT id,resources FROM "WorkerPresence" LIMIT 0')
+            db.execute("SELECT 'defer_local_resource_task(text,text,jsonb,text)'::regprocedure")
+            db.execute("SELECT task_queue_priority('catalog-sync',now(),now())")
             db.execute('SELECT id FROM "CatalogSync" LIMIT 0')
+            weekly = db.execute('SELECT enabled,"nextScheduledAt","coordinatorVersion" FROM "CatalogWeeklySchedule" WHERE id=1').fetchone()
+            if not weekly or weekly[2] != 1:
+                raise ValueError('weekly_schedule_schema_incompatible')
+            db.execute('SELECT "sourceSyncs","reconciliationId" FROM "CatalogWeeklyOccurrence" LIMIT 0')
+            db.execute('SELECT id,"parserVersion",sequence FROM "CatalogReconciliation" LIMIT 0')
+            db.execute('SELECT "runId","eventId",status FROM "CatalogReconciliationDecision" LIMIT 0')
+            if not db.execute("SELECT 1 FROM pg_constraint WHERE conrelid='\"CatalogReconciliation\"'::regclass AND conname='CatalogReconciliation_status_check' AND pg_get_constraintdef(oid) LIKE '%cancelled%'").fetchone():
+                raise ValueError('catalog_reconciliation_schema_incomplete')
             db.execute('SELECT id FROM "AdminAudit" LIMIT 0')
             db.execute('SELECT "administrativeReview" FROM "Event" LIMIT 0')
+            db.execute('SELECT observation,"lastValidatedAt" FROM "EventSourceReference" LIMIT 0')
+            db.execute('SELECT source,"blockedAt" FROM "SourceRequestControl" LIMIT 0')
+            db.execute("SELECT 'reserve_source_request(text)'::regprocedure, 'defer_source_task(text,text,jsonb,timestamp with time zone,boolean)'::regprocedure")
+            db.execute('SELECT id,"confirmedAt" FROM "CatalogCapacity" LIMIT 0')
+            db.execute('SELECT "rootTaskId","parserVersion" FROM "ResultCheckpoint" LIMIT 0')
+            db.execute('SELECT "nextOffset" FROM "ResultCheckpointGroup" LIMIT 0')
+            db.execute('SELECT "contentHash" FROM "ResultCheckpointPage" LIMIT 0')
+            db.execute('SELECT "recordKey" FROM "ResultCheckpointRow" LIMIT 0')
+            db.execute('SELECT country FROM "SourceMatch" LIMIT 0')
+            db.execute('SELECT id,"canonicalEventId","oldSlug" FROM "EventAlias" LIMIT 0')
+            db.execute("SELECT 'resolve_event_id(text)'::regprocedure")
+            db.execute("SELECT 'check_catalog_capacity(text,bigint,text,text)'::regprocedure, 'defer_capacity_task(text,text,jsonb,text)'::regprocedure")
             db.execute('SELECT "distanceKm",gap FROM "RaceResult" LIMIT 0')
             db.execute('SELECT selection,"contentType" FROM "ExportArtifact" LIMIT 0')
             active = db.execute('SELECT count(*) FROM "WorkerPresence" WHERE "lastSeenAt">now()-interval \'75 seconds\' AND state<>\'stopped\'').fetchone()[0]
             protected = db.execute('SELECT count(*) FROM "CollectionTask" WHERE status=\'queued\' AND "executionHold"').fetchone()[0]
-            pending = db.execute('SELECT id,kind,source,payload FROM "CollectionTask" WHERE NOT "executionHold" AND (%s::text[] IS NULL OR id=ANY(%s::text[])) AND (status=\'queued\' OR (status=\'running\' AND "leaseUntil"<=now())) ORDER BY "createdAt"', (selected,selected)).fetchall()
+            pending = db.execute('SELECT id,kind,source,payload FROM "CollectionTask" t WHERE NOT "executionHold" AND NOT EXISTS (SELECT FROM "SourceRequestControl" g WHERE g.source=t.source AND g."blockedAt" IS NOT NULL) AND (%s::text[] IS NULL OR id=ANY(%s::text[])) AND (status=\'queued\' OR (status=\'running\' AND "leaseUntil"<=now())) ORDER BY "createdAt"', (selected,selected)).fetchall()
             running = db.execute('SELECT count(*) FROM "CollectionTask" WHERE status=\'running\' AND \"leaseUntil\">now()').fetchone()[0]
         if active or running:
             log('Outro executor recente ou tarefa em execução detectada. Não iniciamos concorrentes; confira o painel e aguarde a presença expirar.')
             return 2
         log(f'Conexão aprovada. {len(pending)} pedidos elegíveis; {protected} pedidos protegidos; nenhum executor recente.')
+        if weekly[0] and selected is None:
+            log('Agenda semanal habilitada pelo painel: poderá criar etapas das três fontes enquanto esta sessão estiver aberta.')
         if selected is not None:
             log('Modo seletivo: somente IDs do arquivo informado poderão ser adquiridos.')
         for tid, kind, source, payload in pending:

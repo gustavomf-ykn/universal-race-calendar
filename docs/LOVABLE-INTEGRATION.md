@@ -1,5 +1,9 @@
 # Integração do painel
 
+Contrato em desenvolvimento de [cruzamento global durável](CATALOG-RECONCILIATION.md): início/listagem/detalhes de varreduras, decisões paginadas e pausa/retomada/cancelamento via JWT admin. Depende de duas migrations aditivas e atualização explícita da API/executor TypeScript; ainda sem publicação ou aceite real. Etapa concluída não significa ciclo completo ou cobertura nacional.
+
+Implementação ainda não publicada de descoberta ampliada, continuidade, pausa/retomada e comparação por fonte: [catálogo nacional](NATIONAL-CATALOG.md). O documento distingue o contrato em desenvolvimento da cobertura realmente comprovada. Não habilitar carga nacional antes dos limites e do circuito por fonte.
+
 Painel de homologação: https://runfinder-rithmy.lovable.app. API:
 https://universal-race-calendar.onrender.com. Evidências e limites da rodada real:
 [homologação de calendário e exportação](STAGING-ROUND-2026-09-21.md).
@@ -82,6 +86,12 @@ Resposta `202`, `Location: /v1/tasks/<id>`:
 
 3. Consultar pendências e enviar `{"eventId":"id-interno"}` a `/resolve`.
 Datas conhecidas devem coincidir. Nome parecido não autoriza associação automática.
+
+Na branch nacional, a pendência também retorna `country` nullable: mostrar nome, data, cidade, UF e país antes da seleção. País ausente deve aparecer como não confirmado; UF brasileira não substitui evidência de país. `/register` mantém o país observado ao cadastrar edição independente pending_review. Exige migration `20261002000000_source_match_country` e atualização da API/executor Python; ainda sem publicação. Registros antigos permanecem sem país na pendência até nova observação, sem preenchimento presumido.
+
+`/resolve` rejeita `409 edition_location_conflict` quando cidade, UF ou país conhecidos divergem; não insistir no mesmo vínculo. Datas divergentes retornam `edition_date_mismatch`. A decisão relê os dados bloqueados e registra auditoria uma única vez para a associação efetivada. Reinspeção pode devolver a pendência a `pending` por conflito/evidência incompleta, sem apagar a referência nem resultados anteriores. Conflitos de edição no executor TypeScript são falhas terminais para revisão, não atualização concluída.
+
+O executor Python também registra falha segura de identidade/data/localização, preservando o canônico e resultados anteriores; uma observação conflitante fica disponível na comparação de fontes. `edition_date_unconfirmed`, `edition_location_unconfirmed`, `edition_location_conflict`, `association_changed`, `source_identity_mismatch` e `source_identity_already_associated` exigem revisão antes de repetir. Não apresentar falha como atualização concluída. País histórico preservado não comprova a leitura nova. API/Python usam protocolo v2 de resultados; checkpoint v1 retorna `result_checkpoint_incompatible` e exige nova coleta intencional após revisão, sem reiniciar implicitamente. Esta revisão não adiciona migration, mas depende do schema anterior da branch nacional e da atualização compatível da API e dos executores.
 4. Solicitar a extração:
 
 ```http
@@ -215,3 +225,54 @@ Novos contratos (JWT admin nas rotas administrativas):
 | GET `/v1/exports/:id` | Estado real e link assinado renovado no clique |
 
 POSTs que criam tarefas/exportações exigem `Idempotency-Key`. Cadastro independente por identidade e cancelamento são idempotentes sem criar trabalho adicional. Não enviar chave interna do Render ao navegador. Exibir `queued` como espera, `running` como processamento e `partial`/`failed` como resultado incompleto/falha; `completed` de uma etapa de catálogo não significa cobertura total. A exportação admite `kind=catalog-simple|catalog-full|results`, `layout=individual|consolidated` e exatamente um de `eventIds` ou `filter`. Paginação de histórico/listas: `page`, `limit` até 100.
+
+### Controles de fonte na branch de catálogo nacional
+
+Contrato em desenvolvimento, ainda sem publicação em homologação: `GET /v1/admin/source-controls` e `POST /v1/admin/source-controls/:source/configure|resume`. Exigem JWT admin; POSTs também exigem `Idempotency-Key` e justificativa. Parâmetros, limites, bloqueios e migrations: [NATIONAL-CATALOG.md](NATIONAL-CATALOG.md).
+
+O orçamento é compartilhado entre API e executores. `source_budget_wait` significa espera pela próxima janela, com tarefa queued e checkpoint preservado, sem consumir uma tentativa. Não apresentar como falha ou atualizar o calendário como se a coleta tivesse terminado. Hold `source_access_blocked` significa bloqueio pela fonte; hold `catalog_sync_paused` significa pausa da descoberta. Holds anteriores de pedidos protegidos continuam separados. Retomar uma fonte não repete automaticamente tarefas failed nem cancela históricos. O backend recusa retomada antecipada com 409 `source_cooldown_active`.
+
+A carga nacional e a agenda semanal permanecem sem aceite. O fallback Chromium respeita o mesmo orçamento; sua proteção foi testada com simulação de transporte, não com uma nova coleta real neste estágio.
+
+Recibos OpenResults nesta branch usam `scope=source_catalog`: `unique` e `advertisedTotal` abrangem a fonte antes dos filtros locais, não provas brasileiras publicadas. `duplicates`, `outOfScope` e `unknownCountry` explicam as diferenças; total ausente permanece nulo. `status=limited` no ciclo impede afirmar cobertura completa mesmo se a última tarefa tiver concluído seu lote. Inspeções de metadados são tarefas separadas, enfileiradas também para referências existentes. Checkpoints legados sem recibos históricos não são promovidos a cobertura completa.
+
+Erro de processamento `source_structure_changed`: a estrutura recebida não atende ao contrato do coletor, a tarefa falha sem retries automáticos e mantém os dados anteriores. Orientar revisão do coletor antes de repetir; isso difere de bloqueio de acesso e não deve ser apresentado como catálogo vazio ou atualização concluída. Os novos recibos e esse comportamento ainda precisam de publicação e validação real.
+
+### Capacidade na branch de catálogo nacional
+
+Ainda sem publicação: `GET /v1/admin/capacity` e POSTs `/configure`, `/refresh`, `/resume` nesse caminho. JWT admin e `Idempotency-Key` nos POSTs. Campos e integração estão em [CATALOG-CAPACITY.md](CATALOG-CAPACITY.md). Valores em bytes são strings; o painel converte entradas inteiras de MiB sem colocar credenciais de banco/Storage no navegador.
+
+Hold `capacity_wait` significa retenção por configuração, medição desconhecida ou margem de capacidade. Exibir espera e checkpoint preservado, não falha de fonte ou coleta concluída. O recurso é `progress.capacityResource=database|storage`. Configurar orçamento não retoma tarefas. A retomada explícita mede novamente, libera somente esse motivo/recurso e preserva outros pedidos protegidos. Não tratar uma medição antiga, sem tamanho/visibilidade ou quota não confirmada como espaço garantido. `reservedStorageBytes` inclui uploads em curso; arquivos prontos válidos continuam no fluxo de URL assinada existente.
+
+### Retomada de resultados na branch de catálogo nacional
+
+Ainda sem publicação: `GET /v1/tasks/:id` acrescenta resumo `checkpoint` para extração OpenResults; `available` informa se uma tarefa failed/partial pode ser retomada. Contadores de páginas/linhas confirmadas são intermediários, não resultados publicados. O painel oferece `POST /v1/tasks/:id/retry` com `mode=resume` quando disponível e distingue `mode=restart`, que inicia uma extração nova sem reutilizar páginas. Ambos exigem JWT admin e chave de idempotência persistida por usuário/tarefa/mode; a tentativa anterior permanece no histórico. Campos, erros, validade e limites do fallback: [RESULT-CHECKPOINTS.md](RESULT-CHECKPOINTS.md).
+
+### União de edições na branch de catálogo nacional
+
+Ainda sem publicação: POST `/v1/admin/catalog/reconciliations/preview` com sourceId/targetId; confirmação POST `/v1/admin/catalog/reconciliations` com JWT admin, Idempotency-Key, revision da prévia, reason e confirmedSameEdition=true. Campos, conflitos e migration: [EVENT-RECONCILIATION.md](EVENT-RECONCILIATION.md). O painel busca a edição visualmente, mostra evidências e preserva a confirmação após perda de resposta. Uma prévia obsoleta exige nova revisão. Tarefas/lotes ativos impedem a união.
+
+O destino conserva seu ID. IDs/slugs antigos passam a resolver o destino, inclusive resultados, tarefas antigas e seleções de exportação, sem reescrever payloads/chaves ou arquivos existentes. A permissão de publicação do destino vale também para os links antigos. União não equivale a coleta nova, publicação de uma edição ou cobertura nacional completa. Exige migration e atualização explícita de API/executores antes do frontend; aceite autenticado no navegador permanece pendente.
+
+### País na branch de catálogo nacional
+
+Curadoria 1.6.0 acrescenta validação estrutural compartilhada da publicação: data válida, cidade sem textos de navegação/caracteres corrompidos, UF entre as 27 brasileiras e referência de edição reconhecida de uma das três fontes. Nome do local não substitui cidade/UF. As duas rotas administrativas relêem edição e referências sob lock; PATCH que mantém a edição publicada também respeita os requisitos. Recusas 409 `publication_requires_name`, `publication_requires_date_city_state` e `publication_requires_valid_source_reference` têm orientação própria no painel. Confira a associação na fonte para corrigir referência; não use homepage nem acrescente credenciais no frontend. Atualização de API/executores antes da publicação do frontend; sem migration adicional desta correção.
+
+Ainda sem publicação: PATCH `/v1/admin/catalog/events/{id}` aceita `country` como ISO-2 maiúsculo ou null, com `reason` obrigatório e JWT admin. Confirmar na fonte antes de informar BR; país ausente não recebe um valor padrão. A auditoria guarda a alteração e a protege de atualizações automáticas. Publicar com país desconhecido/estrangeiro retorna 409 `publication_requires_brazil_country`; o painel deve explicar a revisão necessária. `incomplete=true` também inclui candidatos sem país.
+
+Recibos TicketSports `scope=source_partition` fornecem `unknownCountry` e `outOfScope` por IDs distintos observados na partição. Ausência desses campos significa não informado, não zero. Partições sobrepostas não devem ser somadas como total nacional. País desconhecido permanece candidato administrativo; término da descoberta não significa publicação, enriquecimento completo ou resultados coletados. Curadoria 1.3.0 remove valores padrão BR; checkpoints nacionais TicketSports v1 são incompatíveis e preservados no histórico. Nenhuma migration adicional dessa correção de país; as migrations anteriores do PR #12 continuam necessárias antes da atualização dos processos.
+
+Na branch nacional, curadoria 1.4.0 também exige evidência da modalidade no título/texto recebido da fonte. Ausência fica unknown; rua e trail juntos ficam mixed. Não usar nome genérico, endereço ou texto gerado pelo modelo como prova. Candidatos unknown/kids/walk/mixed permanecem para revisão, com motivos explícitos, sem publicação automática.
+
+Curadoria 1.5.0 verifica também a evidência de país recebida da fonte e ignora o BR legado presumido em CorridasBR. Divergência do modelo produz `country_evidence_mismatch`; país ausente fica nulo, com revisão necessária. Confirmar `country` administrativamente limpa somente os avisos de país, preserva outros motivos e audita o valor anterior. Recibos CorridasBR também fornecem `scope=source_partition`, `unknownCountry` e `outOfScope`, sem soma nacional de partições. Checkpoints CorridasBR v1 são incompatíveis com v2: mostrar a orientação existente de nova sincronização explícita, sem reiniciar ou liberar tarefas antigas. Nenhuma migration nova desta correção; API e executores precisam ser atualizados explicitamente após a integração autorizada das migrations anteriores do PR #12.
+
+OpenResults também exige país observado, sem usar Rua Brasil, UF ou endereço do organizador como confirmação. Uma inspeção contraditória volta à revisão, mantendo referência/resultados válidos. Checkpoints OpenResults v1 e páginas legadas não vazias são incompatíveis com `openresultsVersion=2`; usar a mesma mensagem de revisão de escopo e nova sincronização intencional. Não converter, retomar ou repetir essas páginas automaticamente. Enriquecimento com metadados e modalidade não equivale a publicação nem a resultados novos; a interface deve distinguir esses estados.
+
+`PATCH /v1/admin/catalog/events/{id}` aceita `modality=road|trail|mixed|kids|walk|unknown`, com `reason` obrigatório e JWT admin. A decisão é auditada e protegida. Publicar unknown retorna 409 `publication_requires_confirmed_modality` nos dois caminhos de publicação. Uma edição publicada não pode ter sua modalidade apagada para unknown sem mudar também a situação de publicação. `incomplete=true` inclui unknown. Confirmar modalidade não confirma país ou associação. O frontend deve oferecer seleção sem road padrão e explicar a revisão exigida. Não acrescenta migration; atualizar API/executores e depois frontend, após integrar as migrations anteriores do PR. Ainda sem aceite no navegador publicado.
+# Curadoria nas branches nacionais — atualização pendente
+
+A [agenda semanal](CATALOG-WEEKLY.md) acrescenta GET `/v1/admin/catalog/weekly`, POST `/v1/admin/catalog/weekly/configure` e POST `/v1/admin/catalog/weekly/occurrences/{id}/cancel`, com JWT admin e idempotência/revisão nos POSTs. Backend e controles implementados/testados nas branches; integração e aceite no navegador pendentes. Migration aditiva antes de API/executores e publicação do Frontend #3. Agenda desativada por padrão; não ativar implicitamente na publicação. completed descreve o ciclo; coverageVerified=false e resultsCollected=false impedem apresentar cobertura nacional ou resultados novos sem evidências. Campos, estados e erros no documento específico.
+
+O contrato de [recursos locais](LOCAL-RESOURCES.md) acrescenta `resourceReason` e `resource_wait` à presença dos executores. Tarefas retidas por memória/disco permanecem em espera administrativa, com checkpoint/dados anteriores preservados; o painel explica resolução da causa e liberação explícita. Não mostrar conclusão ou disponibilidade pelo simples retorno 202. Requer as duas migrations local_resources, API e ambos os executores compatíveis antes da publicação do Frontend #3; sem agenda ativada.
+
+Backend #12 usa curadoria 1.7.0/adaptadores 1.1.0 para conferir nome/data/cidade/UF observados. Proposta do modelo não confirma campo ausente. `date_evidence_mismatch`, `location_evidence_mismatch`, `conflicting_date`, `conflicting_location`, `missing_name` e `edition_observation_unconfirmed` indicam revisão; não apresentar a atualização como publicável apenas por alta confiança. Dados válidos conservados no canônico não comprovam observação nova. Identidade TicketSports diferente retorna `edition_source_identity_conflict`, terminal para revisão. Página relacionada só enriquece uma edição compatível; JSON-LD ambíguo não escolhe o primeiro evento. Não acrescenta endpoints ou migration; requer atualização explícita da API/executor TypeScript e as migrations anteriores do PR após autorização. CI controlado não constitui aceite no site publicado nem cobertura completa.

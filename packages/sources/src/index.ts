@@ -1,4 +1,19 @@
 import * as cheerio from "cheerio";
+export { setSourceRequestGuard, enterSourceRequestScope, withSourceRequestScope } from "@race-calendar/scraper";
+export {
+  discoverTicketSportsCatalogPage,
+  ticketSportsCatalogUrl,
+  parseTicketSportsCatalogPage,
+  nextTicketSportsPrefix,
+  discoverCorridasBRCatalogPage,
+  parseCorridasBRCatalogPage,
+  corridasBRCatalogUrl,
+} from "./catalog-discovery.js";
+export type {
+  TicketSportsCatalogPage,
+  TicketSportsCatalogOptions,
+  CorridasBRCatalogPage,
+} from "./catalog-discovery.js";
 import { rawSourceExtractionSchema, type RawSourceExtraction } from "@race-calendar/schemas";
 import {
   contentHashFromParts,
@@ -12,6 +27,8 @@ import {
   ADAPTER_VERSION_OFFICIAL_PAGE,
   ADAPTER_VERSION_TICKETSPORTS,
   cleanText,
+  countryFromExplicitValue,
+  countryFromLocationText,
   normalizeDate,
   unique,
 } from "@race-calendar/utils";
@@ -42,7 +59,7 @@ export type TicketSportsDiscoveredEvent = {
   externalId: string;
   name: string;
   url: string;
-  country: string;
+  country: string | null;
   state: string | null;
   city: string | null;
   metadata: Record<string, unknown>;
@@ -60,7 +77,7 @@ export type CorridasBRDiscoveredEvent = {
   externalId: string;
   name: string;
   url: string;
-  country: "BR";
+  country: string | null;
   state: string;
   city: string | null;
   date: string | null;
@@ -152,10 +169,11 @@ export class CorridasBRAdapter implements SourceAdapter {
   async fetchAndExtract(input: SourceFetchInput): Promise<RawSourceExtraction> {
     const html = await this.client.getText(input.url, { headers: corridasBRHeaders(), delayMs: 300 });
     if (isCorridasBRSecurityChallenge(html)) {
-      throw new Error(`CorridasBR security challenge blocked event detail ${input.sourceExternalId ?? input.url}`);
+      throw new Error("source_access_blocked");
     }
     const parsed = parseCorridasBRDetail(html, input.url);
-    const shouldEnrich = input.metadata?.enrichOfficialPages !== false && process.env.OFFICIAL_PAGE_ENRICHMENT_ENABLED !== "false";
+    const shouldEnrich =
+      input.metadata?.enrichOfficialPages !== false && process.env.OFFICIAL_PAGE_ENRICHMENT_ENABLED !== "false";
     const officialPage =
       shouldEnrich && parsed.officialUrl && isAllowedOfficialTarget(parsed.officialUrl)
         ? await fetchOfficialEventPage(parsed.officialUrl, this.client).catch(() => null)
@@ -166,6 +184,8 @@ export class CorridasBRAdapter implements SourceAdapter {
         `<p>${escapeHtml([parsed.date, parsed.city, parsed.state].filter(Boolean).join(" - "))}</p>`,
         `<p>${escapeHtml(parsed.locationName ?? "")}</p>`,
         `<p>${escapeHtml(parsed.distanceText ?? "")}</p>`,
+        `<p>${escapeHtml(parsed.countrySourceTexts.join(" / "))}</p>`,
+        `<p>${escapeHtml(parsed.modalityText ? `Modalidade: ${parsed.modalityText}` : "")}</p>`,
         `<p>${escapeHtml(parsed.organizerName ?? "")}</p></article>`,
         officialPage?.importantHtml ?? "",
       ].join("\n"),
@@ -178,6 +198,8 @@ export class CorridasBRAdapter implements SourceAdapter {
         parsed.state,
         parsed.locationName,
         parsed.distanceText,
+        parsed.countrySourceTexts.join(" / "),
+        parsed.modalityText ? `Modalidade: ${parsed.modalityText}` : null,
         parsed.organizerName,
         officialPage?.importantText,
       ]
@@ -207,6 +229,8 @@ export class CorridasBRAdapter implements SourceAdapter {
         parsed.state,
         parsed.locationName,
         parsed.distanceText,
+        parsed.countrySourceTexts.join(" / "),
+        parsed.modalityText,
         parsed.organizerName,
         parsed.officialUrl,
         JSON.stringify(officialPage?.structured ?? null),
@@ -232,7 +256,9 @@ export class MockSourceAdapter implements SourceAdapter {
       input.metadata?.importantText ??
         "Corrida Mock Florianopolis. Data 16/08/2026. Florianopolis, SC, Brasil. Distancias 5 km e 10 km. Inscricoes em https://example.test/inscricao.",
     );
-    const importantHtml = sanitizeImportantHtml(`<main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(importantText)}</p></main>`);
+    const importantHtml = sanitizeImportantHtml(
+      `<main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(importantText)}</p></main>`,
+    );
     return rawSourceExtractionSchema.parse({
       sourceType: this.sourceType,
       sourceId: input.sourceId,
@@ -273,11 +299,21 @@ export class TicketSportsAdapter implements SourceAdapter {
       ? await this.client.getJson(sourceUrl, { headers: ticketSportsHeaders(), delayMs: 300 })
       : await this.fetchGenericPagePayload(input.url);
     const record = asRecord(payload);
-    const title = cleanText(stringValue(record.title) ?? stringValue(record.name) ?? stringValue(record.eventName)) || null;
+    const observedId = numberOrString(record.eventId);
+    const observedUrlId = eventIdFromTicketSportsUrl(registrationUrlFromTicketSportsPayload(record, input.url));
+    if (eventId && ((observedId && observedId !== eventId) || (observedUrlId && observedUrlId !== eventId)))
+      throw Error("edition_source_identity_conflict");
+    const title =
+      cleanText(stringValue(record.title) ?? stringValue(record.name) ?? stringValue(record.eventName)) || null;
     const sections = sectionsFromTicketSports(record.eventContents);
-    const htmlFromSections = sections.map((section) => section.html).filter(Boolean).join("\n");
+    const htmlFromSections = sections
+      .map((section) => section.html)
+      .filter(Boolean)
+      .join("\n");
     const fallbackHtml = typeof record.description === "string" ? record.description : "";
-    const importantHtml = sanitizeImportantHtml(htmlFromSections || fallbackHtml || `<h1>${escapeHtml(title ?? "TicketSports")}</h1>`);
+    const importantHtml = sanitizeImportantHtml(
+      htmlFromSections || fallbackHtml || `<h1>${escapeHtml(title ?? "TicketSports")}</h1>`,
+    );
     const importantText = cleanText(
       [
         title,
@@ -327,7 +363,9 @@ export async function discoverTicketSportsEvents(
   options: DiscoverTicketSportsEventsOptions = {},
 ): Promise<TicketSportsDiscoveredEvent[]> {
   const quantity = positiveInt(options.quantity, Number(process.env.TICKETSPORTS_IMPORT_QUANTITY ?? 1000));
-  const quickFilter = cleanText(options.quickFilter ?? process.env.TICKETSPORTS_IMPORT_QUICK_FILTER ?? "corrida-de-rua");
+  const quickFilter = cleanText(
+    options.quickFilter ?? process.env.TICKETSPORTS_IMPORT_QUICK_FILTER ?? "corrida-de-rua",
+  );
   const client = options.client ?? new ScraperHttpClient();
   const payload = await client.getJson(ticketSportsListUrl({ quantity, quickFilter }), {
     headers: ticketSportsHeaders(),
@@ -340,7 +378,7 @@ export async function discoverTicketSportsEvents(
     const title = cleanText(stringValue(record.title));
     if (!eventId || !url || !title) return [];
     const location = parseTicketSportsLocation(stringValue(record.address));
-    if (location.country !== "BR") return [];
+    if (location.country && location.country !== "BR") return [];
     return [
       {
         sourceType: "ticketsports",
@@ -348,7 +386,7 @@ export async function discoverTicketSportsEvents(
         externalId: eventId,
         name: title,
         url,
-        country: location.country ?? "BR",
+        country: location.country,
         state: location.state,
         city: location.city,
         metadata: {
@@ -377,7 +415,7 @@ export async function discoverCorridasBREvents(
     const calendarUrl = corridasBRCalendarUrl(state);
     const html = await client.getText(calendarUrl, { headers: corridasBRHeaders(), delayMs: 150 });
     if (isCorridasBRSecurityChallenge(html)) {
-      throw new Error(`CorridasBR security challenge blocked calendar discovery for ${state}`);
+      throw new Error("source_access_blocked");
     }
     return parseCorridasBRCalendar(html, state, calendarUrl);
   });
@@ -429,13 +467,21 @@ export function parseCorridasBRCalendar(
       null;
     const rowText = cleanText(metadataRows.map((item) => item.text()).join(" "));
     const dateText = rowText.match(/(?<!\d)\d{1,2}\/\d{1,2}\/\d{2,4}(?!\d)/)?.[0] ?? null;
+    // Only event-scoped, labelled country evidence is usable. The calendar's UF
+    // and the CorridasBR domain do not identify the country of an edition.
+    const countrySourceTexts = row.find('[itemprop="addressCountry"]').toArray()
+      .filter(node => !$(node).parents('[itemprop="organizer"]').length)
+      .map(node => cleanText($(node).attr("content") || $(node).text())).filter(Boolean);
+    const countries = unique(countrySourceTexts.map(value => countryFromExplicitValue(value).country).filter((value): value is string => Boolean(value)));
+    const country = countries.length === 1 && countrySourceTexts.every(value => countryFromExplicitValue(value).country)
+      ? countries[0]! : null;
     events.push({
       sourceType: "corridasbr",
       adapter: "corridasbr",
       externalId,
       name,
       url,
-      country: "BR",
+      country,
       state: state.toUpperCase(),
       city,
       date: normalizeDate(dateText),
@@ -445,6 +491,7 @@ export function parseCorridasBRCalendar(
         city,
         date: normalizeDate(dateText),
         rowText,
+        countrySourceTexts,
         discoveredAt: new Date().toISOString(),
       },
     });
@@ -455,6 +502,7 @@ export function parseCorridasBRCalendar(
 export function parseCorridasBRDetail(html: string, url: string) {
   const $ = cheerio.load(html);
   const fields = new Map<string, string>();
+  const countrySourceTexts: string[] = [];
   $("tr").each((_, row) => {
     const cells = $(row).children("td");
     if (cells.length < 2) return;
@@ -463,26 +511,33 @@ export function parseCorridasBRDetail(html: string, url: string) {
     valueCell.find("script,button").remove();
     if (label === "cidade") {
       // These links navigate to other listings; they are not part of the city name.
-      valueCell.find("a").filter((_, link) => /Corridas?\s+(?:nesta Cidade|nesta Regi[aã]o)/i.test($(link).text())).remove();
+      valueCell
+        .find("a")
+        .filter((_, link) => /Corridas?\s+(?:nesta Cidade|nesta Regi[aã]o)/i.test($(link).text()))
+        .remove();
     }
     const text = cleanText(valueCell.text());
-    const value = label === "cidade"
-      ? text.replace(/\s*\(Corridas?\s+(?:nesta Cidade|nesta Regi[aã]o)\)/gi, "").trim()
-      : text;
+    const value =
+      label === "cidade" ? text.replace(/\s*\(Corridas?\s+(?:nesta Cidade|nesta Regi[aã]o)\)/gi, "").trim() : text;
+    if (["pais", "country"].includes(label) && value) countrySourceTexts.push(value);
     if (label && value && !fields.has(label)) fields.set(label, value);
   });
   const state = stateFromCorridasBRUrl(url);
   const name = cleanText($(".tipo7 strong").first().text()) || cleanText($("title").first().text()) || null;
-  const officialRedirect = html.match(
-    /function\s+paraonde\s*\(\)\s*\{\s*window\.open\(['"]([^'"]+)['"]\)/i,
-  )?.[1];
+  const officialRedirect = html.match(/function\s+paraonde\s*\(\)\s*\{\s*window\.open\(['"]([^'"]+)['"]\)/i)?.[1];
   const officialUrl = officialRedirect ? officialTargetFromCorridasBRRedirect(officialRedirect) : null;
+  const countries = unique(countrySourceTexts.map(value => countryFromExplicitValue(value).country).filter((value): value is string => Boolean(value)));
+  const country = countries.length === 1 && countrySourceTexts.every(value => countryFromExplicitValue(value).country)
+    ? countries[0]! : null;
   return {
     name,
     date: normalizeDate(fieldByLabels(fields, ["data"])),
     city: fieldByLabels(fields, ["cidade"]),
     state,
-    country: "BR",
+    country,
+    countrySourceTexts,
+    countrySourceText: countrySourceTexts.length === 1 ? countrySourceTexts[0] : null,
+    modalityText: fieldByLabels(fields, ["modalidade", "tipo de prova"]),
     locationName: fieldByLabels(fields, ["largada", "local", "local de largada"]),
     distanceText: fieldByLabels(fields, ["distancia s", "distancias", "distancia"]),
     organizerName: fieldByLabels(fields, ["organizador", "organizacao"]),
@@ -528,7 +583,8 @@ async function fetchOfficialEventPageUncached(url: string, client: SourceHttpCli
   const jsonLdEvents = $("script[type='application/ld+json']")
     .toArray()
     .flatMap((script) => jsonLdEventRecords($(script).text()));
-  const event = jsonLdEvents[0] ?? {};
+  const selection = selectPageJsonLdEvent(jsonLdEvents, url);
+  const event = selection.event;
   const title =
     cleanText(stringValue(event.name)) ||
     cleanText($("meta[property='og:title']").attr("content")) ||
@@ -563,11 +619,39 @@ async function fetchOfficialEventPageUncached(url: string, client: SourceHttpCli
       description,
       images,
       jsonLdEvent: event,
+      jsonLdSelection: selection.reason,
     },
   };
 }
 
 const officialPageCache = new Map<string, { expiresAt: number; value: OfficialPageResult }>();
+
+function selectPageJsonLdEvent(events: Record<string, unknown>[], pageUrl: string) {
+  const identityUrl = (value: unknown) => {
+    if (typeof value !== "string" || !value) return null;
+    try {
+      const url = new URL(value, pageUrl);
+      if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return null;
+      url.hash = "";
+      url.hostname = url.hostname.replace(/^www\./, "");
+      for (const key of [...url.searchParams.keys()]) if (key.startsWith("utm_")) url.searchParams.delete(key);
+      url.searchParams.sort();
+      return url.href.replace(/\/$/, "");
+    } catch { return null; }
+  };
+  const current = identityUrl(pageUrl);
+  // A declared URL is stronger than a JSON-LD node identifier. A matching
+  // fragment @id must not override an explicit URL of another edition.
+  const links = (event: Record<string, unknown>) =>
+    [typeof event.url === "string" && event.url ? event.url : event["@id"]].map(identityUrl).filter(Boolean);
+  const matched = events.filter(event => links(event).includes(current));
+  if (matched.length === 1) return { event: matched[0]!, reason: "url" };
+  if (matched.length > 1 || events.length > 1) return { event: {}, reason: "ambiguous" };
+  if (!events.length) return { event: {}, reason: "absent" };
+  return links(events[0]!).length || events[0]!.url
+    ? { event: {}, reason: "url_mismatch" } : { event: events[0]!, reason: "single" };
+}
+
 const officialDomainQueues = new Map<string, Promise<void>>();
 
 export function ticketSportsDetailUrl(eventId: string): string {
@@ -614,35 +698,19 @@ function sectionsFromTicketSports(value: unknown): Array<{ title: string; html: 
   });
 }
 
-function parseTicketSportsLocation(value: string | null): { city: string | null; state: string | null; country: string | null } {
+export function parseTicketSportsLocation(value: string | null): {
+  city: string | null;
+  state: string | null;
+  country: string | null;
+} {
   const text = cleanText(value);
-  if (!text) return { city: null, state: null, country: "BR" };
+  if (!text) return { city: null, state: null, country: null };
   const state = text.match(/,\s*([A-Z]{2})(?:,|\b)/)?.[1]?.toUpperCase() ?? null;
-  const country = countryFromText(text) ?? "BR";
+  const country = countryFromLocationText(text).country;
   if (!state) return { city: cityBeforeColon(text), state: null, country };
   const beforeState = text.split(new RegExp(`,\\s*${state}\\b`, "i"))[0] ?? "";
   const city = cityBeforeColon(beforeState) ?? cleanText(beforeState.split(",").at(-1));
   return { city: city || null, state, country };
-}
-
-function countryFromText(value: string): string | null {
-  const text = stripDiacritics(cleanText(value).toLowerCase());
-  if (!text) return null;
-  if (/(^|[\s,;:])(brasil|brazil|br)(?=$|[\s,;:.])/.test(text)) return "BR";
-  const countries: Array<[RegExp, string]> = [
-    [/(^|[\s,;:])portugal(?=$|[\s,;:.])/, "PT"],
-    [/(^|[\s,;:])argentina(?=$|[\s,;:.])/, "AR"],
-    [/(^|[\s,;:])chile(?=$|[\s,;:.])/, "CL"],
-    [/(^|[\s,;:])(uruguai|uruguay)(?=$|[\s,;:.])/, "UY"],
-    [/(^|[\s,;:])(paraguai|paraguay)(?=$|[\s,;:.])/, "PY"],
-    [/(^|[\s,;:])bolivia(?=$|[\s,;:.])/, "BO"],
-    [/(^|[\s,;:])peru(?=$|[\s,;:.])/, "PE"],
-    [/(^|[\s,;:])colombia(?=$|[\s,;:.])/, "CO"],
-    [/(^|[\s,;:])(mexico|méxico)(?=$|[\s,;:.])/, "MX"],
-    [/(^|[\s,;:])(estados unidos|eua|usa|united states)(?=$|[\s,;:.])/, "US"],
-    [/(^|[\s,;:])(espanha|spain)(?=$|[\s,;:.])/, "ES"],
-  ];
-  return countries.find(([pattern]) => pattern.test(text))?.[1] ?? null;
 }
 
 function stripDiacritics(value: string): string {
@@ -697,14 +765,18 @@ function positiveInt(value: unknown, fallback: number): number {
 }
 
 function uniqueUrls(urls: string[]): string[] {
-  return [...new Set(urls.filter((url) => {
-    try {
-      new URL(url);
-      return true;
-    } catch {
-      return false;
-    }
-  }))];
+  return [
+    ...new Set(
+      urls.filter((url) => {
+        try {
+          new URL(url);
+          return true;
+        } catch {
+          return false;
+        }
+      }),
+    ),
+  ];
 }
 
 function corridasBRHeaders(): Record<string, string> {

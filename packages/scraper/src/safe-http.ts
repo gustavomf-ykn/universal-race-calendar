@@ -2,6 +2,22 @@ import { lookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { BlockList, isIP } from "node:net";
+import { AsyncLocalStorage } from "node:async_hooks";
+const requestScope = new AsyncLocalStorage<string>();
+let requestGuard: ((url: string, scope?: string) => Promise<void>) | undefined;
+let responseGuard:
+  | ((url: string, scope: string | undefined, status: number, retryAfter?: string) => Promise<void>)
+  | undefined;
+export function setSourceRequestGuard(guard: typeof requestGuard, observer?: typeof responseGuard) {
+  requestGuard = guard;
+  responseGuard = observer;
+}
+export function enterSourceRequestScope(source: string) {
+  requestScope.enterWith(source);
+}
+export function withSourceRequestScope<T>(source: string, work: () => Promise<T>): Promise<T> {
+  return requestScope.run(source, work);
+}
 
 const blocked = new BlockList();
 for (const [ip, prefix] of [
@@ -52,7 +68,7 @@ export async function safeResponse(
   timeoutMs: number,
   maxBytes = 10 * 1024 * 1024,
 ): Promise<Response> {
-  const deadline = Date.now() + timeoutMs;
+  let deadline = Date.now() + timeoutMs;
   let url = validateSourceUrl(raw);
   for (let redirects = 0; redirects <= 3; redirects++) {
     const remaining = deadline - Date.now();
@@ -65,6 +81,10 @@ export async function safeResponse(
       }),
     ]);
     if (!addresses.length || addresses.some((a) => !publicAddress(a.address))) throw new Error("unsafe_source_address");
+    const beforeGuard = Date.now();
+    await requestGuard?.(url.href, requestScope.getStore());
+    // Courtesy spacing does not spend the network timeout; the worker's overall deadline still applies.
+    deadline += Date.now() - beforeGuard;
     const address = addresses[0]!;
     const response = await new Promise<{ status: number; headers: Record<string, string>; body: Buffer }>(
       (resolve, reject) => {
@@ -76,6 +96,17 @@ export async function safeResponse(
             lookup: (_host, _options, cb) => cb(null, address.address, address.family),
           },
           (res) => {
+            const responseHeaders = Object.fromEntries(
+              Object.entries(res.headers).filter(([, v]) => typeof v === "string"),
+            ) as Record<string, string>;
+            const observed =
+              responseGuard?.(
+                url.href,
+                requestScope.getStore(),
+                res.statusCode ?? 502,
+                responseHeaders["retry-after"],
+              ) ?? Promise.resolve();
+            void observed.catch((error) => req.destroy(error));
             const chunks: Buffer[] = [];
             let size = 0;
             res.on("data", (chunk: Buffer) => {
@@ -87,15 +118,17 @@ export async function safeResponse(
               chunks.push(chunk);
             });
             res.on("error", reject);
-            res.on("end", () =>
-              resolve({
-                status: res.statusCode ?? 502,
-                headers: Object.fromEntries(
-                  Object.entries(res.headers).filter(([, v]) => typeof v === "string"),
-                ) as Record<string, string>,
-                body: Buffer.concat(chunks),
-              }),
-            );
+            res.on("end", () => {
+              void observed.then(
+                () =>
+                  resolve({
+                    status: res.statusCode ?? 502,
+                    headers: responseHeaders,
+                    body: Buffer.concat(chunks),
+                  }),
+                reject,
+              );
+            });
           },
         );
         const timer = setTimeout(() => req.destroy(new Error("source_timeout")), Math.max(1, deadline - Date.now()));

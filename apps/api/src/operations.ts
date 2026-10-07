@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { prisma, enqueueTask, publicTask, TaskConflict } from "@race-calendar/database";
+import { prisma, enqueueTask, publicTask, TaskConflict, catalogCheckpoint, controlCatalogSync, publicCatalogSync, resolveEventId, resolveEventIds } from "@race-calendar/database";
 import { requireAdmin, authorize } from "./auth.js";
+import { reserveResultCheckpoint, resultCheckpointRoot } from "@race-calendar/database";
+import { eventPublicationError, brazilianStateCodes } from "@race-calendar/database";
 
 const str = { type: "string" };
 const ids = { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, maxItems: 100, uniqueItems: true };
@@ -56,13 +58,15 @@ export function adminEventFilter(q: Record<string, any>) {
       },
     });
   if (q.incomplete)
-    AND.push({ OR: [{ date: null }, { city: null }, { state: null }, { sourceExternalId: { startsWith: "url:" } }] });
+    AND.push({ OR: [{ date: null }, { city: null }, { city: "" }, { state: null },
+      { state: { notIn: [...brazilianStateCodes] } }, { country: null }, { modality: "unknown" },
+      { sourceExternalId: { startsWith: "url:" } }] });
   return { AND };
 }
 export async function registerOperations(app: FastifyInstance) {
   app.addHook("onRoute", (route) => {
     if (route.url.includes(":id") && route.schema)
-      route.schema.params = object({ id: { type: "string", minLength: 1 } }, ["id"]);
+      route.schema.params ??= object({ id: { type: "string", minLength: 1 } }, ["id"]);
   });
   app.post(
     "/v1/tasks/:id/hold",
@@ -86,14 +90,17 @@ export async function registerOperations(app: FastifyInstance) {
         if (task.executionHold === hold) return publicTask(task);
         const changed = await tx.collectionTask.update({
           where: { id },
-          data: { executionHold: hold, holdReason: hold ? reason : null, updatedAt: new Date() },
+          data: { executionHold: hold, holdReason: hold ? reason : null, updatedAt: new Date(),
+            ...(!hold && task.holdReason === "local_resource_wait" ? { errorCode: null } : {}) },
         });
         await tx.adminAudit.create({
           data: {
             actorId: req.principal!.id,
             taskId: id,
             action: hold ? "hold_task" : "release_task",
-            details: { reason },
+            details: { reason, ...(!hold && task.holdReason === "local_resource_wait" ? {
+              previousHoldReason: task.holdReason, previousErrorCode: task.errorCode,
+            } : {}) },
           },
         });
         return publicTask(changed);
@@ -104,9 +111,11 @@ export async function registerOperations(app: FastifyInstance) {
     "/v1/admin/source-matches/:id/register",
     { onRequest: requireAdmin, schema: schema() },
     async (req, reply) => {
-      const match = await prisma.sourceMatch.findUnique({ where: { id: (req.params as { id: string }).id } });
-      if (!match) return reply.code(404).send({ error: "match_not_found" });
+      const matchId = (req.params as { id: string }).id;
       return prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "SourceMatch" WHERE id=${matchId} FOR UPDATE`;
+        const match = await tx.sourceMatch.findUnique({ where: { id: matchId } });
+        if (!match) return reply.code(404).send({ error: "match_not_found" });
         const identity = { sourceType: match.source, sourceExternalId: match.externalId };
         const ref = await tx.eventSourceReference.findFirst({
           where: { sourceType: match.source, OR: [{ sourceExternalId: match.externalId }, { url: match.url }] },
@@ -136,13 +145,13 @@ export async function registerOperations(app: FastifyInstance) {
             date: match.date,
             city: match.city,
             state: match.state,
-            country: "BR",
+            country: match.country,
             sourceId: source.id,
             ...identity,
             sourceUrl: match.url,
             canonicalFingerprint: digest,
             warnings: [],
-            publishabilityReasons: ["administrative_review_required"],
+            publishabilityReasons: ["administrative_review_required", ...(!match.country ? ["country_unconfirmed"] : [])],
             publicationStatus: "pending_review",
             administrativeReview: true,
           },
@@ -198,6 +207,8 @@ export async function registerOperations(app: FastifyInstance) {
             date: { type: ["string", "null"], format: "date" },
             city: { type: ["string", "null"] },
             state: { type: ["string", "null"], pattern: "^[A-Z]{2}$" },
+            country: { type: ["string", "null"], pattern: "^[A-Z]{2}$" },
+            modality: { enum: ["road", "trail", "mixed", "kids", "walk", "unknown"] },
             publicationStatus: filter.publicationStatus,
             reason: { type: "string", minLength: 3, maxLength: 500 },
           },
@@ -206,25 +217,48 @@ export async function registerOperations(app: FastifyInstance) {
       ),
     },
     async (req, reply) => {
-      const id = (req.params as any).id,
+      const id = await resolveEventId((req.params as any).id),
         body = req.body as any;
       const current = await prisma.event.findUnique({ where: { id } });
       if (!current) return reply.code(404).send({ error: "event_not_found" });
       const { reason, ...changes } = body;
       if ("date" in changes) changes.date = changes.date ? new Date(changes.date) : null;
-      const merged = { ...current, ...changes };
-      if (merged.publicationStatus === "published" && (!merged.date || !merged.city?.trim() || !merged.state))
-        return reply.code(409).send({ error: "publication_requires_date_city_state" });
       return prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Event" WHERE id=${id} FOR UPDATE`;
-        const latest = await tx.event.findUniqueOrThrow({ where: { id } });
+        const latest = await tx.event.findUniqueOrThrow({ where: { id }, include: { sourceReferences: true } });
         const next = { ...latest, ...changes };
-        if (next.publicationStatus === "published" && (!next.date || !next.city?.trim() || !next.state))
-          throw Object.assign(new Error("publication_requires_date_city_state"), { statusCode: 409 });
+        const publicationError = next.publicationStatus === "published" ? eventPublicationError(next) : null;
+        if (publicationError) throw Object.assign(new Error(publicationError), { statusCode: 409 });
+        const countryReview = "country" in changes ? {
+          warnings: [...new Set([
+            ...(Array.isArray(latest.warnings) ? latest.warnings as string[] : [])
+              .filter(value => !["country_unconfirmed", "conflicting_country", "country_evidence_mismatch"].includes(value)),
+            ...(!changes.country ? ["country_unconfirmed"] : []),
+          ])],
+          publishabilityReasons: [...new Set([
+            ...(Array.isArray(latest.publishabilityReasons) ? latest.publishabilityReasons as string[] : [])
+              .filter(value => !["country_unconfirmed", "non_brazil_event"].includes(value)),
+            ...(!changes.country ? ["country_unconfirmed"] : changes.country !== "BR" ? ["non_brazil_event"] : []),
+          ])],
+        } : {};
+        const modalityReview = "modality" in changes ? {
+          warnings: [...new Set([
+            ...(countryReview.warnings ?? (Array.isArray(latest.warnings) ? latest.warnings as string[] : []))
+              .filter(value => !["modality_unconfirmed", "modality_evidence_mismatch", "multiple_modalities"].includes(value)),
+            ...(changes.modality === "unknown" ? ["modality_unconfirmed"] : []),
+          ])],
+          publishabilityReasons: [...new Set([
+            ...(countryReview.publishabilityReasons ?? (Array.isArray(latest.publishabilityReasons) ? latest.publishabilityReasons as string[] : []))
+              .filter(value => !["modality_unconfirmed", "modality_requires_review"].includes(value)),
+            ...(changes.modality === "unknown" ? ["modality_unconfirmed"] : []),
+          ])],
+        } : {};
         const event = await tx.event.update({
           where: { id },
           data: {
             ...changes,
+            ...countryReview,
+            ...modalityReview,
             administrativeReview: true,
             ...("publicationStatus" in changes
               ? { publishedAt: changes.publicationStatus === "published" ? (latest.publishedAt ?? new Date()) : null }
@@ -244,6 +278,8 @@ export async function registerOperations(app: FastifyInstance) {
                   date: latest.date,
                   city: latest.city,
                   state: latest.state,
+                  country: latest.country,
+                  modality: latest.modality,
                   publicationStatus: latest.publicationStatus,
                 },
                 changes,
@@ -262,7 +298,7 @@ export async function registerOperations(app: FastifyInstance) {
       const q = req.query as any;
       return {
         data: await prisma.adminAudit.findMany({
-          where: { eventId: (req.params as any).id },
+          where: { eventId: await resolveEventId((req.params as any).id) },
           orderBy: { createdAt: "desc" },
           skip: (q.page - 1) * q.limit,
           take: q.limit,
@@ -283,17 +319,29 @@ export async function registerOperations(app: FastifyInstance) {
         return reply.code(409).send({ error: "only_failed_or_partial_tasks_can_retry" });
       const mode = (req.body as any).mode;
       const payload = old.payload as any;
-      if (mode === "resume" && old.kind !== "catalog-sync")
+      if (old.kind === "catalog-reconcile")
+        return reply.code(409).send({ error: "use_reconciliation_scan_controls" });
+      if (mode === "resume" && old.kind !== "catalog-sync" && !(old.source === "openresults" && old.kind === "extract"))
         return reply.code(409).send({ error: "compatible_checkpoint_unavailable" });
       if (old.kind === "catalog-sync" && mode === "restart")
         return reply.code(409).send({ error: "create_new_sync_for_restart" });
       // New task keeps the original immutable, and its own scoped key prevents duplicate retries.
       try {
         const task = await prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('race-task-acquisition'))`;
           const key = String(req.headers["idempotency-key"]);
           const prior = await tx.collectionTask.findUnique({
             where: { ownerId_idempotencyKey: { ownerId: req.principal!.id, idempotencyKey: key } },
           });
+          if (typeof payload.syncId === "string" && !prior) {
+            const cycle = await tx.$queryRaw<Array<{ status: string; cancelled: boolean }>>`
+              SELECT status,options @> '{"weeklyCancelled":true}'::jsonb AS cancelled
+              FROM "CatalogSync" WHERE id=${payload.syncId} FOR UPDATE`;
+            if (cycle[0]?.status === "cancelled" || cycle[0]?.cancelled) throw new TaskConflict("weekly_occurrence_cancelled");
+          }
+          const rootId = old.source === "openresults" && old.kind === "extract" && mode === "resume"
+            ? resultCheckpointRoot(old) : null;
+          if (rootId && !prior) await reserveResultCheckpoint(old, tx);
           if (old.kind === "catalog-sync" && !prior) {
             const sync = await tx.$queryRaw<
               Array<{ status: string }>
@@ -310,14 +358,23 @@ export async function registerOperations(app: FastifyInstance) {
             )
               throw new TaskConflict("sync_already_queued");
           }
+          const retryPayload = { ...payload, retryOf: old.id, retryMode: mode };
+          if (old.kind === "extract") {
+            delete retryPayload.checkpointOf;
+            if (rootId) retryPayload.checkpointOf = rootId;
+          }
           const task = await enqueueTask(
             req.principal!.id,
             key,
             old.source,
             old.kind,
-            { ...payload, retryOf: old.id, retryMode: mode },
+            retryPayload,
             tx,
           );
+          if (rootId && !prior)
+            await tx.resultCheckpoint.update({ where: { rootTaskId: rootId }, data: { activeTaskId: task.id } });
+          if (!prior) await tx.adminAudit.create({ data: { actorId: req.principal!.id, taskId: task.id,
+            action: "retry_task", details: { retryOf: old.id, mode, ...(rootId ? { checkpointOf: rootId } : {}) } } });
           if (old.kind === "export-selection") {
             const artifact = await tx.exportArtifact.findUnique({ where: { taskId: old.id } });
             if (!artifact) throw new TaskConflict("export_artifact_missing");
@@ -353,15 +410,19 @@ export async function registerOperations(app: FastifyInstance) {
               source: { enum: ["ticketsports", "corridasbr", "openresults"] },
               states: {
                 type: "array",
-                items: { type: "string", pattern: "^[A-Z]{2}$" },
+                items: { enum: ["AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT", "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO"] },
                 minItems: 1,
                 maxItems: 27,
+                uniqueItems: true,
                 default: ["SC"],
               },
               from: { type: "string", format: "date" },
               to: { type: "string", format: "date" },
               batchSize: { type: "integer", minimum: 1, maximum: 25, default: 5 },
               snapshotLimit: { type: "integer", minimum: 5, maximum: 1000, default: 250 },
+              discoveryMode: { enum: ["bounded", "national"], default: "bounded" },
+              prefixLimit: { type: "integer", minimum: 25, maximum: 10000, default: 10000 },
+              autoContinue: { type: "boolean", default: false },
             },
             ["source"],
           ),
@@ -378,7 +439,8 @@ export async function registerOperations(app: FastifyInstance) {
         .digest("hex");
       try {
         const task = await prisma.$transaction(async (tx) => {
-          const item = await enqueueTask(req.principal!.id, key, body.source, "catalog-sync", { syncId, ...body }, tx);
+          const checkpointHash = catalogCheckpoint({ page: 1, cursor: 0, snapshot: [] });
+          const item = await enqueueTask(req.principal!.id, key, body.source, "catalog-sync", { syncId, ...body, checkpointHash }, tx);
           await tx.catalogSync.upsert({
             where: { id: syncId },
             update: {},
@@ -398,24 +460,15 @@ export async function registerOperations(app: FastifyInstance) {
     { onRequest: requireAdmin, schema: { ...schema(), querystring: object(page) } },
     async (req) => {
       const q = req.query as any;
+      const [syncs, total] = await Promise.all([
+        prisma.catalogSync.findMany({ skip: (q.page - 1) * q.limit, take: q.limit, orderBy: { createdAt: "desc" } }),
+        prisma.catalogSync.count(),
+      ]);
       return {
-        data: await prisma.catalogSync.findMany({
-          skip: (q.page - 1) * q.limit,
-          take: q.limit,
-          orderBy: { createdAt: "desc" },
-          select: {
-            id: true,
-            source: true,
-            options: true,
-            cursor: true,
-            page: true,
-            status: true,
-            coverage: true,
-            discovered: true,
-            processed: true,
-            updatedAt: true,
-          },
-        }),
+        data: await Promise.all(syncs.map(async sync => publicCatalogSync(sync,
+          await prisma.collectionTask.findFirst({ where: { kind: "catalog-sync", payload: { path: ["syncId"], equals: sync.id } },
+            orderBy: [{ updatedAt: "desc" }, { id: "desc" }] })))),
+        pagination: { page: q.page, limit: q.limit, total, totalPages: Math.ceil(total / q.limit) },
       };
     },
   );
@@ -436,17 +489,15 @@ export async function registerOperations(app: FastifyInstance) {
               },
             },
           });
-          const payload = { ...(sync.options as object), syncId: sync.id };
-          if (prior)
-            return enqueueTask(
-              req.principal!.id,
-              String(req.headers["idempotency-key"]),
-              sync.source,
-              "catalog-sync",
-              payload,
-              tx,
-            );
+          if (prior) {
+            if (prior.kind !== "catalog-sync" || prior.source !== sync.source ||
+                (prior.payload as { syncId?: string }).syncId !== sync.id) throw new TaskConflict("idempotency_conflict");
+            // Replaying a lost response must return the original task even after its checkpoint advances.
+            return prior;
+          }
           const latest = await tx.catalogSync.findUniqueOrThrow({ where: { id: sync.id } });
+          const payload = { ...(latest.options as object), syncId: latest.id, checkpointHash: catalogCheckpoint(latest) };
+          if ((latest.options as { pauseRequested?: boolean }).pauseRequested) throw new TaskConflict("sync_paused");
           if (latest.status !== "ready") throw new TaskConflict("scope_completed_or_limited");
           if (
             await tx.collectionTask.count({
@@ -474,6 +525,19 @@ export async function registerOperations(app: FastifyInstance) {
       }
     },
   );
+  for (const action of ["pause", "resume"] as const) app.post(
+    `/v1/admin/syncs/:id/${action}`,
+    { onRequest: requireAdmin, schema: { ...schema(), headers } },
+    async (req, reply) => {
+      try {
+        return await controlCatalogSync((req.params as { id: string }).id, req.principal!.id,
+          action, String(req.headers["idempotency-key"]));
+      } catch (e) {
+        if (e instanceof TaskConflict) return reply.code(e.message === "sync_not_found" ? 404 : 409).send({ error: e.message });
+        throw e;
+      }
+    },
+  );
   app.post(
     "/v1/admin/catalog/events/collect",
     {
@@ -490,7 +554,7 @@ export async function registerOperations(app: FastifyInstance) {
         ref: { sourceType: string; url: string; sourceExternalId: string; sourceId: string };
       }> = [];
       for (const eventId of body.eventIds) {
-        const event = await prisma.event.findUnique({ where: { id: eventId }, include: { sourceReferences: true } });
+        const event = await prisma.event.findUnique({ where: { id: await resolveEventId(eventId) }, include: { sourceReferences: true } });
         if (!event) return reply.code(404).send({ error: "event_not_found" });
         const ref = event.sourceReferences.find((r) =>
           body.operation === "results" ? r.sourceType === "openresults" : r.sourceType === event.sourceType,
@@ -617,7 +681,8 @@ export async function registerOperations(app: FastifyInstance) {
         }
       }
       // Snapshot IDs at acceptance, including every page. Hard limit is explicit, never silent truncation.
-      const where = body.eventIds ? { id: { in: body.eventIds } } : adminEventFilter(body.filter);
+      const selectedIds = body.eventIds ? await resolveEventIds(body.eventIds) : null;
+      const where = selectedIds ? { id: { in: selectedIds } } : adminEventFilter(body.filter);
       const events = await prisma.event.findMany({
         where: { AND: [where, ...(req.principal!.admin ? [] : [{ publicationStatus: "published" as const }])] },
         select: { id: true },
@@ -626,7 +691,7 @@ export async function registerOperations(app: FastifyInstance) {
       });
       if (!events.length) return reply.code(409).send({ error: "empty_selection" });
       if (events.length > 10000) return reply.code(409).send({ error: "selection_exceeds_10000_refine_filter" });
-      if (body.eventIds && events.length !== body.eventIds.length)
+      if (selectedIds && events.length !== selectedIds.length)
         return reply.code(404).send({ error: "event_not_found" });
       try {
         const { task, artifact } = await prisma.$transaction(async (tx) => {

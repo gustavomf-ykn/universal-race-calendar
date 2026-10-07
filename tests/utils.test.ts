@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   atLeastSemver,
+  countryFromLocationText,
   generateEventFingerprint,
   normalizeDate,
   normalizeDistanceKm,
@@ -9,12 +10,26 @@ import {
 } from "@race-calendar/utils";
 
 describe("utils", () => {
+  it("requires explicit unambiguous country components rather than UFs or venue names", () => {
+    for (const location of [null, "", "Garuva, SC", "Parque Brasil, Lisboa", "Avenida Brasil, Porto", "Brasil, Garuva, SC", "constructor"])
+      expect(countryFromLocationText(location)).toEqual({ country: null, sourceText: null, conflicting: false });
+    expect(countryFromLocationText("Garuva, SC, Brasil")).toEqual({ country: "BR", sourceText: "Brasil", conflicting: false });
+    expect(countryFromLocationText("Porto, Portugal").country).toBe("PT");
+    expect(countryFromLocationText("Garuva, SC, BR, Brasil").country).toBe("BR");
+    expect(countryFromLocationText("Porto, Portugal, Brasil")).toEqual({ country: null, sourceText: null, conflicting: true });
+  });
   it("generates slugs", () => {
     expect(slugify("Meia Maratona de Florianopolis 2026")).toBe("meia-maratona-de-florianopolis-2026");
   });
 
   it("normalizes Brazilian dates", () => {
     expect(normalizeDate("16/08/2026")).toBe("2026-08-16");
+  });
+  it("recognizes JSON-LD timestamps without changing their local calendar day", () => {
+    expect(normalizeDate("2026-10-18T23:30:00-03:00")).toBe("2026-10-18");
+    expect(normalizeDate("2026-10-18T07:00:00Z")).toBe("2026-10-18");
+    expect(normalizeDate("2026-02-30T07:00:00-03:00")).toBeNull();
+    expect(normalizeDate("2026-10-18Tomorrow")).toBeNull();
   });
 
   it("normalizes BRL prices", () => {

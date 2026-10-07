@@ -111,8 +111,10 @@ describe.skipIf(!process.env.DATABASE_URL)("unified backend with PostgreSQL and 
   });
   it("discovers a calendar event through the existing TicketSports adapter", async () => {
     const detail = JSON.parse(readFileSync("tests/fixtures/ticketsports-simple.json", "utf8"));
-    detail.eventId = "integrated-fixture";
-    detail.uri = "https://www.ticketsports.com.br/e/integrated-fixture";
+    detail.eventId = "999991234";
+    detail.uri = "https://www.ticketsports.com.br/e/integrated-fixture-999991234";
+    // Positive publication fixture: source text explicitly identifies the race surface.
+    detail.eventContents.push({ title: "Modalidade", description: "<p>Corrida de rua.</p>" });
     const adapter = new TicketSportsAdapter({ getJson: async () => detail, getText: async () => "" });
     const registry = new SourceAdapterRegistry({ adapters: [adapter] });
     // Exercise the same importer used by the TS executor without a real collection.
@@ -125,7 +127,7 @@ describe.skipIf(!process.env.DATABASE_URL)("unified backend with PostgreSQL and 
         {
           sourceType: "ticketsports",
           adapter: "ticketsports",
-          externalId: "integrated-fixture",
+          externalId: "999991234",
           name: detail.title,
           url: detail.uri,
           country: "BR",
@@ -408,6 +410,14 @@ describe.skipIf(!process.env.DATABASE_URL)("unified backend with PostgreSQL and 
       app.inject({ method: "GET", url: "/v1/admin/source-matches", headers: { authorization: `Bearer ${jwt}` } });
     expect((await request(await token({ app_metadata: { role: "admin" } }))).statusCode).toBe(200);
     expect((await request(await token({ user_metadata: { role: "admin" } }))).statusCode).toBe(403);
+    const sourceControls = (jwt: string) =>
+      app.inject({ url: "/v1/admin/source-controls", headers: { authorization: `Bearer ${jwt}` } });
+    expect((await sourceControls(await token({ app_metadata: { role: "admin" } }))).statusCode).toBe(200);
+    expect((await sourceControls(await token({ user_metadata: { role: "admin" } }))).statusCode).toBe(403);
+    const reconciliationScans = (jwt: string) =>
+      app.inject({ url: "/v1/admin/catalog/reconciliations/scans", headers: { authorization: `Bearer ${jwt}` } });
+    expect((await reconciliationScans(await token({ app_metadata: { role: "admin" } }))).statusCode).toBe(200);
+    expect((await reconciliationScans(await token({ user_metadata: { role: "admin" } }))).statusCode).toBe(403);
     expect((await request(await token({ app_metadata: { role: "admin" } }, "other"))).statusCode).toBe(401);
     expect((await request(await token({ app_metadata: { role: "admin" } }, "authenticated", "-1m"))).statusCode).toBe(
       401,

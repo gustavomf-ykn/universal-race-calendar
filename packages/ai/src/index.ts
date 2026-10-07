@@ -1,5 +1,5 @@
 import { type RaceEventExtraction, raceEventExtractionSchema, type RawSourceExtraction } from "@race-calendar/schemas";
-import { cleanText, normalizeDate, normalizeDistanceKm, normalizePrice, normalizeTime, unique } from "@race-calendar/utils";
+import { cleanText, modalityFromSourceText, normalizeDate, normalizeDistanceKm, normalizePrice, normalizeTime, unique } from "@race-calendar/utils";
 
 export type ExtractRaceEventInput = {
   raw: RawSourceExtraction;
@@ -106,12 +106,13 @@ export class MockAIProvider implements AIProvider {
       endTime: evidence(null, 0),
       city: evidence(cityState.city, cityState.city ? 0.8 : 0),
       state: evidence(cityState.state, cityState.state ? 0.8 : 0),
-      country: evidence(cityState.country ?? "BR", 0.65),
+      country: { value: cityState.country, confidence: cityState.country ? 0.65 : 0,
+        sourceText: cityState.countrySourceText },
       locationName: evidence(null, 0),
       address: evidence(null, 0),
       latitude: null,
       longitude: null,
-      modality: inferModality(text),
+      modality: modalityFromSourceText(input.raw.title ?? "", input.raw.importantText).modality,
       distances,
       prices,
       kits: [],
@@ -352,6 +353,7 @@ export function buildCurationMessages(input: ExtractRaceEventInput): Array<{ rol
         "Voce estrutura dados de corridas de rua para uma API universal de calendario.",
         "Retorne somente JSON valido compatível com RaceEventExtraction.",
         "Nao invente dados: use null quando nao houver evidencia clara.",
+        "Modalidade exige evidencia da prova/percurso: corrida de rua, trail running ou corrida de montanha. Nome generico corrida, run ou maratona, endereco com Rua e links de navegacao nao comprovam modalidade. Sem evidencia, use unknown; se houver rua e trail, use mixed para revisao.",
         "Use country como codigo ISO-2 real da localizacao do evento, por exemplo BR, PT, US ou AR.",
         "Use state para UF/estado/provincia apenas quando houver evidencia; fora do Brasil pode ser null sem warning se city/country/locationName estiverem claros.",
         "Inclua sourceText nos campos criticos, confidence de 0 a 1, fieldConfidences, warnings e unstructuredNotes.",
@@ -411,9 +413,9 @@ function inferName(text: string): string | null {
   return cleanText(sentence).slice(0, 120) || null;
 }
 
-function findCityStateCountry(text: string): { city: string | null; state: string | null; country: string | null } {
-  const explicit = text.match(/([^.,;:]{2,80}),\s*([A-Z]{2})(?:,\s*(Brasil|BR))?/);
-  if (!explicit?.[1] || !explicit[2]) return { city: null, state: null, country: "BR" };
+function findCityStateCountry(text: string): { city: string | null; state: string | null; country: string | null; countrySourceText: string | null } {
+  const explicit = text.match(/([^.,;:]{2,80}),\s*([A-Z]{2})(?:,\s*(Brasil|Brazil|BR)\b)?/);
+  if (!explicit?.[1] || !explicit[2]) return { city: null, state: null, country: null, countrySourceText: null };
 
   const city = explicit[1]
     .replace(/\b\d{1,2}[/.]\d{1,2}(?:[/.]\d{2,4})?\b/g, " ")
@@ -425,7 +427,8 @@ function findCityStateCountry(text: string): { city: string | null; state: strin
   return {
     city: cleanText(city) || null,
     state: explicit[2].toUpperCase(),
-    country: "BR",
+    country: explicit[3] ? "BR" : null,
+    countrySourceText: explicit[3] ?? null,
   };
 }
 
@@ -439,15 +442,6 @@ function findRegulationUrl(urls: string[]): string | null {
 
 function imageUrls(raw: Record<string, unknown>): string[] {
   return [raw.headerImageSource, raw.logoImageSource].filter((value): value is string => typeof value === "string" && value.startsWith("http"));
-}
-
-function inferModality(text: string): "road" | "trail" | "mixed" | "kids" | "walk" | "unknown" {
-  const lower = text.toLowerCase();
-  if (lower.includes("trail")) return "trail";
-  if (lower.includes("kids") || lower.includes("infantil")) return "kids";
-  if (lower.includes("caminhada")) return "walk";
-  if (lower.includes("rua") || lower.includes("maratona") || lower.includes("corrida")) return "road";
-  return "unknown";
 }
 
 function inferEventStatus(text: string): "scheduled" | "postponed" | "cancelled" | "sold_out" | "finished" | "unknown" {

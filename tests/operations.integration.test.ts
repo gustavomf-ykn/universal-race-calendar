@@ -72,6 +72,15 @@ describe.skipIf(!enabled)("panel operations on isolated database", () => {
     expect(await prisma.event.count({ where: { sourceExternalId: { startsWith: prefix } } })).toBe(2);
     const events = await prisma.event.findMany({ where: { sourceExternalId: { startsWith: prefix } } });
     expect(events.every((e) => e.publicationStatus === "pending_review")).toBe(true);
+    expect((await app.inject({ url: `/v1/admin/catalog/events/${events[0]!.id}/comparison` })).statusCode).toBe(401);
+    const reference = await prisma.eventSourceReference.findFirstOrThrow({ where: { eventId: events[0]!.id } });
+    await prisma.eventSourceReference.update({ where: { id: reference.id }, data: {
+      observation: { city: "Outra cidade", date: events[0]!.date!.toISOString().slice(0, 10) }, lastValidatedAt: new Date(),
+    } });
+    const comparison = await app.inject({ url: `/v1/admin/catalog/events/${events[0]!.id}/comparison`, headers });
+    expect(comparison.statusCode, comparison.body).toBe(200);
+    expect(comparison.json().fields.find((f: { field: string }) => f.field === "city")).toMatchObject({ conflict: true });
+    expect(comparison.json().sources[0]).not.toHaveProperty("source");
     const invalid = await app.inject({
       url: `/v1/admin/catalog/events/${events[0]!.id}`,
       method: "PATCH",

@@ -1,3 +1,5 @@
+import { modalityFromSourceText, type SourceModality } from "@race-calendar/utils";
+
 /** Repair only reversible UTF-8 bytes misread as Latin-1. Never damage valid Unicode. */
 export function repairMojibake(value: string | null | undefined): string | null {
   if (value == null) return null;
@@ -11,13 +13,6 @@ export function repairMojibake(value: string | null | undefined): string | null 
   });
 }
 
-export function sourceModality(title: string, text: string): "road" | "trail" | "kids" | "walk" | "unknown" {
-  const name = title.toLowerCase();
-  const content = text.toLowerCase();
-  if (/\b(kids?|infantil)\b/.test(name)) return "kids";
-  if (/\btrail\b/.test(name) || /\btrail running\b|\btrilhas\b|\b(?:corrida|percurso)\s+(?:em|de|pela)\s+trilha\b/.test(content)) return "trail";
-  if (name.includes("caminhada") && !/(corrida|maratona|meia|desafio|circuito)/.test(name)) return "walk";
-  if (/\b(rua|asfalto|road)\b/.test(content) || /(corrida|maratona|meia|circuito|run)\b/.test(name)) return "road";
-  if (content.includes("caminhada") && !/(corrida|maratona|meia)/.test(content)) return "walk";
-  return "unknown";
+export function sourceModality(title: string, text: string): SourceModality {
+  return modalityFromSourceText(title, text).modality;
 }

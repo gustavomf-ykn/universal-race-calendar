@@ -1,4 +1,9 @@
 import { registerOperations } from "./operations.js";
+import { registerSourceComparison } from "./source-comparison.js";
+import { registerSourceControls } from "./source-controls.js";
+import { registerCapacity } from "./capacity.js";
+import { registerReconciliation } from "./reconciliation.js";
+import { registerWeeklyCatalog } from "./catalog-weekly.js";
 import { registerBackend, acceptTask } from "./backend.js";
 import { installLegacyContracts } from "./legacy-contracts.js";
 import { installCalendarContracts } from "./contracts.js";
@@ -23,6 +28,9 @@ import {
   getSource,
   listSources,
   prisma,
+  resolveEventId,
+  resolveEventSlug,
+  eventPublicationError,
 } from "@race-calendar/database";
 import {
   curationJobStatusSchema,
@@ -67,10 +75,10 @@ type AdminEventListQuery = EventListQuery & {
   warnings?: string | undefined;
 };
 
-
-
 export async function buildApp(options: BuildAppOptions = {}) {
-  const app = Fastify({ logger: { redact: ["req.headers.authorization", "req.headers.x-api-key", "req.headers.x-client-key"] } });
+  const app = Fastify({
+    logger: { redact: ["req.headers.authorization", "req.headers.x-api-key", "req.headers.x-client-key"] },
+  });
   void options; // Deprecated constructor injection retained for source compatibility.
   await app.register(cors, {
     origin: corsOrigins(),
@@ -78,7 +86,13 @@ export async function buildApp(options: BuildAppOptions = {}) {
   });
   await app.register(swagger, {
     openapi: {
-      components: { securitySchemes: { supabaseAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" }, clientKey: { type: "apiKey", in: "header", name: "X-Client-Key" }, internalKey: { type: "apiKey", in: "header", name: "X-API-Key" } } },
+      components: {
+        securitySchemes: {
+          supabaseAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" },
+          clientKey: { type: "apiKey", in: "header", name: "X-Client-Key" },
+          internalKey: { type: "apiKey", in: "header", name: "X-API-Key" },
+        },
+      },
       info: {
         title: "Universal Race Calendar API",
         version: "2.0.0",
@@ -88,10 +102,16 @@ export async function buildApp(options: BuildAppOptions = {}) {
   await app.register(swaggerUi, { routePrefix: "/docs" });
   installCalendarContracts(app);
   installLegacyContracts(app);
-  app.setErrorHandler<FastifyError>((error,request,reply)=>{
-    const code=error.statusCode??500;
-    if(code>=500)request.log.error({code:error.code??"internal_error"},"Request failed; inspect service and database health.");
-    return reply.code(code).send({error:code>=500?"internal_error":error.validation?"invalid_request":error.message});
+  app.setErrorHandler<FastifyError>((error, request, reply) => {
+    const code = error.statusCode ?? 500;
+    if (code >= 500)
+      request.log.error(
+        { code: error.code ?? "internal_error" },
+        "Request failed; inspect service and database health.",
+      );
+    return reply
+      .code(code)
+      .send({ error: code >= 500 ? "internal_error" : error.validation ? "invalid_request" : error.message });
   });
 
   app.get("/health", async () => ({ status: "ok" }));
@@ -182,13 +202,21 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
   app.get("/v1/events/slug/:slug", async (request, reply) => {
     const { slug } = request.params as { slug: string };
-    const event = await prisma.event.findUnique({ where: { slug } });
-    if (!event) return reply.code(404).send({ error: "event_not_found" });
-    return sendEventDetail(event.id, reply);
+    const id = await resolveEventSlug(slug);
+    if (!id) return reply.code(404).send({ error: "event_not_found" });
+    return sendEventDetail(id, reply);
   });
 
   app.get("/v1/events/nearby", async (request) => {
-    const query = request.query as { lat?: string; lng?: string; radiusKm?: string; from?: string; to?: string; page?: string; limit?: string };
+    const query = request.query as {
+      lat?: string;
+      lng?: string;
+      radiusKm?: string;
+      from?: string;
+      to?: string;
+      page?: string;
+      limit?: string;
+    };
     const lat = Number(query.lat);
     const lng = Number(query.lng);
     const radiusKm = Number(query.radiusKm ?? 50);
@@ -201,8 +229,17 @@ export async function buildApp(options: BuildAppOptions = {}) {
         latitude: { not: null },
         longitude: { not: null },
       },
-      select: { id:true,slug:true,name:true,date:true,city:true,state:true,country:true,latitude:true,longitude:true },
-
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        date: true,
+        city: true,
+        state: true,
+        country: true,
+        latitude: true,
+        longitude: true,
+      },
     });
     const data = rows
       .map((event) => ({ event, distanceKm: haversineKm(lat, lng, event.latitude ?? 0, event.longitude ?? 0) }))
@@ -218,8 +255,12 @@ export async function buildApp(options: BuildAppOptions = {}) {
         country: item.event.country,
         distanceKm: Number(item.distanceKm.toFixed(1)),
       }));
-    const page=positiveInt(query.page,1),limit=Math.min(positiveInt(query.limit,20),100);
-    return { data:data.slice((page-1)*limit,page*limit), pagination: { page,limit,total:data.length,totalPages:Math.ceil(data.length/limit) } };
+    const page = positiveInt(query.page, 1),
+      limit = Math.min(positiveInt(query.limit, 20), 100);
+    return {
+      data: data.slice((page - 1) * limit, page * limit),
+      pagination: { page, limit, total: data.length, totalPages: Math.ceil(data.length / limit) },
+    };
   });
 
   app.get("/v1/events/:id", async (request, reply) => {
@@ -255,7 +296,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
     const { id } = request.params as { id: string };
     const source = await getSource(id);
     if (!source) return reply.code(404).send({ error: "source_not_found" });
-    return acceptTask(request, reply, source.adapter === "corridasbr" ? "corridasbr" : "ticketsports", "check-source", { sourceId: id });
+    return acceptTask(request, reply, source.adapter === "corridasbr" ? "corridasbr" : "ticketsports", "check-source", {
+      sourceId: id,
+    });
   });
 
   app.post("/v1/imports/ticketsports/run", { preHandler: requireInternalApiKey }, async (request, reply) => {
@@ -275,7 +318,12 @@ export async function buildApp(options: BuildAppOptions = {}) {
     if (offset != null) importOptions.offset = offset;
     if (force != null) importOptions.force = force;
     if (maxDurationMs != null) importOptions.maxDurationMs = maxDurationMs;
-    return acceptTask(request, reply, "ticketsports", "calendar", { ...importOptions, quantity: Math.min(importOptions.quantity ?? 25, 500), concurrency: 1, delayMs: Math.max(importOptions.delayMs ?? 500, 500) });
+    return acceptTask(request, reply, "ticketsports", "calendar", {
+      ...importOptions,
+      quantity: Math.min(importOptions.quantity ?? 25, 500),
+      concurrency: 1,
+      delayMs: Math.max(importOptions.delayMs ?? 500, 500),
+    });
   });
 
   app.get("/v1/imports/ticketsports/latest", { preHandler: requireInternalApiKey }, async (request, reply) => {
@@ -301,7 +349,12 @@ export async function buildApp(options: BuildAppOptions = {}) {
     if (offset != null) importOptions.offset = offset;
     if (force != null) importOptions.force = force;
     if (maxDurationMs != null) importOptions.maxDurationMs = maxDurationMs;
-    return acceptTask(request, reply, "corridasbr", "calendar", { ...importOptions, quantity: Math.min(importOptions.quantity ?? 25, 500), concurrency: 1, delayMs: Math.max(importOptions.delayMs ?? 500, 500) });
+    return acceptTask(request, reply, "corridasbr", "calendar", {
+      ...importOptions,
+      quantity: Math.min(importOptions.quantity ?? 25, 500),
+      concurrency: 1,
+      delayMs: Math.max(importOptions.delayMs ?? 500, 500),
+    });
   });
 
   app.get("/v1/imports/corridasbr/latest", { preHandler: requireInternalApiKey }, async (request, reply) => {
@@ -329,7 +382,10 @@ export async function buildApp(options: BuildAppOptions = {}) {
     if (from) input.from = from;
     if (to) input.to = to;
     if (candidateLimit) input.candidateLimit = candidateLimit;
-    return acceptTask(request, reply, "maintenance", "catalog", { ...input, candidateLimit: Math.min(input.candidateLimit ?? 25, 500) });
+    return acceptTask(request, reply, "maintenance", "catalog", {
+      ...input,
+      candidateLimit: Math.min(input.candidateLimit ?? 25, 500),
+    });
   });
 
   app.post("/v1/admin/import-runs/:id/process", { preHandler: requireInternalApiKey }, async (request, reply) => {
@@ -371,9 +427,17 @@ export async function buildApp(options: BuildAppOptions = {}) {
     };
     const [total, rows] = await Promise.all([
       prisma.importCandidate.count({ where }),
-      prisma.importCandidate.findMany({ where, orderBy: [{ date: "asc" }, { name: "asc" }], skip: (page - 1) * limit, take: limit }),
+      prisma.importCandidate.findMany({
+        where,
+        orderBy: [{ date: "asc" }, { name: "asc" }],
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
     ]);
-    return { data: rows.map(serializeImportCandidate), pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+    return {
+      data: rows.map(serializeImportCandidate),
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
   });
 
   app.get("/v1/extraction-jobs/:id", { preHandler: requireInternalApiKey }, async (request, reply) => {
@@ -386,11 +450,11 @@ export async function buildApp(options: BuildAppOptions = {}) {
   app.post("/v1/curation/events/:id/run", { preHandler: requireInternalApiKey }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = objectBody(request.body);
-    return acceptTask(request, reply, "maintenance", "curate-event", { eventId: id,
+    return acceptTask(request, reply, "maintenance", "curate-event", {
+      eventId: id,
       dryRun: optionalBoolean(body.dryRun) ?? false,
       force: optionalBoolean(body.force) ?? false,
     });
-
   });
 
   app.post("/v1/curation/events/batch", { preHandler: requireInternalApiKey }, async (request, reply) => {
@@ -402,7 +466,6 @@ export async function buildApp(options: BuildAppOptions = {}) {
       dryRun: optionalBoolean(body.dryRun) ?? false,
       force: optionalBoolean(body.force) ?? false,
     });
-
   });
 
   app.get("/v1/curation/jobs/:id", { preHandler: requireInternalApiKey }, async (request, reply) => {
@@ -441,7 +504,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   });
 
   app.get("/v1/admin/events/:id", { preHandler: requireInternalApiKey }, async (request, reply) => {
-    const { id } = request.params as { id: string };
+    const id = await resolveEventId((request.params as { id: string }).id);
     const event = await prisma.event.findUnique({
       where: { id },
       include: {
@@ -469,16 +532,20 @@ export async function buildApp(options: BuildAppOptions = {}) {
     return serializeAdminEventDetail(event, latestRawExtraction);
   });
 
-  app.patch("/v1/admin/events/:id/publication-status", { preHandler: requireInternalApiKey }, async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const body = objectBody(request.body);
-    const parsed = publicationStatusSchema.safeParse(body.publicationStatus ?? body.status);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_publication_status" });
-    return updateEventPublicationStatus(id, parsed.data, reply, request.principal!.id);
-  });
+  app.patch(
+    "/v1/admin/events/:id/publication-status",
+    { preHandler: requireInternalApiKey },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = objectBody(request.body);
+      const parsed = publicationStatusSchema.safeParse(body.publicationStatus ?? body.status);
+      if (!parsed.success) return reply.code(400).send({ error: "invalid_publication_status" });
+      return updateEventPublicationStatus(id, parsed.data, reply, request.principal!.id);
+    },
+  );
 
   app.patch("/v1/admin/events/:id/dedupe-status", { preHandler: requireInternalApiKey }, async (request, reply) => {
-    const { id } = request.params as { id: string };
+    const id = await resolveEventId((request.params as { id: string }).id);
     const body = objectBody(request.body);
     const parsed = dedupeStatusSchema.safeParse(body.dedupeStatus ?? body.status);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_dedupe_status" });
@@ -486,7 +553,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     const data: { dedupeStatus: typeof parsed.data; duplicateOfEventId?: string | null } = {
       dedupeStatus: parsed.data,
     };
-    if (duplicateOfEventId) data.duplicateOfEventId = duplicateOfEventId;
+    if (duplicateOfEventId) data.duplicateOfEventId = await resolveEventId(duplicateOfEventId);
     if (parsed.data === "unique") data.duplicateOfEventId = null;
     const event = await prisma.event
       .update({
@@ -545,7 +612,14 @@ export async function buildApp(options: BuildAppOptions = {}) {
   });
 
   app.get("/v1/admin/import-runs", { preHandler: requireInternalApiKey }, async (request) => {
-    const query = request.query as { source?: string; status?: string; from?: string; to?: string; page?: string; limit?: string };
+    const query = request.query as {
+      source?: string;
+      status?: string;
+      from?: string;
+      to?: string;
+      page?: string;
+      limit?: string;
+    };
     const page = positiveInt(query.page, 1);
     const limit = Math.min(positiveInt(query.limit, 50), 100);
     const where = importRunsWhere(query);
@@ -569,31 +643,40 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
   app.get("/v1/admin/catalog-summary", { preHandler: requireInternalApiKey }, async () => {
     const future = { publicationStatus: "published" as const, country: "BR", date: { gte: startOfToday() } };
-    const [total, ticketSports, corridasBRExclusive, bothSources, possibleDuplicates, withBanner, withDistance, withLocation, latestRuns] =
-      await Promise.all([
-        prisma.event.count({ where: future }),
-        prisma.event.count({ where: { ...future, sourceReferences: { some: { sourceType: "ticketsports" } } } }),
-        prisma.event.count({
-          where: {
-            ...future,
-            sourceReferences: { some: { sourceType: "corridasbr" }, none: { sourceType: "ticketsports" } },
-          },
-        }),
-        prisma.event.count({
-          where: {
-            ...future,
-            AND: [
-              { sourceReferences: { some: { sourceType: "ticketsports" } } },
-              { sourceReferences: { some: { sourceType: "corridasbr" } } },
-            ],
-          },
-        }),
-        prisma.event.count({ where: { ...future, dedupeStatus: { in: ["possible_duplicate", "needs_review"] } } }),
-        prisma.event.count({ where: { ...future, OR: [{ mainImageUrl: { not: null } }, { images: { some: {} } }] } }),
-        prisma.event.count({ where: { ...future, distances: { some: {} } } }),
-        prisma.event.count({ where: { ...future, city: { not: null }, state: { not: null } } }),
-        prisma.importRun.findMany({ orderBy: { createdAt: "desc" }, take: 10 }),
-      ]);
+    const [
+      total,
+      ticketSports,
+      corridasBRExclusive,
+      bothSources,
+      possibleDuplicates,
+      withBanner,
+      withDistance,
+      withLocation,
+      latestRuns,
+    ] = await Promise.all([
+      prisma.event.count({ where: future }),
+      prisma.event.count({ where: { ...future, sourceReferences: { some: { sourceType: "ticketsports" } } } }),
+      prisma.event.count({
+        where: {
+          ...future,
+          sourceReferences: { some: { sourceType: "corridasbr" }, none: { sourceType: "ticketsports" } },
+        },
+      }),
+      prisma.event.count({
+        where: {
+          ...future,
+          AND: [
+            { sourceReferences: { some: { sourceType: "ticketsports" } } },
+            { sourceReferences: { some: { sourceType: "corridasbr" } } },
+          ],
+        },
+      }),
+      prisma.event.count({ where: { ...future, dedupeStatus: { in: ["possible_duplicate", "needs_review"] } } }),
+      prisma.event.count({ where: { ...future, OR: [{ mainImageUrl: { not: null } }, { images: { some: {} } }] } }),
+      prisma.event.count({ where: { ...future, distances: { some: {} } } }),
+      prisma.event.count({ where: { ...future, city: { not: null }, state: { not: null } } }),
+      prisma.importRun.findMany({ orderBy: { createdAt: "desc" }, take: 10 }),
+    ]);
     return {
       total,
       bySource: { ticketsports: ticketSports, corridasbrExclusive: corridasBRExclusive, bothSources },
@@ -655,10 +738,16 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
   await registerBackend(app);
   await registerOperations(app);
+  await registerSourceComparison(app);
+  await registerSourceControls(app);
+  await registerCapacity(app);
+  await registerReconciliation(app);
+  await registerWeeklyCatalog(app);
   return app;
 }
 
 async function sendEventDetail(id: string, reply: FastifyReply) {
+  id = await resolveEventId(id);
   const event = await prisma.event.findFirst({
     where: { id, publicationStatus: "published", country: "BR" },
     include: {
@@ -926,13 +1015,37 @@ function adminEventsWhere(query: AdminEventListQuery) {
   return where;
 }
 
-async function updateEventPublicationStatus(id: string, publicationStatus: "draft" | "pending_review" | "published" | "hidden" | "rejected", reply: FastifyReply, actorId:string) {
-  const current=await prisma.event.findUnique({where:{id}});
-  if(!current)return reply.code(404).send({error:"event_not_found"});
-  if(publicationStatus==="published"&&(!current.date||!current.city||!current.state))return reply.code(409).send({error:"publication_requires_date_city_state"});
-  const event=await prisma.$transaction(async tx=>{
-    const row=await tx.event.update({where:{id},data:{publicationStatus,administrativeReview:true,publishedAt:publicationStatus==="published"?new Date():null},include:{distances:true,prices:true,images:{orderBy:{sortOrder:"asc"}},source:true}});
-    await tx.adminAudit.create({data:{actorId,eventId:id,action:"publication_status",details:{before:current.publicationStatus,after:publicationStatus}}});
+async function updateEventPublicationStatus(
+  id: string,
+  publicationStatus: "draft" | "pending_review" | "published" | "hidden" | "rejected",
+  reply: FastifyReply,
+  actorId: string,
+) {
+  id = await resolveEventId(id);
+  const current = await prisma.event.findUnique({ where: { id } });
+  if (!current) return reply.code(404).send({ error: "event_not_found" });
+  const event = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Event" WHERE id=${id} FOR UPDATE`;
+    const latest = await tx.event.findUniqueOrThrow({ where: { id }, include: { sourceReferences: true } });
+    const publicationError = publicationStatus === "published" ? eventPublicationError(latest) : null;
+    if (publicationError) throw Object.assign(new Error(publicationError), { statusCode: 409 });
+    const row = await tx.event.update({
+      where: { id },
+      data: {
+        publicationStatus,
+        administrativeReview: true,
+        publishedAt: publicationStatus === "published" ? new Date() : null,
+      },
+      include: { distances: true, prices: true, images: { orderBy: { sortOrder: "asc" } }, source: true },
+    });
+    await tx.adminAudit.create({
+      data: {
+        actorId,
+        eventId: id,
+        action: "publication_status",
+        details: { before: latest.publicationStatus, after: publicationStatus },
+      },
+    });
     return row;
   });
   return serializeAdminEventListItem(event);
@@ -1046,12 +1159,11 @@ function applySourceTypeFilter(where: any, value: string | undefined) {
   const sourceTypes = (value ?? "")
     .split(",")
     .map((sourceType) => sourceType.trim().toLowerCase())
-    .filter((sourceType) => sourceType === "ticketsports" || sourceType === "corridasbr" || sourceType === "openresults");
+    .filter(
+      (sourceType) => sourceType === "ticketsports" || sourceType === "corridasbr" || sourceType === "openresults",
+    );
   if (!sourceTypes.length) return;
-  where.OR = [
-    { sourceType: { in: sourceTypes } },
-    { sourceReferences: { some: { sourceType: { in: sourceTypes } } } },
-  ];
+  where.OR = [{ sourceType: { in: sourceTypes } }, { sourceReferences: { some: { sourceType: { in: sourceTypes } } } }];
 }
 
 function positiveInt(value: string | undefined, fallback: number): number {
@@ -1125,9 +1237,7 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
   const radius = 6371;
   const dLat = toRad(lat2 - lat1);
   const dLng = toRad(lng2 - lng1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return 2 * radius * Math.asin(Math.sqrt(a));
 }
 
@@ -1205,7 +1315,8 @@ export function serializePublicEvent(event: any) {
   const currentLot = currentPriceLot(prices);
   const coverImageUrl = event.mainImageUrl ?? event.images?.[0]?.url ?? event.images?.[0] ?? null;
   const locationLabel = publicLocationLabel(event);
-  const actionUrl = event.registrationUrl ?? event.officialUrl ?? event.sourceUrl ?? event.sourceReferences?.[0]?.url ?? null;
+  const actionUrl =
+    event.registrationUrl ?? event.officialUrl ?? event.sourceUrl ?? event.sourceReferences?.[0]?.url ?? null;
   const actionType = event.registrationUrl ? "registration" : event.officialUrl ? "official" : "source";
   const kitSummary = publicKitSummary(kits, kitPickup);
 
@@ -1229,7 +1340,12 @@ export function serializePublicEvent(event: any) {
       primaryAction: actionUrl
         ? {
             type: actionType,
-            label: actionType === "registration" ? "Inscrever-se" : actionType === "official" ? "Ver informacoes" : "Ver fonte",
+            label:
+              actionType === "registration"
+                ? "Inscrever-se"
+                : actionType === "official"
+                  ? "Ver informacoes"
+                  : "Ver fonte",
             url: actionUrl,
           }
         : null,
@@ -1277,7 +1393,10 @@ function sanitizePublicPrices(prices: any[]): any[] {
     if (!evidence) return [];
     const hasRegistrationEvidence = /(inscric|lote|valor|preco|a partir|vagas|participacao)/i.test(evidence);
     if (!hasRegistrationEvidence) return [];
-    if (/(retirada de kit|entrega de kit|domicilio|frete|estacionamento|doacao|multa)/i.test(evidence) && !/(inscric|lote)/i.test(evidence)) {
+    if (
+      /(retirada de kit|entrega de kit|domicilio|frete|estacionamento|doacao|multa)/i.test(evidence) &&
+      !/(inscric|lote)/i.test(evidence)
+    ) {
       return [];
     }
     const key = `${price.name ?? ""}|${value}|${price.currency ?? "BRL"}`;
@@ -1296,7 +1415,8 @@ function sanitizePublicKits(kits: any[]): any[] {
 
 function sanitizePublicKitPickup(kitPickup: any | null): any | null {
   if (!kitPickup || Number(kitPickup.confidence ?? 0) < 0.55) return null;
-  if (!(kitPickup.location || kitPickup.address || kitPickup.date || kitPickup.startTime || kitPickup.endTime)) return null;
+  if (!(kitPickup.location || kitPickup.address || kitPickup.date || kitPickup.startTime || kitPickup.endTime))
+    return null;
   return kitPickup;
 }
 
@@ -1326,9 +1446,20 @@ function publicKitSummary(kits: any[], kitPickup: any | null): string | null {
   return null;
 }
 
-function publicBadges(input: { distances: any[]; currentLot: any | null; kits: any[]; kitPickup: any | null }): string[] {
+function publicBadges(input: {
+  distances: any[];
+  currentLot: any | null;
+  kits: any[];
+  kitPickup: any | null;
+}): string[] {
   const badges: string[] = [];
-  if (input.distances.length) badges.push(...input.distances.slice(0, 3).map((distance) => distance.label).filter(Boolean));
+  if (input.distances.length)
+    badges.push(
+      ...input.distances
+        .slice(0, 3)
+        .map((distance) => distance.label)
+        .filter(Boolean),
+    );
   if (input.currentLot?.price) badges.push("Inscricoes abertas");
   if (input.kits.length || input.kitPickup) badges.push("Kit informado");
   return badges;
@@ -1338,7 +1469,9 @@ function isSafePublicCity(value: unknown): boolean {
   const text = cleanForPublicPolicy(value);
   if (!text || text.length < 2) return false;
   if (/^\d/.test(text)) return false;
-  return !/^(av|avenida|rua|rodovia|estrada|praca|parque|shopping|estadio|ginasio|centro|arena|complexo|campus|represa|lagoa|orla|posto|igreja|estacionamento|km)\b/i.test(text);
+  return !/^(av|avenida|rua|rodovia|estrada|praca|parque|shopping|estadio|ginasio|centro|arena|complexo|campus|represa|lagoa|orla|posto|igreja|estacionamento|km)\b/i.test(
+    text,
+  );
 }
 
 function isBrazilianState(value: unknown): boolean {
@@ -1393,15 +1526,17 @@ function lowestPrice(prices: Array<{ price: number | null }>): number | null {
   );
 }
 
-function currentPriceLot<T extends { isCurrent: boolean; price: number | null; currency: string; name: string | null; endDate?: Date | null }>(
-  prices: T[],
-): T | null {
+function currentPriceLot<
+  T extends { isCurrent: boolean; price: number | null; currency: string; name: string | null; endDate?: Date | null },
+>(prices: T[]): T | null {
   const current = prices.find((price) => price.isCurrent);
   return current ?? null;
 }
 
 function curationOnlyValue(value: unknown): "not_curated" | "published" | "pending_review" | "failed" | undefined {
-  return value === "not_curated" || value === "published" || value === "pending_review" || value === "failed" ? value : undefined;
+  return value === "not_curated" || value === "published" || value === "pending_review" || value === "failed"
+    ? value
+    : undefined;
 }
 
 function corsOrigins(): boolean | string[] {

@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from app.models import URLValidationError, RequestFailedError
+from app.services.source_requests import request_hooks
 
 
 async def public_ip(host):
@@ -19,13 +20,21 @@ async def public_ip(host):
 
 async def bounded_get(client,url,headers,timeout,max_bytes=10*1024*1024):
     parsed=urlsplit(url)
+    # Resolve/validate before reserving. Courtesy spacing is outside the HTTP
+    # timeout; the executor heartbeat and overall deadline remain active.
     async with asyncio.timeout(timeout):
         address=await public_ip(parsed.hostname)
+    hooks=request_hooks.get()
+    if hooks:
+        await hooks.before()
+    async with asyncio.timeout(timeout):
         # Keep the original Host header and TLS SNI/certificate hostname while
         # connecting to the exact validated address; redirects are handled upstream.
         request_url=httpx.URL(url).copy_with(host=address)
         async with client.stream('GET',request_url,headers={**headers,'Host':parsed.hostname},
                                  extensions={'sni_hostname':parsed.hostname}) as response:
+            if hooks:
+                await hooks.after(response.status_code,response.headers.get('retry-after'))
             body=bytearray()
             async for chunk in response.aiter_bytes():
                 body.extend(chunk)

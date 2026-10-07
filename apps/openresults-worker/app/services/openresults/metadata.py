@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import unicodedata
 from datetime import date, datetime, timezone
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlsplit, urlunsplit
@@ -10,11 +11,12 @@ import httpx
 from bs4 import BeautifulSoup
 
 from app.config import Settings
-from app.models import EventMetadata, ModalityInfo, RequestFailedError, URLValidationError
+from app.models import AccessBlockedError, EventMetadata, ModalityInfo, RequestFailedError, URLValidationError
 from app.services.safe_network import bounded_get
 from app.services.openresults_client import OpenResultsClient
 from app.services.parser import clean_text, parse_event_metadata
 from app.services.url_validation import validate_event_url
+from app.services.country import normalize_country, country_evidence
 
 
 FORBIDDEN_RAW_KEYS = {
@@ -118,18 +120,34 @@ def _first_url(value: Any) -> str:
 
 
 def apply_related_metadata(metadata: EventMetadata, raw: dict[str, Any]) -> None:
-    metadata.end_date = _date_value(raw.get("endDate")) or metadata.end_date
-    metadata.description = clean_text(raw.get("description")) or metadata.description
-    metadata.event_type = clean_text(raw.get("@type")) or metadata.event_type
-    metadata.source_event_status = clean_text(raw.get("eventStatus"))
-    metadata.image_url = _first_url(raw.get("image")) or metadata.image_url
     location = raw.get("location") if isinstance(raw.get("location"), dict) else {}
     address = location.get("address") if isinstance(location.get("address"), dict) else {}
+    key = lambda value: ' '.join(''.join(c for c in unicodedata.normalize('NFD', clean_text(value))
+        if not unicodedata.combining(c)).casefold().split())
+    compatible_country_location = bool(metadata.event_date and _date_value(raw.get('startDate')) == metadata.event_date
+        and metadata.city and key(address.get('addressLocality')) == key(metadata.city)
+        and metadata.state and key(address.get('addressRegion')) == key(metadata.state))
+    metadata.raw_metadata['roadrunners'] = raw
+    metadata.raw_metadata['related_edition_status'] = 'compatible' if compatible_country_location else 'unconfirmed'
+    if not compatible_country_location:
+        return
+    metadata.end_date = _date_value(raw.get("endDate")) or metadata.end_date
+    metadata.description = clean_text(raw.get("description")) or metadata.description
+    # SportsEvent/@type classifies a schema object, not road or trail terrain.
+    metadata.source_event_status = clean_text(raw.get("eventStatus"))
+    metadata.image_url = _first_url(raw.get("image")) or metadata.image_url
     metadata.location_name = clean_text(location.get("name"))
     metadata.address = clean_text(address.get("streetAddress"))
     metadata.city = clean_text(address.get("addressLocality")) or metadata.city
     metadata.state = clean_text(address.get("addressRegion")) or metadata.state
-    metadata.country = clean_text(address.get("addressCountry")) or metadata.country
+    if compatible_country_location:
+        observed = country_evidence(address.get("addressCountry"))
+        current = normalize_country(metadata.country)
+        if observed['status'] != 'missing':
+            if current and observed['country'] and current != observed['country']:
+                observed = {**observed, 'country': '', 'status': 'conflicting'}
+            metadata.raw_metadata['country_evidence'] = observed
+            metadata.country = observed['country'] or metadata.country
     geo = location.get("geo") if isinstance(location.get("geo"), dict) else {}
     try:
         metadata.latitude = float(geo.get("latitude")) if geo.get("latitude") is not None else None
@@ -204,6 +222,8 @@ class EventMetadataService:
                     location = response.headers.get("location", "")
                     current = _safe_related_url(urljoin(current, location))
                     continue
+                if response.status_code in (401,403,429):
+                    raise AccessBlockedError('source_access_blocked')
                 if response.status_code >= 400:
                     raise RequestFailedError(f"O site relacionado retornou HTTP {response.status_code}.")
                 return response.text

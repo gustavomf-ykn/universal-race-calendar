@@ -1,7 +1,43 @@
-import { claimTask, heartbeatTask, finishTask, prisma, setTaskLease, newWorkerId, workerPresence } from "@race-calendar/database";
+import {
+  claimTask,
+  heartbeatTask,
+  finishTask,
+  prisma,
+  setTaskLease,
+  newWorkerId,
+  workerPresence,
+  coordinateCatalogSyncs,
+  coordinateCatalogReconciliations,
+  coordinateWeeklyCatalog,
+  processCatalogReconciliation,
+  editionFailureCode,
+  inspectLocalResources,
+  assertLocalResources,
+  LocalResourceDeferred,
+  deferLocalResourceTask,
+} from "@race-calendar/database";
 import { syncCatalog } from "./catalog.js";
 import { existsSync } from "node:fs";
 import { BatchRun } from "./batch.js";
+import { taskError } from "./task-error.js";
+import { setSourceRequestGuard, enterSourceRequestScope } from "@race-calendar/sources";
+import {
+  requestSource,
+  waitForSourceRequest,
+  blockSourceRequests,
+  deferSourceTask,
+  SourceBudgetDeferred,
+  SourceCircuitOpen,
+  observeSourceResponse,
+  assertCapacity,
+  CapacityDeferred,
+  deferCapacityTask,
+} from "@race-calendar/database";
+setSourceRequestGuard(async (url, scope) => {
+  assertLocalResources();
+  await assertCapacity();
+  await waitForSourceRequest(requestSource(url, scope));
+}, observeSourceResponse);
 import {
   importTicketSportsEvents,
   importCorridasBREvents,
@@ -23,14 +59,54 @@ export async function runQueue() {
   const run = new BatchRun();
   const watchdog = run.watchdog();
   const workerId = newWorkerId();
-  const shouldStop = () => stopping || Boolean(process.env.WORKER_STOP_FILE && existsSync(process.env.WORKER_STOP_FILE));
-  const announce = () => workerPresence(workerId, shouldStop() ? "stopping" : run.activeTaskId ? "busy" : "available", run.activeTaskId);
+  const shouldStop = () =>
+    stopping || Boolean(process.env.WORKER_STOP_FILE && existsSync(process.env.WORKER_STOP_FILE));
+  const announce = () => {
+    const resources = inspectLocalResources();
+    return workerPresence(
+      workerId,
+      shouldStop() ? "stopping" : run.activeTaskId ? "busy" : resources.reason ? "resource_wait" : "available",
+      run.activeTaskId,
+      resources,
+    );
+  };
   let presenceTimer: ReturnType<typeof setInterval> | undefined;
   try {
     await announce();
-    presenceTimer = setInterval(() => { void announce().catch(() => { stopping = true; console.error("Calendar: connection lost; stopping before the next task."); }); }, 20000);
+    presenceTimer = setInterval(() => {
+      void announce().catch(() => {
+        stopping = true;
+        console.error("Calendar: connection lost; stopping before the next task.");
+      });
+    }, 20000);
     console.log("Calendar executor connected; waiting for panel requests.");
+    let coordinatedAt = 0;
+    let resourcesWaiting = false;
     while (!shouldStop() && run.canClaim()) {
+      const resources = inspectLocalResources();
+      if (resources.reason) {
+        await announce();
+        if (!resourcesWaiting) console.log("Calendar: local resources unavailable; waiting without acquiring tasks.");
+        resourcesWaiting = true;
+        if (run.options.batch) {
+          run.reason = "local_resource_wait";
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 5000));
+        continue;
+      }
+      if (resourcesWaiting) {
+        resourcesWaiting = false;
+        await announce();
+        console.log("Calendar: local resources available; waiting for requests.");
+      }
+      // Selective tests must never generate or consume successors outside their approved ID list.
+      if (!process.env.WORKER_TASK_SELECTION_FILE && Date.now() - coordinatedAt >= 5000) {
+        if (!run.options.batch) await coordinateWeeklyCatalog();
+        await coordinateCatalogSyncs();
+        await coordinateCatalogReconciliations();
+        coordinatedAt = Date.now();
+      }
       const task = await claimTask(["ticketsports", "corridasbr", "maintenance"]);
       if (!task) {
         if (run.options.batch) {
@@ -45,6 +121,7 @@ export async function runQueue() {
       await announce();
       console.log(`Calendar task ${task.id}: started.`);
       setTaskLease(task);
+      enterSourceRequestScope(task.source);
       let progress: Record<string, number | string> = { stage: "starting" };
       // Fail closed if the lease is lost: a stale executor must stop doing work.
       const heartbeat = setInterval(() => {
@@ -56,16 +133,21 @@ export async function runQueue() {
       }, 20000);
       const deadline = setTimeout(() => process.exit(1), 1800000);
       try {
+        assertLocalResources();
+        await assertCapacity();
         const input = task.payload as Record<string, unknown>;
         let status = "completed";
         if (task.kind === "catalog-sync") {
           progress = await syncCatalog(input);
+        } else if (task.kind === "catalog-reconcile") {
+          progress = await processCatalogReconciliation(task);
         } else if (task.kind === "calendar") {
           const importer = task.source === "ticketsports" ? importTicketSportsEvents : importCorridasBREvents;
           const quantity = Math.min(Number(input.quantity ?? 25), 500);
           let processed = 0,
             failed = 0;
           for (let offset = Number(input.offset ?? 0); processed < quantity; ) {
+            assertLocalResources();
             const result = await importer({
               ...input,
               quantity: Math.min(25, quantity - processed),
@@ -93,6 +175,7 @@ export async function runQueue() {
           // Each candidate is idempotently upserted; progress remains visible in ImportRun.
           let run = await processCatalogImportRun(runId, 25);
           while (run?.status === "ready") {
+            assertLocalResources();
             progress = { stage: "catalog", runId, processed: run.processedCount };
             if (!(await heartbeatTask(task, progress))) throw new Error("lease_lost");
             run = await processCatalogImportRun(runId, 25);
@@ -102,6 +185,9 @@ export async function runQueue() {
         } else if (task.kind === "check-source") {
           const result = await runSourceCheck(String(input.sourceId));
           progress = { stage: result.status };
+          if (result.reasons.includes("source_access_blocked")) throw Error("source_access_blocked");
+          const editionFailure = result.reasons.find((code) => editionFailureCode(new Error(code)));
+          if (editionFailure) throw Error(editionFailure);
           if (result.status.includes("failed")) status = "failed";
         } else if (task.kind === "curate-event") {
           const result = await runAICurationForEvent(String(input.eventId), input);
@@ -111,8 +197,35 @@ export async function runQueue() {
           progress = { stage: result.status };
         } else throw new Error("unsupported_task");
         await finishTask(task, status, progress, status === "failed" ? "collection_failed" : null);
-      } catch {
-        await finishTask(task, "failed", progress, "collection_failed");
+      } catch (error) {
+        if (error instanceof LocalResourceDeferred) {
+          progress = { ...progress, stage: "local_resource_wait" };
+          await deferLocalResourceTask(task, progress, error);
+        } else if (error instanceof CapacityDeferred) {
+          progress = { ...progress, stage: "capacity_wait" };
+          await deferCapacityTask(task, progress, error);
+        } else if (error instanceof SourceBudgetDeferred || error instanceof SourceCircuitOpen) {
+          progress = {
+            ...progress,
+            stage: error instanceof SourceCircuitOpen ? "source_access_blocked" : "source_budget_wait",
+          };
+          await deferSourceTask(task, progress, error);
+        } else {
+          const failure = taskError(error);
+          if (failure.code === "source_access_blocked" && ["ticketsports", "corridasbr"].includes(task.source))
+            await blockSourceRequests(task.source as "ticketsports" | "corridasbr");
+          if (!failure.retryable)
+            await prisma.collectionTask.updateMany({
+              where: {
+                id: task.id,
+                status: "running",
+                leaseToken: task.leaseToken,
+                leaseUntil: { gt: new Date() },
+              },
+              data: { maxAttempts: task.attempt },
+            });
+          await finishTask(task, "failed", progress, failure.code);
+        }
       } finally {
         clearInterval(heartbeat);
         clearTimeout(deadline);
