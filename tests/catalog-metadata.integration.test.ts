@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { prisma, saveCanonicalEvent } from "@race-calendar/database";
 import type { CanonicalRaceEvent } from "@race-calendar/schemas";
 import { raceEventExtractionSchema, rawSourceExtractionSchema } from "@race-calendar/schemas";
-import { normalizeRaceEventExtraction } from "@race-calendar/curation";
+import { normalizeRaceEventExtraction, curateTicketSportsSourceExtraction } from "@race-calendar/curation";
 const enabled = Boolean(process.env.DATABASE_URL);
 const prefix = "metadata-test-" + randomUUID();
 describe.skipIf(!enabled)("recurring catalog metadata preserves valid and reviewed values", () => {
@@ -63,6 +63,59 @@ describe.skipIf(!enabled)("recurring catalog metadata preserves valid and review
     });
     expect((await prisma.eventSourceReference.findFirstOrThrow({ where: { eventId: id } })).observation)
       .toMatchObject({ date: null, city: null, state: null, country: null, modality: "unknown" });
+  });
+  it("keeps a published edition visible when only country and modality are absent from a refresh", async () => {
+    const { canonical, id } = await fixture("partial-diagnostics");
+    const result = await saveCanonicalEvent({ ...canonical, country: null, modality: "unknown",
+      warnings: ["country_unconfirmed", "modality_unconfirmed"],
+      publishabilityReasons: ["country_unconfirmed", "modality_unconfirmed"], publicationStatus: "pending_review" });
+    expect(await prisma.event.findUniqueOrThrow({ where: { id } })).toMatchObject({
+      country: "BR", modality: "road", publicationStatus: "published", warnings: [], publishabilityReasons: [],
+    });
+    expect(result.canonicalEvent.publicationStatus).toBe("published");
+    expect((await prisma.eventSourceReference.findFirstOrThrow({ where: { eventId: id } })).observation)
+      .toMatchObject({ country: null, modality: "unknown" });
+  });
+  it("does not clear unrelated review requirements or publish a still-incomplete edition", async () => {
+    const { canonical, id } = await fixture("remaining-diagnostics");
+    await saveCanonicalEvent({ ...canonical, modality: "unknown", warnings: ["modality_unconfirmed", "conflicting_date"],
+      publishabilityReasons: ["modality_unconfirmed", "critical_warning"], publicationStatus: "pending_review" });
+    expect(await prisma.event.findUniqueOrThrow({ where: { id } })).toMatchObject({
+      modality: "road", publicationStatus: "pending_review", warnings: ["conflicting_date"],
+      publishabilityReasons: ["critical_warning"],
+    });
+    await prisma.event.update({ where: { id }, data: { country: null, modality: "unknown", warnings: [], publishabilityReasons: [] } });
+    await saveCanonicalEvent({ ...canonical, country: null, modality: "unknown", publicationStatus: "pending_review" });
+    const incomplete = await prisma.event.findUniqueOrThrow({ where: { id } });
+    expect(incomplete.publicationStatus).toBe("pending_review");
+    expect(incomplete.publishabilityReasons).toEqual(expect.arrayContaining(["country_unconfirmed", "modality_unconfirmed"]));
+  });
+  it("recomputes diagnostics for protected intentional nulls without restoring an unaudited source value", async () => {
+    const { canonical, id } = await fixture("protected-diagnostics");
+    await prisma.event.update({ where: { id }, data: { country: null, modality: "unknown", publicationStatus: "hidden", administrativeReview: true } });
+    await prisma.adminAudit.create({ data: { actorId: prefix, eventId: id, action: "review_event",
+      details: { changes: { country: null, modality: "unknown" } } } });
+    await saveCanonicalEvent(canonical);
+    const reviewed = await prisma.event.findUniqueOrThrow({ where: { id } });
+    expect(reviewed).toMatchObject({ country: null, modality: "unknown", publicationStatus: "hidden" });
+    expect(reviewed.publishabilityReasons).toEqual(expect.arrayContaining(["country_unconfirmed", "modality_unconfirmed"]));
+  });
+  it("persists a price excerpt ending at an emoji boundary without corrupting the JSON snapshot", async () => {
+    const { canonical, id } = await fixture("unicode-price");
+    const raw = rawSourceExtractionSchema.parse({
+      sourceType: canonical.sourceType, sourceId: canonical.sourceId, sourceExternalId: canonical.sourceExternalId,
+      url: canonical.sourceUrl, title: canonical.name,
+      importantText: "Inscrições: " + "x".repeat(105) + " R$ 100,00" + "x".repeat(110) + "🏃 restante",
+      rawSourceData: { title: canonical.name, realDate: canonical.date, address: "Garuva, SC, Brasil", uri: canonical.sourceUrl },
+      adapter: "ticketsports", adapterVersion: "1.1.0", fetchedAt: new Date().toISOString(), contentHash: "unicode-price-test",
+    });
+    const { normalizedEvent } = await curateTicketSportsSourceExtraction(raw);
+    expect(normalizedEvent.prices).toHaveLength(1);
+    expect(normalizedEvent.prices[0]!.sourceText).not.toMatch(/[\uD800-\uDBFF]$/);
+    await saveCanonicalEvent(normalizedEvent);
+    expect(await prisma.eventPrice.findFirstOrThrow({ where: { eventId: id } })).toMatchObject({ price: 100 });
+    expect(await prisma.event.findUniqueOrThrow({ where: { id } })).toMatchObject({ country: "BR", modality: "road" });
+    expect(await prisma.eventVersion.count({ where: { eventId: id } })).toBe(2);
   });
   it("preserves a known name when the source no longer supplies it, without calling the placeholder evidence", async () => {
     const { canonical, id } = await fixture("missing-name");
