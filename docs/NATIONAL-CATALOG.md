@@ -6,6 +6,8 @@ Uma inspeção compatível de OpenResults atualiza os motivos de país/modalidad
 
 O mesmo requisito de consistência se aplica à atualização de metadados TicketSports/CorridasBR: quando um país ou modalidade válido é preservado, o aviso de campo desconhecido não deve permanecer. Uma edição já publicada conserva a publicação se esses eram os únicos motivos da atualização parcial; conflitos, outros motivos de revisão e valores protegidos ausentes continuam pendentes. A observação da fonte registra a ausência original, sem apresentar o valor preservado como evidência nova. A correção posterior atualiza os dois executores locais; não acrescenta migration ou mudança de contrato/frontend. A API publicada não executa essa curadoria, portanto não precisa de deploy para esta correção.
 
+A curadoria 1.7.1 também preserva caracteres Unicode inteiros ao limitar trechos de preços, distâncias, descrição e retirada de kit. Cortar um emoji entre as duas unidades UTF-16 gerava JSON rejeitado pelo cliente do banco; o defeito foi reproduzido com metadados já armazenados, sem novas consultas à fonte. A versão impede aceitar cache da curadoria anterior como validação da correção. O `/version` de uma API antiga ainda descreve o código daquela API; atualizar somente os executores não muda essa resposta.
+
 Este documento descreve a branch `codex/national-catalog`. Não constitui aceite de cobertura nacional nem confirmação de publicação. A meta permanece percorrer integralmente os catálogos acessíveis das três fontes e cruzar as informações sem misturar edições.
 
 ## Implementado

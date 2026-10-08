@@ -6,10 +6,15 @@ export const ADAPTER_VERSION_TICKETSPORTS = atLeastSemver(process.env.ADAPTER_VE
 export const ADAPTER_VERSION_CORRIDASBR = atLeastSemver(process.env.ADAPTER_VERSION_CORRIDASBR, "1.1.0");
 export const ADAPTER_VERSION_OFFICIAL_PAGE = atLeastSemver(process.env.ADAPTER_VERSION_OFFICIAL_PAGE, "1.1.0");
 export const CANONICAL_SCHEMA_VERSION = process.env.CANONICAL_SCHEMA_VERSION ?? "1.0.0";
-export const CURATION_PIPELINE_VERSION = atLeastSemver(process.env.CURATION_PIPELINE_VERSION, "1.7.0");
+export const CURATION_PIPELINE_VERSION = atLeastSemver(process.env.CURATION_PIPELINE_VERSION, "1.7.1");
 
 export function cleanText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+/** Keep UTF-16 limits without leaving half of a Unicode character at either boundary. */
+export function sliceText(value: string, start = 0, end = value.length): string {
+  return value.slice(start, end).replace(/^[\uDC00-\uDFFF]/, "").replace(/[\uD800-\uDBFF]$/, "");
 }
 
 export function stripAccents(value: string): string {

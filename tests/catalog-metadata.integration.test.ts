@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { prisma, saveCanonicalEvent } from "@race-calendar/database";
 import type { CanonicalRaceEvent } from "@race-calendar/schemas";
 import { raceEventExtractionSchema, rawSourceExtractionSchema } from "@race-calendar/schemas";
-import { normalizeRaceEventExtraction } from "@race-calendar/curation";
+import { normalizeRaceEventExtraction, curateTicketSportsSourceExtraction } from "@race-calendar/curation";
 const enabled = Boolean(process.env.DATABASE_URL);
 const prefix = "metadata-test-" + randomUUID();
 describe.skipIf(!enabled)("recurring catalog metadata preserves valid and reviewed values", () => {
@@ -99,6 +99,23 @@ describe.skipIf(!enabled)("recurring catalog metadata preserves valid and review
     const reviewed = await prisma.event.findUniqueOrThrow({ where: { id } });
     expect(reviewed).toMatchObject({ country: null, modality: "unknown", publicationStatus: "hidden" });
     expect(reviewed.publishabilityReasons).toEqual(expect.arrayContaining(["country_unconfirmed", "modality_unconfirmed"]));
+  });
+  it("persists a price excerpt ending at an emoji boundary without corrupting the JSON snapshot", async () => {
+    const { canonical, id } = await fixture("unicode-price");
+    const raw = rawSourceExtractionSchema.parse({
+      sourceType: canonical.sourceType, sourceId: canonical.sourceId, sourceExternalId: canonical.sourceExternalId,
+      url: canonical.sourceUrl, title: canonical.name,
+      importantText: "Inscrições: " + "x".repeat(105) + " R$ 100,00" + "x".repeat(110) + "🏃 restante",
+      rawSourceData: { title: canonical.name, realDate: canonical.date, address: "Garuva, SC, Brasil", uri: canonical.sourceUrl },
+      adapter: "ticketsports", adapterVersion: "1.1.0", fetchedAt: new Date().toISOString(), contentHash: "unicode-price-test",
+    });
+    const { normalizedEvent } = await curateTicketSportsSourceExtraction(raw);
+    expect(normalizedEvent.prices).toHaveLength(1);
+    expect(normalizedEvent.prices[0]!.sourceText).not.toMatch(/[\uD800-\uDBFF]$/);
+    await saveCanonicalEvent(normalizedEvent);
+    expect(await prisma.eventPrice.findFirstOrThrow({ where: { eventId: id } })).toMatchObject({ price: 100 });
+    expect(await prisma.event.findUniqueOrThrow({ where: { id } })).toMatchObject({ country: "BR", modality: "road" });
+    expect(await prisma.eventVersion.count({ where: { eventId: id } })).toBe(2);
   });
   it("preserves a known name when the source no longer supplies it, without calling the placeholder evidence", async () => {
     const { canonical, id } = await fixture("missing-name");

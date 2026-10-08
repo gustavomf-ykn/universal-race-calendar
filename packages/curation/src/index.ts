@@ -53,6 +53,7 @@ import {
   absolutizeUrl,
   CANONICAL_SCHEMA_VERSION,
   cleanText,
+  sliceText,
   countryFromLocationText,
   CURATION_PIPELINE_VERSION,
   generateEventFingerprint,
@@ -1205,7 +1206,7 @@ export function normalizeRaceEventExtraction(
   const regulationUrl = absolutizeUrl(extraction.regulationUrl?.value, raw.url);
   const organizerUrl = absolutizeUrl(extraction.organizerUrl?.value, raw.url);
   const locationName = cleanText(extraction.locationName?.value) || null;
-  const description = cleanText(extraction.description?.value) || cleanText(sourceText).slice(0, 2000) || null;
+  const description = cleanText(extraction.description?.value) || sliceText(cleanText(sourceText), 0, 2000) || null;
   const startTime = normalizeTime(extraction.startTime?.value) ?? normalizeTime(extraction.date.sourceText);
   const distances = extraction.distances.map((distance) => ({
     ...distance,
@@ -1720,7 +1721,7 @@ function distancesFromText(text: string): RaceEventExtraction["distances"] {
   for (const match of Array.from(searchText.matchAll(/\b(?:[1-9]\d?(?:[,.]\d+)?)\s*(?:km|k)\b/gi))) {
     const label = match[0];
     const index = match.index ?? 0;
-    const context = cleanText(searchText.slice(Math.max(0, index - 80), Math.min(searchText.length, index + 100)));
+    const context = cleanText(sliceText(searchText, Math.max(0, index - 80), Math.min(searchText.length, index + 100)));
     if (!sections.length && nonRouteDistanceContext(context)) continue;
     const distanceKm = normalizeDistanceKm(label);
     if (distanceKm == null || distanceKm > 100) continue;
@@ -1770,13 +1771,13 @@ function textSection(text: string, startPattern: RegExp, endPatterns: RegExp[], 
   const start = startPattern.exec(text);
   if (start?.index == null) return null;
   const startIndex = start.index + start[0].length;
-  const tail = text.slice(startIndex, startIndex + maxLength);
+  const tail = sliceText(text, startIndex, startIndex + maxLength);
   const endIndexes = endPatterns.flatMap((pattern) => {
     const match = pattern.exec(tail);
     return match?.index != null ? [match.index] : [];
   });
   const endIndex = endIndexes.length ? Math.min(...endIndexes) : tail.length;
-  return cleanText(tail.slice(0, endIndex)) || null;
+  return cleanText(sliceText(tail, 0, endIndex)) || null;
 }
 
 function nonRouteDistanceContext(context: string): boolean {
@@ -1825,7 +1826,7 @@ function pricesFromText(text: string, options: { endDate?: string | null } = {})
   for (const match of matches) {
     const rawPrice = match[0];
     const index = match.index ?? 0;
-    const context = cleanText(text.slice(Math.max(0, index - 120), Math.min(text.length, index + 120)));
+    const context = cleanText(sliceText(text, Math.max(0, index - 120), Math.min(text.length, index + 120)));
     const normalizedContext = stripDiacritics(context.toLowerCase());
     if (!/(inscric|lote|a partir|valor|vagas)/.test(normalizedContext)) continue;
     if (
@@ -1891,7 +1892,7 @@ function kitPickupFromText(
   const normalized = stripDiacritics(text.toLowerCase());
   const pickupIndex = normalized.indexOf("retirada de kit");
   if (pickupIndex < 0) return null;
-  const section = cleanText(text.slice(pickupIndex, Math.min(text.length, pickupIndex + 900)));
+  const section = cleanText(sliceText(text, pickupIndex, Math.min(text.length, pickupIndex + 900)));
   const timeRange = section.match(/entre\s+(\d{1,2})h(?:\d{2})?\s+e\s+(\d{1,2})h(?:\d{2})?/i);
   const dayOfEvent = /dia do evento|dia da prova/i.test(section);
   return {
