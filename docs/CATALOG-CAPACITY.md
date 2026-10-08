@@ -1,6 +1,8 @@
 # Inventário de capacidade antes da carga nacional
 
-Ferramenta `scripts/catalog-capacity.mjs`, somente leitura. Não autoriza carga e não altera plano, dados, fila ou configurações. A branch acrescenta uma barreira separada; ela exige integração e homologação antes de uso no staging.
+Ferramenta `scripts/catalog-capacity.mjs`, somente leitura. Não autoriza carga e não altera plano, dados, fila ou configurações. A barreira separada foi integrada e configurada no staging em 07/10/2026, após conferir o plano e o uso da organização. Pilotos seletivos passaram pela medição; cobertura nacional e capacidade para o catálogo inteiro permanecem pendentes. As seções sobre desenvolvimento abaixo conservam o histórico da implementação.
+
+“Orçamento” significa limite interno de espaço, em bytes/MiB, e não pagamento ou compra de recursos. O trabalho acontece no computador, mas catálogo/resultados persistem no Supabase e planilhas no Storage para acesso pelo painel. Execução local não elimina essas quotas. Nenhuma configuração nesta API aumenta o plano do provedor. Medição e alocação devem ser conferidas no ambiente administrativo; não pedir que o usuário envie credenciais ou invente cotas.
 
 ## Identidade e uso seguro
 

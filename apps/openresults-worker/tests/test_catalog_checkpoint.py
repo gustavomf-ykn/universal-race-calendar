@@ -66,6 +66,25 @@ async def test_url_identity_checkpoint_and_stale_executor(monkeypatch):
         with worker.connection() as db:
             protected = db.execute('SELECT name,city,country,modality,"publicationStatus" FROM "Event" WHERE id=%s', (editions[0]['id'],)).fetchone()
             assert protected == {'name': 'Nome revisado', 'city': None, 'country': None, 'modality': 'trail', 'publicationStatus': 'hidden'}
+            protected_reasons = db.execute('SELECT "publishabilityReasons" FROM "Event" WHERE id=%s', (editions[0]['id'],)).fetchone()['publishabilityReasons']
+            assert 'country_unconfirmed' in protected_reasons
+            diagnosed = db.execute('SELECT warnings,"publishabilityReasons","publicationStatus" FROM "Event" WHERE id=%s', (editions[1]['id'],)).fetchone()
+            assert diagnosed['publicationStatus'] == 'pending_review'
+            assert 'country_unconfirmed' not in diagnosed['publishabilityReasons']
+            assert 'metadata_validation_required' in diagnosed['publishabilityReasons']
+            assert 'country_unconfirmed' not in diagnosed['warnings']
+            # Missing evidence must remain visible, never inferred from the name.
+            db.execute('UPDATE "Event" SET modality=\'unknown\' WHERE id=%s', (editions[1]['id'],))
+        incomplete = EventMetadata('Nome extraído', editions[1]['date'].date(), 'Teste', 'SC',
+                                   editions[1]['sourceUrl'], 'teste', country='Brasil',
+                                   event_id='teste-' + editions[1]['id'])
+        update_edition({**task, 'payload': {'eventId': editions[1]['id']}}, incomplete, worker.connection, worker.fenced)
+        with worker.connection() as db:
+            diagnosed = db.execute('SELECT warnings,"publishabilityReasons" FROM "Event" WHERE id=%s', (editions[1]['id'],)).fetchone()
+            assert 'modality_unconfirmed' in diagnosed['warnings']
+            assert 'modality_unconfirmed' in diagnosed['publishabilityReasons']
+            # Restore a confirmed modality for the supplemental-reference checks below.
+            db.execute('UPDATE "Event" SET modality=\'road\' WHERE id=%s', (editions[1]['id'],))
             assert db.execute('SELECT name,city,country,modality FROM "Event" WHERE id=%s', (editions[1]['id'],)).fetchone() == {
                 'name': 'Nome extraído', 'city': 'Teste', 'country': 'BR', 'modality': 'road'}
             assert all(r['observation']['country'] == 'BR' for r in db.execute('''SELECT observation FROM "EventSourceReference" WHERE "eventId"=ANY(%s)''', ([e['id'] for e in editions],)).fetchall())
