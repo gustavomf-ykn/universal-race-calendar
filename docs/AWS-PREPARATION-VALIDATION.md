@@ -4,9 +4,9 @@ Escopo: branches de preparação de backend e frontend. Base backend cadf75bf1ae
 
 | Cenário | Ambiente | Evidência / resultado | Pendência |
 | --- | --- | --- | --- |
-| Migrations aditivas e repetição | PostgreSQL sintético local | 31 migrations; nova tabela/counters/trigger/índices; segunda execução sem mudanças pendentes | Aplicar somente no staging após backup/integração autorizados |
+| Migrations aditivas e repetição | PostgreSQL sintético local | 32 migrations; nova tabela/counters/trigger/índices; segunda execução sem mudanças pendentes | Aplicar somente no staging após backup/integração autorizados |
 | JWT admin, recusa de membro/ausência, versão e readiness | API injetada + JWT sintético | Contrato e recusas testados; readiness falha com projeto divergente | Repetir com Supabase Auth e API AWS reais |
-| Campanha, idempotência, pausa/retomada/cancelamento, checkpoints, conflitos | PostgreSQL sintético | 12 testes aprovados; preservação de tarefas externas; pausa concorrente sem deadlock | Navegador/consumo por AWS |
+| Campanha, idempotência, pausa/retomada/cancelamento, checkpoints, conflitos | PostgreSQL sintético | 14 testes de campanha; conferir aprovação no CI do commit final; preservação de tarefas externas; pausa concorrente sem deadlock | Navegador/consumo por AWS |
 | Heartbeat, polling, destino staging antes de conexão | Testes TypeScript | 3 testes aprovados; máximo 15s ocioso; heartbeat não comprova conclusão | Verificar processos AWS e reinício real |
 | Agenda durável existente | PostgreSQL sintético | 19 testes aprovados com relógio controlado | Agenda real continua desativada; primeira ocorrência após aceite |
 | Python | Offline | 186 aprovados; 53 ignorados por dependências de banco/integração; 1 de integração real excluído | SQL completo no CI; fontes reais após deploy |
@@ -22,3 +22,5 @@ Dois testes novos reproduziram deadlock ao usar o pacote compilado anterior. Ap�
 Uma execução local anterior com pool de conexão único teve timeouts em testes concorrentes e de varredura extensa, com medição física de capacidade lenta no Windows. O limite de segurança não foi removido. A agenda passou com pool de cinco; o CI Linux executa a suite completa em PostgreSQL descartável. Não converter esses testes em promessa de desempenho do Supabase.
 
 A fila staging não foi consumida ou alterada, seus pedidos protegidos continuam protegidos e não foi iniciado executor local de staging. O PostgreSQL usado aqui é descartável, sem dados ou credenciais reais. Consultar [runbook AWS](AWS-HOSTING.md) para os passos restantes, e registrar os resultados do CI nos PRs.
+
+O teste de aquisição durante uma pausa exige que a função SQL recuse também a tarefa inserida antes do controle e confirmada depois dele. A terceira migration é aditiva e não altera checksums históricos. A medição administrativa recebeu timeout limitado de 15s para poder aguardar outro controle e medir ambos os recursos, sem remover a quota ou a margem. O smoke Chromium do CI usa agora os mesmos limites de disco/memória da AWS; a primeira execução identificou configuração de teste divergente, ainda antes do lançamento do navegador.

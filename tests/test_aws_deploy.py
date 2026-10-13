@@ -47,6 +47,11 @@ def test_aws_compose_is_remote_only_workers_opt_in_and_logs_bounded():
   x=c['services'][s];assert x['profiles']==['workers'];assert x['restart']=='unless-stopped'
   assert x['environment']['WORKER_MODE']=='continuous';assert 'healthcheck' in x
   assert x['logging']['options']['max-file']=='3'
+ runtime=yaml.safe_load((root/'tests/compose.aws-runtime.yaml').read_text())
+ for s in ('calendar-worker','results-worker'):
+  for name in ('WORKER_MIN_FREE_MEMORY_MB','WORKER_MIN_FREE_TEMP_MB','WORKER_MAX_RSS_MB'):
+   assert runtime['services'][s]['environment'][name]==c['services'][s]['environment'][name]
+  assert runtime['services'][s]['mem_limit']==c['services'][s]['mem_limit']
  assert c['services']['migration']['profiles']==['maintenance']
  assert 'DATABASE_URL' not in json.dumps(c) # never override with local/test DSN
  assert 'postgres:' not in json.dumps(c)

@@ -318,14 +318,14 @@ export async function coordinateCatalogReconciliations(limit = 10) {
   let queued = 0;
   for (const { id } of runs)
     queued += await prisma.$transaction(async (tx) => {
-      // Capacity, acquisition, then checkpoint: same order as campaign resume.
+      // Acquisition, capacity, then checkpoint: same order as campaign resume.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('race-task-acquisition'))`;
       try {
         await assertCapacity(tx);
       } catch (error) {
         if (error instanceof CapacityDeferred) return 0;
         throw error;
       }
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('race-task-acquisition'))`;
       await tx.$queryRaw`SELECT id FROM "CatalogReconciliation" WHERE id=${id} FOR UPDATE`;
       const run = await tx.catalogReconciliation.findUniqueOrThrow({ where: { id } });
       const where = taskWhere(id);
@@ -366,8 +366,11 @@ export async function controlCatalogReconciliation(
   if (!actorId || !key || key.length > 128 || !["pause", "resume", "cancel"].includes(action))
     throw new TaskConflict("reconciliation_request_invalid");
   return prisma.$transaction(async (tx) => {
-    if (action === "resume") await assertCapacity(tx);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('race-task-acquisition'))`;
+    // Replays retain their result even if capacity has since been exhausted.
+    if (action === "resume" && !(await tx.adminAudit.count({
+      where: { actorId, action: "catalog_reconciliation_control", details: { path: ["idempotencyKey"], equals: key } },
+    }))) await assertCapacity(tx);
     await tx.$queryRaw`SELECT id FROM "CatalogReconciliation" WHERE id=${id} FOR UPDATE`;
     const run = await tx.catalogReconciliation.findUnique({ where: { id } });
     if (!run) throw new TaskConflict("reconciliation_run_not_found");

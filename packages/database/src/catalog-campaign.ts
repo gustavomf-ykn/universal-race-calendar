@@ -166,9 +166,9 @@ export async function controlCatalogCampaign(
       if (retryPartial && (await tx.catalogCampaign.count({ where: { id: { not: id }, status: { notIn: terminal } } })))
         throw new TaskConflict("campaign_active");
       const ids = Object.values(run.sourceSyncs as Record<string, string>);
-      // Capacity before the acquisition gate, matching candidate insertion order.
-      if (action === "resume") await assertCapacity(tx);
+      // Acquisition precedes capacity, matching the administrative capacity controls.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('race-task-acquisition'))`;
+      if (action === "resume") await assertCapacity(tx);
       await tx.$queryRaw`SELECT id FROM "CatalogSync" WHERE id=ANY(${ids}::text[]) ORDER BY id FOR UPDATE`;
       const tasks = await tx.$queryRaw<
         Array<{ id: string; status: string; executionHold: boolean; holdReason: string | null }>

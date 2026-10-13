@@ -17,7 +17,11 @@ services:
   calendar-worker:
     <<: *worker
     mem_limit: 1536m
-    environment: { WORKER_HEALTH_FILE: /tmp/worker-health.json }
+    environment:
+      WORKER_HEALTH_FILE: /tmp/worker-health.json
+      WORKER_MIN_FREE_MEMORY_MB: "512"
+      WORKER_MIN_FREE_TEMP_MB: "512"
+      WORKER_MAX_RSS_MB: "1024"
     healthcheck:
       test: ["CMD", "node", "scripts/worker-health.mjs"]
       interval: 5s
@@ -28,7 +32,11 @@ services:
     <<: *worker
     mem_limit: 4096m
     shm_size: 512m
-    environment: { WORKER_HEALTH_FILE: /tmp/worker-health.json }
+    environment:
+      WORKER_HEALTH_FILE: /tmp/worker-health.json
+      WORKER_MIN_FREE_MEMORY_MB: "512"
+      WORKER_MIN_FREE_TEMP_MB: "512"
+      WORKER_MAX_RSS_MB: "3072"
     healthcheck:
       test: ["CMD", "python", "worker_health.py"]
       interval: 5s

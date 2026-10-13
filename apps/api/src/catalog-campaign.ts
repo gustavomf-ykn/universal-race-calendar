@@ -152,6 +152,7 @@ export async function registerCatalogCampaign(app: FastifyInstance) {
             await tx.$queryRaw`SELECT "leaseUntil","leaseToken" FROM "CollectionTask" LIMIT 0`;
             await tx.$queryRaw`SELECT "createdCount","existingCount","countsAvailable" FROM "CatalogSync" LIMIT 0`;
             await tx.$queryRaw`SELECT "sourceSyncs","reconciliationId" FROM "CatalogCampaign" LIMIT 0`;
+            await tx.$queryRaw`SELECT 'catalog_campaign_task_blocked(text,jsonb)'::regprocedure::text`;
             return tx.$queryRaw<
               Array<{ queue: boolean; campaign: boolean }>
             >`SELECT to_regclass('public."CollectionTask"') IS NOT NULL AS queue,

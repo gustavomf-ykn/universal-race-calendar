@@ -149,6 +149,67 @@ describe.skipIf(!process.env.DATABASE_URL)("manual three-source campaign on isol
       executionHold: true,
     });
   });
+  it("never acquires an enrichment inserted before pause and committed after the pause scan", async () => {
+    const run = await start();
+    await prisma.collectionTask.updateMany({ where: { ownerId: owner }, data: { status: "completed" } });
+    let created!: () => void, release!: () => void;
+    const inserted = new Promise<void>((resolve) => {
+      created = resolve;
+    });
+    const permitted = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const insertion = prisma.$transaction(
+      async (tx) => {
+        const task = await enqueueTask(
+          owner,
+          randomUUID(),
+          "ticketsports",
+          "check-source",
+          {
+            syncId: run.sourceSyncs.ticketsports,
+            sourceId: "fixture-inflight",
+          },
+          tx,
+        );
+        created();
+        await permitted;
+        return task;
+      },
+      { timeout: 15000 },
+    );
+    await inserted;
+    let paused;
+    try {
+      paused = await request(path + "/" + run.id + "/pause", { reason: "Pause racing an insert" });
+    } finally {
+      release();
+    }
+    const task = await insertion;
+    expect(paused!.statusCode).toBe(200);
+    // It wasn't visible to the pause scan; acquisition must still reject it.
+    expect(task.executionHold).toBe(false);
+    const token = randomUUID();
+    const before = await prisma.$queryRaw<
+      Array<{ id: string }>
+    >`SELECT id FROM claim_selected_task(ARRAY['ticketsports'],${token},ARRAY[${task.id}])`;
+    expect(before).toEqual([]);
+    expect((await request(path + "/" + run.id + "/resume", { reason: "Resume racing insert" })).statusCode).toBe(200);
+    const after = await prisma.$queryRaw<
+      Array<{ id: string }>
+    >`SELECT id FROM claim_selected_task(ARRAY['ticketsports'],${token},ARRAY[${task.id}])`;
+    expect(after.map((t) => t.id)).toEqual([task.id]);
+  });
+  it("serializes campaign resume with capacity refresh without inverted acquisition/capacity locks", async () => {
+    const run = await start();
+    await request(path + "/" + run.id + "/pause", { reason: "Pause before capacity refresh" });
+    const [resumed, refreshed] = await Promise.all([
+      request(path + "/" + run.id + "/resume", { reason: "Resume with concurrent capacity refresh" }),
+      request("/v1/admin/capacity/refresh", { reason: "Concurrent capacity refresh" }),
+    ]);
+    expect(resumed.statusCode).toBe(200);
+    expect(refreshed.statusCode).toBe(200);
+  });
   it("serializes checkpoint continuations against campaign pause without deadlocks or runnable successors", async () => {
     const run = await start();
     await prisma.collectionTask.updateMany({ where: { ownerId: owner }, data: { status: "completed" } });

@@ -35,7 +35,7 @@ Scripts de operador usam boto3/perfil SSO, não credenciais no código. load-sec
 
 ## Preparar release e provisionar, somente após revisão/autorização
 
-1. Integrar backend antes do frontend. Backend inclui duas migrations aditivas: 20261013000000_catalog_campaign e 20261013000100_catalog_campaign_indexes. APIs antigas continuam compatíveis; workers novos exigem schema novo.
+1. Integrar backend antes do frontend. Backend inclui três migrations aditivas: 20261013000000_catalog_campaign, 20261013000100_catalog_campaign_indexes e 20261013000200_campaign_task_acquisition. APIs antigas continuam compatíveis; workers novos exigem schema novo.
 2. Depois do CI do commit integrado, executar manualmente AWS immutable images na main. Só publica imagens; não implanta ou coleta. Confirmar os pacotes runfinder-api e runfinder-results como públicos nas configurações GHCR, após conferir exclusão de secrets. Registrar digests do resumo da execução.
 3. Em ambiente de operador com Python, instalar deploy/aws/requirements.txt e validar custo:
    python deploy/aws/aws-cost-plan.py --profile SEU_PERFIL --snapshot-gb 0
