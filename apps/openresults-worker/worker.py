@@ -356,6 +356,8 @@ async def execute(task):
 
 
 async def main():
+    from aws_staging import assert_aws_staging
+    assert_aws_staging()
     run = BatchRun()
     watchdog = run.watchdog()
     stopped=False
@@ -364,6 +366,7 @@ async def main():
         stopped=True
     signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
     tick=0
+    empty_polls=0
     worker_id=str(uuid.uuid4())
     async def presence_pulse():
       nonlocal stopped
@@ -397,6 +400,7 @@ async def main():
             continue
         task=await asyncio.to_thread(claim_next_task)
         if task:
+            empty_polls=0
             run.claimed += 1
             run.active_task_id = task['id']
             await asyncio.to_thread(announce,query,worker_id,'busy',task['id'])
@@ -412,7 +416,8 @@ async def main():
             if run.batch:
                 run.reason = 'queue_empty'
                 break
-            await asyncio.sleep(1)
+            await asyncio.sleep(min(15,2**min(4,empty_polls)))
+            empty_polls+=1
         tick+=1
         if tick%60==0:
             try:

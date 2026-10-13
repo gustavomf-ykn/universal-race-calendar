@@ -1,0 +1,36 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Runfinder isolated staging compute. Does not create databases, secrets or schedules.
+Parameters:
+  InstanceName: { Type: String, Default: runfinder-staging, AllowedPattern: "runfinder-staging[-a-z0-9]*" }
+  BundleId: { Type: String, Default: large_3_0 }
+  BlueprintId: { Type: String, Default: ubuntu_24_04 }
+  AdminCidr:
+    { Type: String, Description: Your public IPv4 followed by /32, AllowedPattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}/32$' }
+  KeyPairName: { Type: String, Description: Existing Lightsail SSH key pair in sa-east-1 }
+Resources:
+  Instance:
+    Type: AWS::Lightsail::Instance
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      InstanceName: !Ref InstanceName
+      BlueprintId: !Ref BlueprintId
+      BundleId: !Ref BundleId
+      KeyPairName: !Ref KeyPairName
+      Tags: [{ Key: Environment, Value: staging }, { Key: Project, Value: Runfinder }]
+      Networking:
+        Ports:
+          - { FromPort: 22, ToPort: 22, Protocol: tcp, Cidrs: [!Ref AdminCidr], Ipv6Cidrs: [] }
+          - { FromPort: 80, ToPort: 80, Protocol: tcp, Cidrs: ["0.0.0.0/0"], Ipv6Cidrs: [] }
+          - { FromPort: 443, ToPort: 443, Protocol: tcp, Cidrs: ["0.0.0.0/0"], Ipv6Cidrs: [] }
+  StaticIp:
+    Type: AWS::Lightsail::StaticIp
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      StaticIpName: !Sub "${InstanceName}-ip"
+      AttachedTo: !Ref Instance
+Outputs:
+  Instance: { Value: !Ref Instance }
+  Address: { Value: !GetAtt StaticIp.IpAddress }
+# Explicit bootstrap after stack approval; no application/secrets in UserData.

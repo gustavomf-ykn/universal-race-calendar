@@ -237,3 +237,9 @@ function isValidIsoDate(value: string): boolean {
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
+
+export { workerIdleDelay } from "./worker-polling.js";
+
+export { writeWorkerHealth, checkWorkerHealth } from "./worker-health.js";
+
+export { assertAwsStaging } from "./aws-staging.js";

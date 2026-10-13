@@ -1,0 +1,20 @@
+{
+  # Apply to runtime error logs too; credentials may use custom headers.
+  log {
+    format filter {
+      wrap json
+      request>headers delete
+      request>uri delete
+    }
+  }
+}
+{$API_PUBLIC_HOST} {
+  encode gzip
+  reverse_proxy api:3000
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy no-referrer
+    -Server
+  }
+  # Do not enable request logging: bearer tokens and signed URLs must not enter logs.
+}

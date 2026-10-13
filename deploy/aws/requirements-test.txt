@@ -1,0 +1,4 @@
+cfn-lint>=1.50,<2
+PyYAML>=6,<7
+pytest>=8,<10
+boto3>=1.35,<2

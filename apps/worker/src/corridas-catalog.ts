@@ -76,7 +76,7 @@ export async function syncNationalCorridasBR(sync: Sync, discover = discoverCorr
     }
     const key = createHash("sha256").update(`catalog-enrich:${sync.id}:${candidate.externalId}`).digest("hex");
     await enqueueTask(sync.ownerId, key, "corridasbr", "check-source", { sourceId: source.id, syncId: sync.id }, tx);
-    await tx.catalogSync.update({ where: { id: sync.id }, data: { cursor: { increment: 1 }, processed: { increment: 1 }, updatedAt: new Date() } });
+    await tx.catalogSync.update({ where: { id: sync.id }, data: { cursor: { increment: 1 }, processed: { increment: 1 }, createdCount: { increment: ref ? 0 : 1 }, existingCount: { increment: ref ? 1 : 0 }, updatedAt: new Date() } });
   });
   if (sync.cursor + batch.length >= snapshot.candidates.length) {
     const nextPage = snapshot.pendingUrls[0];

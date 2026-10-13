@@ -91,7 +91,7 @@ async def sync_catalog(task, settings, connection, fenced, progress):
                     (str(uuid.uuid4()), event_id, source['id'], row['externalId'], row['url']))
             # Candidate, queued metadata and checkpoint either all commit or all roll back.
             enqueue_inspection(conn, sync, row, event_id)
-            conn.execute('UPDATE "CatalogSync" SET cursor=cursor+1,processed=processed+1,"updatedAt"=now() WHERE id=%s', (sync_id,))
+            conn.execute('UPDATE "CatalogSync" SET cursor=cursor+1,processed=processed+1,"createdCount"="createdCount"+%s,"existingCount"="existingCount"+%s,"updatedAt"=now() WHERE id=%s', (0 if ref else 1, 1 if ref else 0, sync_id))
         if ref:
             existing += 1
         else:

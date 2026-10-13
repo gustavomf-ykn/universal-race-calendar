@@ -93,3 +93,7 @@ Os logs têm rotação na VPS; health da API indica processo, não fila. Monitor
 ## Validação desta preparação
 
 Os três JSONs passaram no schema oficial do Railway; o YAML passou no schema oficial Compose, e caminhos de build, isolamento das portas, profiles e modelos de env foram conferidos localmente. Docker não está instalado neste Windows; o novo Compose com proxy e os limites de memória ainda precisam de smoke no host escolhido. A homologação anterior valida aplicação e Supabase, e o CI anterior valida as imagens sem esses novos limites. Nenhuma configuração do Railway/Render, DNS ou projeto Supabase foi modificada para esta comparação.
+
+## Nova decisão de 13/10/2026
+
+Preparar somente API/workers na AWS Lightsail, mantendo Lovable/Supabase. Teto AWS US$50/mês antes de impostos/domínio. Implementação e sequência explícita: [AWS-HOSTING.md](AWS-HOSTING.md). Ainda não é implantação nem autorização de contratação automática.

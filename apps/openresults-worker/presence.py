@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from psycopg.types.json import Jsonb
 from local_resources import inspect_resources
+from worker_health import write_health
 
 
 def stop_requested():
@@ -18,3 +19,4 @@ def announce(query, worker_id, state, task_id=None):
       VALUES (%s,'python',ARRAY['openresults','exports'],%s,%s,%s,%s)
       ON CONFLICT (id) DO UPDATE SET state=EXCLUDED.state,"activeTaskId"=EXCLUDED."activeTaskId",resources=EXCLUDED.resources,"lastSeenAt"=now()
       WHERE "WorkerPresence".state<>'stopped' RETURNING id''', (worker_id,state,task_id,os.environ.get('WORKER_CODE_VERSION',os.environ.get('GIT_SHA','unknown')),Jsonb(resources)))
+    write_health(state)

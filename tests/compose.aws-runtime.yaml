@@ -1,0 +1,45 @@
+# CI only: hardening of AWS processes against disposable compose.backend PostgreSQL.
+# Not a deploy file and not used by deploy/aws/compose.yaml.
+x-worker: &worker
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ["/tmp:size=1g,mode=1777"]
+services:
+  api:
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:size=128m,mode=1777"]
+    mem_limit: 768m
+  calendar-worker:
+    <<: *worker
+    mem_limit: 1536m
+    environment:
+      WORKER_HEALTH_FILE: /tmp/worker-health.json
+      WORKER_MIN_FREE_MEMORY_MB: "512"
+      WORKER_MIN_FREE_TEMP_MB: "512"
+      WORKER_MAX_RSS_MB: "1024"
+    healthcheck:
+      test: ["CMD", "node", "scripts/worker-health.mjs"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+  results-worker:
+    <<: *worker
+    mem_limit: 4096m
+    shm_size: 512m
+    environment:
+      WORKER_HEALTH_FILE: /tmp/worker-health.json
+      WORKER_MIN_FREE_MEMORY_MB: "512"
+      WORKER_MIN_FREE_TEMP_MB: "512"
+      WORKER_MAX_RSS_MB: "3072"
+    healthcheck:
+      test: ["CMD", "python", "worker_health.py"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s

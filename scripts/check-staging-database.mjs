@@ -10,8 +10,13 @@ try {
   ({ prisma } = await import("@race-calendar/database"));
   await prisma.$queryRawUnsafe('SELECT id FROM "CollectionTask" LIMIT 0');
   await prisma.$queryRawUnsafe('SELECT resources FROM "WorkerPresence" LIMIT 0');
-  await prisma.$queryRawUnsafe('SELECT "coordinatorVersion","nextLocalDate","waitReason" FROM "CatalogWeeklySchedule" LIMIT 0');
+  await prisma.$queryRawUnsafe(
+    'SELECT "coordinatorVersion","nextLocalDate","waitReason" FROM "CatalogWeeklySchedule" LIMIT 0',
+  );
   await prisma.$queryRawUnsafe('SELECT "sourceSyncs","reconciliationId" FROM "CatalogWeeklyOccurrence" LIMIT 0');
+  await prisma.$queryRawUnsafe('SELECT "sourceSyncs","reconciliationId" FROM "CatalogCampaign" LIMIT 0');
+  await prisma.$queryRawUnsafe("SELECT 'catalog_campaign_task_blocked(text,jsonb)'::regprocedure::text");
+  await prisma.$queryRawUnsafe('SELECT "createdCount","existingCount","countsAvailable" FROM "CatalogSync" LIMIT 0');
   await prisma.$queryRawUnsafe("SELECT 'defer_local_resource_task(text,text,jsonb,text)'::regprocedure::text");
   await prisma.$queryRawUnsafe("SELECT task_queue_priority('catalog-sync',now(),now())");
   await prisma.$queryRawUnsafe('SELECT id,"parserVersion",sequence FROM "CatalogReconciliation" LIMIT 0');

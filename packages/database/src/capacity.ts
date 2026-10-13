@@ -143,5 +143,5 @@ export async function controlCapacity(
       data: { actorId, action: `capacity_${action}`, details: { idempotencyKey: key, payload, result } },
     });
     return result;
-  });
+  }, { timeout: 15000, maxWait: 5000 });
 }

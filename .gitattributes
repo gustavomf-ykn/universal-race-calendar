@@ -1,0 +1,3 @@
+deploy/aws/*.sh text eol=lf
+deploy/aws/*.service text eol=lf
+deploy/aws/*.timer text eol=lf
