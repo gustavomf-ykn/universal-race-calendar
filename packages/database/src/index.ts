@@ -730,6 +730,24 @@ async function preserveValidatedMetadata(tx: any, incoming: CanonicalRaceEvent, 
         target[field] = field === "date" ? dateToIsoDate(current.date) : current[field];
     }
   }
+  // Requirements describe the merged edition, while the reference observation still
+  // records what this extraction actually supplied. A missing field is not removal.
+  const fieldRequirements = new Map([
+    ["country_unconfirmed", !incoming.country],
+    ["modality_unconfirmed", incoming.modality === "unknown"],
+  ]);
+  const fieldLimited = incoming.publishabilityReasons.length > 0 &&
+    incoming.publishabilityReasons.every((reason) => fieldRequirements.has(reason));
+  const refreshRequirements = (values: string[]) => [...new Set([
+    ...values.filter((reason) => !fieldRequirements.has(reason)),
+    ...[...fieldRequirements].filter(([, missing]) => missing).map(([reason]) => reason),
+  ])];
+  incoming.warnings = refreshRequirements(incoming.warnings);
+  incoming.publishabilityReasons = refreshRequirements(incoming.publishabilityReasons);
+  if (incoming.publishabilityReasons.length && incoming.publicationStatus === "published")
+    incoming.publicationStatus = "pending_review";
+  else if (fieldLimited && !incoming.publishabilityReasons.length && current.publicationStatus === "published")
+    incoming.publicationStatus = "published";
   // Missing optional collections are not evidence that previously validated information was removed.
   if (!incoming.distances.length) incoming.distances = current.distances;
   if (!incoming.prices.length) incoming.prices = existingPrices(current.prices);

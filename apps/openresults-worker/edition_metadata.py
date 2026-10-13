@@ -4,6 +4,7 @@ from psycopg import sql
 import unicodedata
 from source_observation import edition_observation
 from event_aliases import event_id as canonical_event_id
+from app.services.country import normalize_country
 
 IDENTITY_ERRORS = frozenset({
     'association_changed', 'source_identity_mismatch', 'source_identity_already_associated',
@@ -40,6 +41,25 @@ def metadata_identity_reason(event, metadata, protected=()):
         if old and new and old != new:
             return 'edition_location_conflict'
     return None
+
+
+def current_field_diagnostics(event):
+    """Refresh canonical field requirements without clearing review or source conflicts."""
+    country = normalize_country(event.get('country'))
+    modality_missing = not event.get('modality') or event['modality'] == 'unknown'
+    warnings = [value for value in event['warnings']
+                if value not in ('country_unconfirmed', 'modality_unconfirmed')]
+    reasons = [value for value in event['publishabilityReasons']
+               if value not in ('country_unconfirmed', 'non_brazil_event', 'modality_unconfirmed')]
+    if not country:
+        warnings.append('country_unconfirmed')
+        reasons.append('country_unconfirmed')
+    elif country != 'BR':
+        reasons.append('non_brazil_event')
+    if modality_missing:
+        warnings.append('modality_unconfirmed')
+        reasons.append('modality_unconfirmed')
+    return list(dict.fromkeys(warnings)), list(dict.fromkeys(reasons))
 
 
 def update_edition(task, metadata, connection, fenced):
@@ -103,6 +123,15 @@ def update_edition(task, metadata, connection, fenced):
             assignments.append(sql.SQL('"updatedAt"=now()'))
             statement = sql.SQL('UPDATE "Event" SET {} WHERE id=%s').format(sql.SQL(',').join(assignments))
             conn.execute(statement, (*values, event_id))
+        if not problem:
+            # Read the stored values in this fenced transaction: supplemental
+            # observations and administrative clears may not have changed them.
+            current = conn.execute('''SELECT country,modality,warnings,"publishabilityReasons"
+                FROM "Event" WHERE id=%s''', (event_id,)).fetchone()
+            warnings, reasons = current_field_diagnostics(current)
+            if warnings != current['warnings'] or reasons != current['publishabilityReasons']:
+                conn.execute('''UPDATE "Event" SET warnings=%s,"publishabilityReasons"=%s,
+                    "updatedAt"=now() WHERE id=%s''', (Jsonb(warnings), Jsonb(reasons), event_id))
     if problem:
         raise ValueError(problem)
     task['payload']['externalId'] = new

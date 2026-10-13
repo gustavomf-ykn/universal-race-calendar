@@ -1,4 +1,6 @@
-# Atualização semanal — backend implementado na branch, integração pendente
+# Atualização semanal — integrada, agenda desativada
+
+Em 07/10/2026, Backend #12 e Frontend #3 foram integrados e publicados em homologação, e a migration semanal foi aplicada/repetida no `race-platform-staging`. O painel autenticado confirmou a agenda desativada, revisão 0. Ainda não houve ocorrência semanal real. As seções de desenvolvimento abaixo registram as etapas anteriores; não habilitar a agenda automaticamente nem interpretar os pilotos limitados como cobertura completa.
 
 O módulo puro `catalog-weekly-clock.ts` calcula ocorrências no fuso `America/Sao_Paulo`, com segunda-feira às 08:00 como proposta inicial. Dia ISO (1=segunda, 7=domingo), hora e minuto são configuráveis e validados. Não conecta ao banco, habilita agendas, enfileira trabalho ou consulta fontes.
 

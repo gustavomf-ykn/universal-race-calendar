@@ -1,5 +1,13 @@
 # Catálogo nacional — implementação em andamento
 
+Atualização de 07/10/2026: Backend #12 e Frontend #3 foram integrados, as 13 migrations aditivas foram aplicadas e repetidas exclusivamente no `race-platform-staging`, e API/painel receberam publicação explícita. Os executores operacionais foram preparados com o código integrado. Três pilotos seletivos reais de até cinco candidatos terminaram; OpenResults persistiu candidatos antes ausentes e suas inspeções concluíram. Isso valida etapas pequenas, não o término das três fontes, as 27 UFs ou o cruzamento nacional. Os relatórios com IDs/contagens operacionais ficam fora deste repositório público. A agenda continua desativada. As referências a “branch” e “integração futura” abaixo descrevem o histórico de implementação, não a versão atualmente publicada.
+
+Uma inspeção compatível de OpenResults atualiza os motivos de país/modalidade a partir dos valores efetivamente persistidos. Não conserva `country_unconfirmed` depois de confirmar o país, e mostra `modality_unconfirmed` quando a modalidade continua desconhecida. Mantém os motivos de revisão, conflitos de fonte, campos protegidos e o estado de publicação; inspeção concluída não publica a prova automaticamente.
+
+O mesmo requisito de consistência se aplica à atualização de metadados TicketSports/CorridasBR: quando um país ou modalidade válido é preservado, o aviso de campo desconhecido não deve permanecer. Uma edição já publicada conserva a publicação se esses eram os únicos motivos da atualização parcial; conflitos, outros motivos de revisão e valores protegidos ausentes continuam pendentes. A observação da fonte registra a ausência original, sem apresentar o valor preservado como evidência nova. A correção posterior atualiza os dois executores locais; não acrescenta migration ou mudança de contrato/frontend. A API publicada não executa essa curadoria, portanto não precisa de deploy para esta correção.
+
+A curadoria 1.7.1 também preserva caracteres Unicode inteiros ao limitar trechos de preços, distâncias, descrição e retirada de kit. Cortar um emoji entre as duas unidades UTF-16 gerava JSON rejeitado pelo cliente do banco; o defeito foi reproduzido com metadados já armazenados, sem novas consultas à fonte. A versão impede aceitar cache da curadoria anterior como validação da correção. O `/version` de uma API antiga ainda descreve o código daquela API; atualizar somente os executores não muda essa resposta.
+
 Este documento descreve a branch `codex/national-catalog`. Não constitui aceite de cobertura nacional nem confirmação de publicação. A meta permanece percorrer integralmente os catálogos acessíveis das três fontes e cruzar as informações sem misturar edições.
 
 ## Implementado

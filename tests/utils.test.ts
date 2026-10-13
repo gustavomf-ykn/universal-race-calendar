@@ -7,9 +7,20 @@ import {
   normalizeDistanceKm,
   normalizePrice,
   slugify,
+  sliceText,
+  CURATION_PIPELINE_VERSION,
 } from "@race-calendar/utils";
 
 describe("utils", () => {
+  it("omits split surrogate pairs at excerpt boundaries and preserves complete Unicode", () => {
+    expect(sliceText("ab🏃cd", 0, 3)).toBe("ab");
+    expect(sliceText("ab🏃cd", 3, 6)).toBe("cd");
+    expect(sliceText("ab🏃cd", 2, 4)).toBe("🏃");
+    expect(sliceText("ação 🏃 São José")).toBe("ação 🏃 São José");
+    expect(sliceText("🏃", 0, 1)).toBe("");
+    expect(sliceText("🏃", 1)).toBe("");
+    expect(CURATION_PIPELINE_VERSION).toBe("1.7.1");
+  });
   it("requires explicit unambiguous country components rather than UFs or venue names", () => {
     for (const location of [null, "", "Garuva, SC", "Parque Brasil, Lisboa", "Avenida Brasil, Porto", "Brasil, Garuva, SC", "constructor"])
       expect(countryFromLocationText(location)).toEqual({ country: null, sourceText: null, conflicting: false });
