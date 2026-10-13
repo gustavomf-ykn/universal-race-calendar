@@ -9,6 +9,7 @@ import {
   coordinateCatalogSyncs,
   coordinateCatalogReconciliations,
   coordinateWeeklyCatalog,
+  coordinateCatalogCampaigns,
   processCatalogReconciliation,
   editionFailureCode,
   inspectLocalResources,
@@ -18,6 +19,7 @@ import {
 } from "@race-calendar/database";
 import { syncCatalog } from "./catalog.js";
 import { existsSync } from "node:fs";
+import { workerIdleDelay, writeWorkerHealth, assertAwsStaging } from "@race-calendar/utils";
 import { BatchRun } from "./batch.js";
 import { taskError } from "./task-error.js";
 import { setSourceRequestGuard, enterSourceRequestScope } from "@race-calendar/sources";
@@ -56,19 +58,23 @@ process.on("SIGINT", () => {
   stopping = true;
 });
 export async function runQueue() {
+  assertAwsStaging(process.env, ["DATABASE_URL"]);
   const run = new BatchRun();
   const watchdog = run.watchdog();
   const workerId = newWorkerId();
   const shouldStop = () =>
     stopping || Boolean(process.env.WORKER_STOP_FILE && existsSync(process.env.WORKER_STOP_FILE));
-  const announce = () => {
+  const announce = async () => {
     const resources = inspectLocalResources();
-    return workerPresence(
-      workerId,
-      shouldStop() ? "stopping" : run.activeTaskId ? "busy" : resources.reason ? "resource_wait" : "available",
-      run.activeTaskId,
-      resources,
-    );
+    const state = shouldStop()
+      ? "stopping"
+      : run.activeTaskId
+        ? "busy"
+        : resources.reason
+          ? "resource_wait"
+          : "available";
+    await workerPresence(workerId, state, run.activeTaskId, resources);
+    writeWorkerHealth(state);
   };
   let presenceTimer: ReturnType<typeof setInterval> | undefined;
   try {
@@ -81,6 +87,7 @@ export async function runQueue() {
     }, 20000);
     console.log("Calendar executor connected; waiting for panel requests.");
     let coordinatedAt = 0;
+    let emptyPolls = 0;
     let resourcesWaiting = false;
     while (!shouldStop() && run.canClaim()) {
       const resources = inspectLocalResources();
@@ -102,7 +109,10 @@ export async function runQueue() {
       }
       // Selective tests must never generate or consume successors outside their approved ID list.
       if (!process.env.WORKER_TASK_SELECTION_FILE && Date.now() - coordinatedAt >= 5000) {
-        if (!run.options.batch) await coordinateWeeklyCatalog();
+        if (!run.options.batch) {
+          await coordinateCatalogCampaigns();
+          await coordinateWeeklyCatalog();
+        }
         await coordinateCatalogSyncs();
         await coordinateCatalogReconciliations();
         coordinatedAt = Date.now();
@@ -113,9 +123,10 @@ export async function runQueue() {
           run.reason = "queue_empty";
           break;
         }
-        await new Promise((r) => setTimeout(r, 1000));
+        await new Promise((r) => setTimeout(r, workerIdleDelay(emptyPolls++)));
         continue;
       }
+      emptyPolls = 0;
       run.claimed++;
       run.activeTaskId = task.id;
       await announce();

@@ -117,3 +117,7 @@ Rollback de aplicação: parar workers, manter backup, reinstalar imagem anterio
 ## Operação contínua e catálogo administrativo (atualização pendente de publicação)
 
 Consulte [operação pelo painel](PANEL-OPERATIONS.md) para ordem das migrations/deploys, inicializador Windows, limites de cobertura e aceite.
+
+## Preparação AWS e carga ampla (13/10/2026)
+
+[Hospedagem AWS](AWS-HOSTING.md) substitui o plano gratuito somente após implantação explícita; nesta branch nenhuma AWS foi provisionada. [Campanhas](CATALOG-CAMPAIGNS.md) permitem operação ampla sem computador local. As novas migrations são aditivas e ainda não aplicadas no Supabase. Agenda permanece desativada.

@@ -735,6 +735,9 @@ model CatalogSync {
  coverage String @default("not_started")
  discovered Int @default(0)
  processed Int @default(0)
+ createdCount Int @default(0)
+ existingCount Int @default(0)
+ countsAvailable Boolean @default(false)
  createdAt DateTime @default(now()) @db.Timestamptz(6)
  updatedAt DateTime @default(now()) @db.Timestamptz(6)
 }
@@ -789,4 +792,21 @@ model AdminAudit {
  details Json @default("{}")
  createdAt DateTime @default(now()) @db.Timestamptz(6)
  @@index([eventId,createdAt])
+}
+
+model CatalogCampaign {
+ id String @id
+ ownerId String
+ requestHash String
+ coordinatorVersion Int @default(1)
+ status String @default("discovery")
+ pauseRequested Boolean @default(false)
+ options Json
+ sourceSyncs Json
+ reconciliationId String?
+ summary Json @default("{}")
+ createdAt DateTime @default(now()) @db.Timestamptz(3)
+ updatedAt DateTime @default(now()) @db.Timestamptz(3)
+ finishedAt DateTime? @db.Timestamptz(3)
+ @@index([createdAt])
 }

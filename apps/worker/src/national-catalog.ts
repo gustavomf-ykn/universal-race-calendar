@@ -97,7 +97,7 @@ export async function syncNationalTicketSports(sync: CatalogSync, discover = dis
       // Enrichment is durable and idempotent per synchronization/reference, also for existing editions.
       const key = createHash("sha256").update(`catalog-enrich:${sync.id}:${candidate.externalId}`).digest("hex");
       await enqueueTask(sync.ownerId, key, "ticketsports", "check-source", { sourceId: source.id, syncId: sync.id }, tx);
-      await tx.catalogSync.update({ where: { id: sync.id }, data: { cursor: { increment: 1 }, processed: { increment: 1 }, updatedAt: new Date() } });
+      await tx.catalogSync.update({ where: { id: sync.id }, data: { cursor: { increment: 1 }, processed: { increment: 1 }, createdCount: { increment: ref ? 0 : 1 }, existingCount: { increment: ref ? 1 : 0 }, updatedAt: new Date() } });
     });
   }
   const finished = sync.cursor + batch.length >= snapshot.candidates.length;

@@ -10,3 +10,11 @@ data
 .secrets/
 .env.*
 !.env.example
+
+**/.secrets/**
+**/.aws/**
+**/*.dpapi.json
+**/.env
+**/.env.*
+!**/.env.example
+!deploy/aws/release.env.example

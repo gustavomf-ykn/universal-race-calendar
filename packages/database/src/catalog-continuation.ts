@@ -27,7 +27,9 @@ export async function coordinateCatalogSyncs(limit = 50): Promise<number> {
   let queued = 0;
   for (const { id } of candidates) {
     queued += await prisma.$transaction(async (tx) => {
-      // The API's manual continuation takes the same lock. Concurrent coordinators cannot fork a checkpoint.
+      // Acquisition gate precedes the sync row, matching pause and campaign controls.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('race-task-acquisition'))`;
+      // Concurrent coordinators cannot fork a checkpoint.
       await tx.$queryRaw`SELECT id FROM "CatalogSync" WHERE id=${id} FOR UPDATE`;
       const sync = await tx.catalogSync.findUniqueOrThrow({ where: { id } });
       const options = sync.options as Record<string, unknown>;

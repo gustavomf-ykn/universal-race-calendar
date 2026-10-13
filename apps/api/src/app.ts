@@ -4,6 +4,7 @@ import { registerSourceControls } from "./source-controls.js";
 import { registerCapacity } from "./capacity.js";
 import { registerReconciliation } from "./reconciliation.js";
 import { registerWeeklyCatalog } from "./catalog-weekly.js";
+import { registerCatalogCampaign } from "./catalog-campaign.js";
 import { registerBackend, acceptTask } from "./backend.js";
 import { installLegacyContracts } from "./legacy-contracts.js";
 import { installCalendarContracts } from "./contracts.js";
@@ -119,6 +120,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     status: "ok",
     gitSha: process.env.RENDER_GIT_COMMIT ?? process.env.GIT_SHA ?? "development",
     backendVersion: "2.0.0",
+    features: { catalogCampaigns: true },
     canonicalSchemaVersion: CANONICAL_SCHEMA_VERSION,
     curationPipelineVersion: CURATION_PIPELINE_VERSION,
     ticketSportsAdapterVersion: ADAPTER_VERSION_TICKETSPORTS,
@@ -743,6 +745,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   await registerCapacity(app);
   await registerReconciliation(app);
   await registerWeeklyCatalog(app);
+  await registerCatalogCampaign(app);
   return app;
 }
 

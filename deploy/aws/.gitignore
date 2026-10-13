@@ -1,0 +1,5 @@
+release.env
+previous-release.env
+worker-approval.json
+*.env
+!release.env.example

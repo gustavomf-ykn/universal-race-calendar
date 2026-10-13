@@ -25,7 +25,7 @@ export const weeklyDefaults = {
   ...defaultWeeklySlot,
   recentDays: 90,
   historicalEveryWeeks: 4,
-  batchSize: 5,
+  batchSize: 25,
   snapshotLimit: 250,
   prefixLimit: 10000,
   states: [...brazilianStateCodes].sort(),
@@ -196,7 +196,17 @@ async function wait(tx: Prisma.TransactionClient, row: CatalogWeeklySchedule, re
     await tx.catalogWeeklySchedule.update({ where: { id: 1 }, data: { waitReason: reason, updatedAt: new Date() } });
   return { created: 0, reason };
 }
-async function observe(tx: Prisma.TransactionClient, run: CatalogWeeklyOccurrence, now: Date) {
+export async function observeCatalogCycle(
+  tx: Prisma.TransactionClient,
+  run: Pick<CatalogWeeklyOccurrence, "id" | "ownerId" | "sourceSyncs" | "coordinatorVersion" | "reconciliationId">,
+  now: Date,
+  hooks?: {
+    attach: (id: string) => Promise<unknown>;
+    success?: () => Promise<unknown>;
+    keyPrefix?: string;
+    reason?: string;
+  },
+) {
   if (run.coordinatorVersion !== version)
     return { status: "blocked", summary: { reason: "weekly_schedule_version_incompatible" } };
   const syncs = run.sourceSyncs as Record<string, string>;
@@ -218,30 +228,61 @@ async function observe(tx: Prisma.TransactionClient, run: CatalogWeeklyOccurrenc
       count(*) FILTER(WHERE status='partial')::integer AS partial,
       count(*) FILTER(WHERE status='cancelled')::integer AS cancelled FROM latest`;
   const tasks = stats[0]!;
+  const sourceStats = await tx.$queryRaw<
+    Array<{ source: string; pending: number; held: number; failed: number; partial: number }>
+  >`
+    WITH scoped AS (SELECT * FROM "CollectionTask" WHERE payload->>'syncId'=ANY(${ids}::text[])),
+    leaves AS (SELECT t.* FROM scoped t WHERE NOT EXISTS(SELECT FROM scoped n WHERE n.payload->>'retryOf'=t.id)),
+    latest AS (SELECT DISTINCT ON (source,kind,coalesce(payload->>'sourceId',payload->>'url','discovery')) * FROM leaves
+     ORDER BY source,kind,coalesce(payload->>'sourceId',payload->>'url','discovery'),"createdAt" DESC,"updatedAt" DESC,id DESC)
+    SELECT l.source,(SELECT count(*)::int FROM scoped s WHERE s.source=l.source AND s.status IN ('queued','running')) AS pending,
+      (SELECT count(*)::int FROM scoped s WHERE s.source=l.source AND s.status='queued' AND s."executionHold") AS held,
+      count(*) FILTER(WHERE l.status='failed')::int AS failed,count(*) FILTER(WHERE l.status='partial')::int AS partial
+    FROM latest l GROUP BY l.source`;
+  const gates = await tx.sourceRequestControl.findMany({
+    where: { source: { in: [...sources] } },
+    select: { source: true, blockedAt: true, blockedUntil: true },
+  });
   const sourceSummary = rows.map((r) => ({
+    sourceBlocked: !!gates.find((g) => g.source === r.source)?.blockedAt,
+    blockedUntil: gates.find((g) => g.source === r.source)?.blockedUntil ?? null,
     source: r.source,
     syncId: r.id,
     status: r.status,
     coverage: r.coverage,
     discovered: r.discovered,
     processed: r.processed,
+    new: r.countsAvailable ? r.createdCount : null,
+    existing: r.countsAvailable ? r.existingCount : null,
+    tasks: sourceStats.find((s) => s.source === r.source) ?? { pending: 0, held: 0, failed: 0, partial: 0 },
+    duplicates:
+      r.snapshot &&
+      typeof r.snapshot === "object" &&
+      !Array.isArray(r.snapshot) &&
+      typeof r.snapshot.duplicates === "number"
+        ? r.snapshot.duplicates
+        : null,
   }));
   const limitedSources = rows.filter((r) => r.status === "limited").map((r) => r.source);
   const summary: Record<string, any> = { sources: sourceSummary, tasks, limitedSources };
   if (rows.some((r) => !["completed", "limited"].includes(r.status)))
     return {
-      status: rows.some((r) => ["blocked", "paused"].includes(r.status)) || tasks.held ? "blocked" : "discovery",
+      status:
+        rows.some((r) => ["blocked", "paused"].includes(r.status)) || tasks.held || gates.some((g) => g.blockedAt)
+          ? "blocked"
+          : "discovery",
       summary,
     };
   if (tasks.pending) return { status: tasks.held ? "blocked" : "enrichment", summary };
   if (!run.reconciliationId) {
     const result = await startCatalogReconciliation(
       run.ownerId,
-      hash(["weekly-reconcile", run.id]),
-      "Cruzamento após atualização semanal",
+      hash([hooks?.keyPrefix ?? "weekly-reconcile", run.id]),
+      hooks?.reason ?? "Cruzamento após atualização semanal",
       tx,
     );
-    await tx.catalogWeeklyOccurrence.update({ where: { id: run.id }, data: { reconciliationId: result.run.id } });
+    if (hooks) await hooks.attach(result.run.id);
+    else await tx.catalogWeeklyOccurrence.update({ where: { id: run.id }, data: { reconciliationId: result.run.id } });
     return { status: "reconciliation", summary };
   }
   const reconciliation = await tx.catalogReconciliation.findUnique({ where: { id: run.reconciliationId } });
@@ -285,7 +326,10 @@ async function observe(tx: Prisma.TransactionClient, run: CatalogWeeklyOccurrenc
     reconciliationFailed ||
     reconciliation.status === "cancelled";
   const status = partial ? "partial" : reconciliation.reviewCount ? "completed_with_review" : "completed";
-  if (!partial) await tx.catalogWeeklySchedule.update({ where: { id: 1 }, data: { lastSuccessAt: now } });
+  if (!partial) {
+    if (hooks) await hooks.success?.();
+    else await tx.catalogWeeklySchedule.update({ where: { id: 1 }, data: { lastSuccessAt: now } });
+  }
   return { status, summary };
 }
 /** Only the continuous local calendar worker calls this. No HTTP or results extraction. */
@@ -296,6 +340,7 @@ export async function coordinateWeeklyCatalog(now = new Date()) {
   if (resources.reason) return { created: 0, reason: resources.reason };
   return prisma.$transaction(
     async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('race_catalog_campaign',0))`;
       await lock(tx);
       const schedule = await tx.catalogWeeklySchedule.findUniqueOrThrow({ where: { id: 1 } });
       const active = await tx.catalogWeeklyOccurrence.findFirst({ where: { status: { notIn: terminal } } });
@@ -304,7 +349,7 @@ export async function coordinateWeeklyCatalog(now = new Date()) {
       if (active) {
         let result;
         try {
-          result = await observe(tx, active, now);
+          result = await observeCatalogCycle(tx, active, now);
         } catch (error) {
           if (error instanceof TaskConflict || error instanceof CapacityDeferred)
             return wait(tx, schedule, error.message);
@@ -326,6 +371,8 @@ export async function coordinateWeeklyCatalog(now = new Date()) {
       if (!schedule.enabled || !schedule.nextLocalDate) return wait(tx, schedule, null);
       const due = coalesceWeeklyOccurrences(schedule.nextLocalDate, now, schedule);
       if (!due) return wait(tx, schedule, null);
+      if (await tx.catalogCampaign.count({ where: { status: { notIn: terminal } } }))
+        return wait(tx, schedule, "weekly_scope_in_use");
       if (
         await tx.catalogSync.count({
           where: {
@@ -354,7 +401,9 @@ export async function coordinateWeeklyCatalog(now = new Date()) {
           key = hash(["weekly-discovery", id, source]);
         syncs[source] = syncId;
         const scope = { ...options, source };
-        await tx.catalogSync.create({ data: { id: syncId, ownerId: schedule.ownerId, source, options: json(scope) } });
+        await tx.catalogSync.create({
+          data: { id: syncId, ownerId: schedule.ownerId, source, countsAvailable: true, options: json(scope) },
+        });
         await enqueueTask(
           schedule.ownerId,
           key,
@@ -422,6 +471,7 @@ export async function cancelWeeklyOccurrence(actorId: string, key: string, id: s
   )
     throw new TaskConflict("weekly_configuration_invalid");
   return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('race_catalog_campaign',0))`;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('race-task-acquisition'))`;
     await lock(tx);
     const run = await tx.catalogWeeklyOccurrence.findUnique({ where: { id } });

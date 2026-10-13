@@ -1,0 +1,121 @@
+name: runfinder-staging
+x-logs: &logs
+  driver: local
+  options: { max-size: "10m", max-file: "3" }
+x-worker: &worker
+  init: true
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  logging: *logs
+  stop_grace_period: 31m
+  tmpfs: ["/tmp:size=1g,mode=1777"]
+services:
+  api:
+    image: ${API_IMAGE:?Set the tested API image digest}
+    env_file: [{ path: /etc/runfinder/staging/api.env, format: raw }]
+    environment:
+      {
+        NODE_ENV: production,
+        HOSTING_TARGET: aws,
+        PORT: "3000",
+        GIT_SHA: "${RELEASE_SHA:?Set release commit}",
+        EXPECTED_SUPABASE_PROJECT_REF: sggrijhyblejlgimgzzc,
+        NODE_OPTIONS: "--max-old-space-size=384",
+      }
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
+    tmpfs: ["/tmp:size=128m,mode=1777"]
+    logging: *logs
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/ready',{signal:AbortSignal.timeout(5000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 7s
+      retries: 3
+      start_period: 30s
+    stop_grace_period: 15s
+  calendar-worker:
+    <<: *worker
+    image: ${API_IMAGE:?Set tested API image digest}
+    command: ["node", "apps/worker/dist/apps/worker/src/queue.js"]
+    env_file: [{ path: /etc/runfinder/staging/calendar.env, format: raw }]
+    environment:
+      NODE_ENV: production
+      HOSTING_TARGET: aws
+      WORKER_MODE: continuous
+      WORKER_CODE_VERSION: ${RELEASE_SHA:?Set release commit}
+      WORKER_HEALTH_FILE: /tmp/worker-health.json
+      WORKER_MIN_FREE_MEMORY_MB: "512"
+      WORKER_MIN_FREE_TEMP_MB: "512"
+      WORKER_MAX_RSS_MB: "1024"
+      AI_CURATION_ENABLED: "false"
+      AI_CURATION_REQUIRED: "false"
+      SCRAPER_MAX_RETRIES: "1"
+    mem_limit: 1536m
+    healthcheck:
+      test: ["CMD", "node", "scripts/worker-health.mjs"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+    profiles: [workers]
+  results-worker:
+    <<: *worker
+    image: ${RESULTS_IMAGE:?Set tested Python image digest}
+    env_file: [{ path: /etc/runfinder/staging/results.env, format: raw }]
+    environment:
+      HOSTING_TARGET: aws
+      WORKER_MODE: continuous
+      WORKER_CODE_VERSION: ${RELEASE_SHA:?Set release commit}
+      WORKER_HEALTH_FILE: /tmp/worker-health.json
+      WORKER_MIN_FREE_MEMORY_MB: "512"
+      WORKER_MIN_FREE_TEMP_MB: "512"
+      WORKER_MAX_RSS_MB: "3072"
+    mem_limit: 4096m
+    shm_size: 512m
+    healthcheck:
+      test: ["CMD", "python", "worker_health.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+    profiles: [workers]
+  caddy:
+    image: ${CADDY_IMAGE:?Set tested Caddy image digest}
+    environment: { API_PUBLIC_HOST: "${API_PUBLIC_HOST:?A domain you control is required}" }
+    ports: ["80:80", "443:443"]
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "caddy-data:/data", "caddy-config:/config"]
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    logging: *logs
+    depends_on: { api: { condition: service_healthy } }
+  migration:
+    image: ${API_IMAGE:?Set tested API image digest}
+    command: ["node", "scripts/aws-migrate.mjs"]
+    environment: { HOSTING_TARGET: aws }
+    env_file: [{ path: /etc/runfinder/staging/migration.env, format: raw }]
+    profiles: [maintenance]
+    init: true
+    mem_limit: 768m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+    logging: *logs
+volumes:
+  caddy-data:
+  caddy-config:

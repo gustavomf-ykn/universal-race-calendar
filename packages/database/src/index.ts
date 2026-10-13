@@ -1275,3 +1275,13 @@ function jsonOrUndefined(value: unknown | undefined): any {
 function withoutUndefined<T extends Record<string, unknown>>(value: T): any {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
+
+export {
+  campaignDefaults,
+  startCatalogCampaign,
+  readCatalogCampaigns,
+  getCatalogCampaign,
+  controlCatalogCampaign,
+  coordinateCatalogCampaigns,
+} from "./catalog-campaign.js";
+export type { CampaignInput } from "./catalog-campaign.js";

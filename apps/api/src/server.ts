@@ -5,6 +5,8 @@ import { requestSource, waitForSourceRequest, observeSourceResponse } from "@rac
 import { setSourceRequestGuard } from "@race-calendar/sources";
 setSourceRequestGuard((url, scope) => waitForSourceRequest(requestSource(url, scope)), observeSourceResponse);
 
+import { assertAwsStaging } from "@race-calendar/utils";
+assertAwsStaging(process.env, ["DATABASE_URL"]);
 const port = Number(process.env.PORT ?? 3000);
 const app = await buildApp();
 

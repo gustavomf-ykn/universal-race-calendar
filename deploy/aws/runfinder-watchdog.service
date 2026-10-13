@@ -1,0 +1,7 @@
+[Unit]
+Description=Runfinder own-container heartbeat watchdog
+After=docker.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash /opt/runfinder/deploy/aws/watchdog.sh
+TimeoutStartSec=120
