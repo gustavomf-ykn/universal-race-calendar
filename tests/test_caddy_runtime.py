@@ -17,7 +17,7 @@ def main():
   sentinel='caddy-sensitive-fixture-never-log'
   records=[]
   for _ in range(20):
-   subprocess.run(['docker','exec',container,'wget','-q','-O','/dev/null',
+   response=subprocess.run(['docker','exec',container,'wget','-q','-O','/dev/null',
     '--header=Authorization: Bearer '+sentinel,'--header=X-Api-Key: '+sentinel,
     '--header=X-Internal-Api-Key: '+sentinel,
     'http://127.0.0.1:8080/?token='+sentinel],capture_output=True,timeout=5)
@@ -28,9 +28,14 @@ def main():
    for line in text.splitlines():
     try:records.append(json.loads(line))
     except ValueError:continue
-   if any(r.get('logger')=='http.log.error' for r in records):break
+   if any(str(r.get('logger','')).startswith('http.log.error') for r in records):break
    time.sleep(0.2)
-  errors=[r for r in records if r.get('logger')=='http.log.error']
+  errors=[r for r in records if str(r.get('logger','')).startswith('http.log.error')]
+  print(json.dumps({'running':check('docker','inspect','--format','{{.State.Running}}',container)=='true',
+   'requestCommandExit':response.returncode,'errorRecords':len(errors),
+   'headersRetained':any('headers' in r.get('request',{}) for r in errors),
+   'uriRetained':any('uri' in r.get('request',{}) for r in errors),
+   'configParseError':any('adapting config' in line or 'parsing caddyfile' in line for line in text.splitlines())}))
   if not errors or any('headers' in r.get('request',{}) or 'uri' in r.get('request',{}) for r in errors):
    raise ValueError()
   digest=check('docker','image','inspect','--format','{{index .RepoDigests 0}}','caddy:2')
