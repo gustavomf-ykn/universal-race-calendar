@@ -80,7 +80,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now runfinder-watchdog.timer
 A cada cinco minutos ele reinicia somente worker unhealthy quando a API está pronta; resource_wait com heartbeat é saudável e não provoca churn. Interrupção forçada exige recuperação por lease. Docker restart policy sozinho não reinicia um contêiner apenas por unhealthy.
 
-stop.sh encerra os workers com prazo para terminar a tarefa. rollback.sh previous-release.env volta somente a API compatível; não reverte banco e exige revisão antes de iniciar workers antigos. Conservar digests/configuração pública anterior e secrets no gerenciador.
+stop.sh suspende o watchdog, mantém um marcador de parada em /etc/runfinder/staging/workers-paused e encerra os workers com prazo para terminar a tarefa. O marcador persiste após reboot. deploy.sh workers o remove somente após aprovação da fila e inicialização saudável; uma inicialização parcial com falha encerra os workers. Depois de uma atualização aceita, reativar explicitamente o monitor já instalado com sudo systemctl start runfinder-watchdog.timer. rollback.sh previous-release.env volta somente a API compatível; não reverte banco e exige revisão antes de iniciar workers antigos. Conservar digests/configuração pública anterior e secrets no gerenciador.
 
 ## Frontend e operação diária
 

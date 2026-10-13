@@ -17,6 +17,10 @@ else
  sudo docker compose --env-file release.env -f compose.yaml run --rm --no-deps --user 0 -v /etc/runfinder/staging/worker-approval.json:/runfinder/worker-approval.json:ro api node scripts/aws-queue-preflight.mjs /runfinder/worker-approval.json
  sudo docker compose --env-file release.env -f compose.yaml --profile workers pull calendar-worker results-worker
  sudo python3 verify-images.py release.env workers
- sudo docker compose --env-file release.env -f compose.yaml --profile workers up -d --wait calendar-worker results-worker
+ if ! sudo docker compose --env-file release.env -f compose.yaml --profile workers up -d --wait calendar-worker results-worker; then
+  bash ./stop.sh
+  exit 1
+ fi
+ sudo rm -f /etc/runfinder/staging/workers-paused
 fi
 echo "Release started; validate task outcomes independently."
