@@ -11,7 +11,7 @@ def main():
  try:
   check('docker','pull','caddy:2')
   container=check('docker','run','-d','--network','none','--read-only','--memory','256m',
-   '--cap-drop','ALL','--tmpfs','/data:size=64m','--tmpfs','/config:size=16m',
+   '--cap-drop','ALL','--cap-add','NET_BIND_SERVICE','--security-opt','no-new-privileges:true','--tmpfs','/data:size=64m','--tmpfs','/config:size=16m',
    '--tmpfs','/tmp:size=16m','-e','API_PUBLIC_HOST=http://:8080',
    '-v',str(root/'deploy/aws/Caddyfile')+':/etc/caddy/Caddyfile:ro','caddy:2')
   sentinel='caddy-sensitive-fixture-never-log'
