@@ -95,6 +95,8 @@ jobs:
           test "$(docker compose -f compose.backend.yaml ps --status running --services | wc -l)" -eq 4
       - name: Launch installed Chromium without network or fixtures
         run: docker compose -f compose.backend.yaml -f tests/compose.aws-runtime.yaml exec -T results-worker python browser_smoke.py
+      - name: Caddy runtime errors redact credentials with no network or upstream
+        run: python3 tests/test_caddy_runtime.py
       - name: Batch images exit on an empty queue
         run: |
           docker compose -f compose.backend.yaml stop calendar-worker results-worker

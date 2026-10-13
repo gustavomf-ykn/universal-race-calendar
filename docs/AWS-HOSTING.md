@@ -141,3 +141,5 @@ sudo bash rollback.sh previous-release.env
 ```
 
 Conservar os arquivos públicos da release anterior antes de substituir release.env. Parar API/proxy também, quando solicitado: `sudo docker compose --env-file release.env -f compose.yaml stop api caddy`. Parar processos ou excluir o stack não apaga dados do Supabase e não encerra automaticamente a cobrança dos recursos retidos.
+
+O Caddy também filtra headers e URI dos logs de erro do proxy, além de manter access logs desativados. O CI inicia seu contêiner isolado sem rede, causa um erro controlado com valores sintéticos e verifica a remoção desses campos; informa o digest CADDY_IMAGE testado para registrar na release. Isso não valida certificado/DNS da API real. [Filtro oficial de logs](https://caddyserver.com/docs/caddyfile/directives/log#filter).
