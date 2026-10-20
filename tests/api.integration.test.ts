@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { buildApp } from "../apps/api/src/app.js";
 import { prisma } from "@race-calendar/database";
@@ -38,6 +38,10 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
     await prisma.event.deleteMany();
     await prisma.source.deleteMany();
     await prisma.importRun.deleteMany();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   afterAll(async () => {
@@ -268,6 +272,10 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
   });
 
   it("creates exclusive CorridasBR events, stays idempotent, and links exact TicketSports targets", async () => {
+    // This fixture edition must remain eligible after its calendar date has passed.
+    // Fake only Date so Prisma/network timers continue using the real event loop.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
     const registry = new SourceAdapterRegistry({
       adapters: [
         new CorridasBRAdapter({
@@ -303,6 +311,8 @@ describe.skipIf(!process.env.DATABASE_URL)("API integration", () => {
       },
     ];
     const first = await importCorridasBREvents({ registry, discoverEvents: exclusiveDiscovery, delayMs: 0, force: true });
+    expect(first.discoveredCount).toBe(1);
+    expect(first.processedCount).toBe(1);
     expect(first.publishedEvents).toBe(0);
     const exclusive = await prisma.event.findFirstOrThrow({
       where: { sourceType: "corridasbr", sourceExternalId: "98765" },
