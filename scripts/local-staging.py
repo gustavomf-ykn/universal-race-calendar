@@ -294,9 +294,30 @@ def capacity(env, confirmed=False):
     (RUNTIME / "capacity-report.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(result))
 
+def frontend_config(env):
+    import httpx
+    public = json.loads((RUNTIME / "tunnel-public.json").read_text(encoding="utf-8"))
+    url = public["publicUrl"].rstrip("/")
+    if public.get("projectRef") != REF or not re.fullmatch(r"https://[a-z0-9-]+\.trycloudflare\.com", url):
+        raise RuntimeError("tunnel_identity_mismatch")
+    version = httpx.get(url + "/v1/version", timeout=30, follow_redirects=False).json()
+    if version.get("supabaseProjectRef") != REF:
+        raise RuntimeError("tunnel_identity_mismatch")
+    values = {"VITE_API_BASE_URL": url, "VITE_API_DOCS_URL": url + "/docs",
+              "VITE_SUPABASE_URL": PROFILE["supabaseUrl"],
+              "VITE_SUPABASE_PUBLISHABLE_KEY": env["SUPABASE_PUBLISHABLE_KEY"],
+              "VITE_APP_ENV_LABEL": "Homologação local"}
+    if not re.fullmatch(r"sb_publishable_[A-Za-z0-9_-]+", values["VITE_SUPABASE_PUBLISHABLE_KEY"]):
+        raise RuntimeError("public_key_configuration_invalid")
+    private_directory()
+    output = RUNTIME / "lovable-public.env"
+    output.write_text("\n".join(k + "=" + v for k, v in values.items()) + "\n", encoding="utf-8")
+    emit(status="public_frontend_configuration_prepared", file=str(output), privilegedValuesIncluded=False)
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["configure", "configure-gui", "check", "inventory", "migrate", "audit", "capacity", "api", "workers", "browser", "stop", "install-tunnel", "tunnel"])
+    parser.add_argument("action", choices=["configure", "configure-gui", "check", "inventory", "migrate", "audit", "capacity", "frontend-config", "api", "workers", "browser", "stop", "install-tunnel", "tunnel"])
     parser.add_argument("--from-environment", action="store_true")
     parser.add_argument("--quota-confirmed", action="store_true")
     args = parser.parse_args()
@@ -305,6 +326,8 @@ def main():
     if args.action == "configure-gui":
         configure_gui(); return
     env = environment(args.from_environment)
+    if args.action == "frontend-config":
+        frontend_config(env); return
     if args.action in ("install-tunnel", "tunnel"):
         import runpy
         private_directory()

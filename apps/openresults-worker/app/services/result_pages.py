@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 import hashlib
 import json
+import math
 import re
 
 from app.models import StructureChangedError
@@ -10,6 +11,10 @@ from app.services.parser import parse_result_rows
 
 
 def whole_number(value):
+    # CFML serializes some integer-valued JSON offsets as 52.0. Keep strict
+    # pagination checks, but accept that equivalent numeric representation.
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        value = int(value)
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise StructureChangedError('result_pagination_invalid')
     text = str(value).strip()

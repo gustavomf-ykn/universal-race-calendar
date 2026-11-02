@@ -1,4 +1,4 @@
-param([ValidateSet('configure','configure-gui','check','inventory','migrate','audit','api','workers','browser','stop','install-tunnel','tunnel')][string]$Action='check',[string]$Python)
+param([ValidateSet('configure','configure-gui','check','inventory','migrate','audit','frontend-config','api','workers','browser','stop','install-tunnel','tunnel')][string]$Action='check',[string]$Python)
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 if(-not $Python) {
