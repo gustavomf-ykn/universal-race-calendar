@@ -5,12 +5,13 @@ import { requestSource, waitForSourceRequest, observeSourceResponse } from "@rac
 import { setSourceRequestGuard } from "@race-calendar/sources";
 setSourceRequestGuard((url, scope) => waitForSourceRequest(requestSource(url, scope)), observeSourceResponse);
 
-import { assertAwsStaging } from "@race-calendar/utils";
+import { assertAwsStaging, assertRuntimeDestination } from "@race-calendar/utils";
+assertRuntimeDestination(process.env, ["DATABASE_URL"]);
 assertAwsStaging(process.env, ["DATABASE_URL"]);
 const port = Number(process.env.PORT ?? 3000);
 const app = await buildApp();
 
-await app.listen({ port, host: "0.0.0.0" });
+await app.listen({ port, host: process.env.HOST ?? "0.0.0.0" });
 
 let stopping = false;
 for (const signal of ["SIGTERM", "SIGINT"] as const)

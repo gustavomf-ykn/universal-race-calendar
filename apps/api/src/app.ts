@@ -1,4 +1,5 @@
 import { registerOperations } from "./operations.js";
+import { runtimeProfile } from "@race-calendar/utils";
 import { registerSourceComparison } from "./source-comparison.js";
 import { registerSourceControls } from "./source-controls.js";
 import { registerCapacity } from "./capacity.js";
@@ -121,6 +122,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
     gitSha: process.env.RENDER_GIT_COMMIT ?? process.env.GIT_SHA ?? "development",
     backendVersion: "2.0.0",
     features: { catalogCampaigns: true },
+    environmentProfile: runtimeProfile(),
+    supabaseProjectRef: process.env.SUPABASE_URL?.match(/^https:\/\/([a-z]{20})\.supabase\.co\/?$/)?.[1] ?? null,
     canonicalSchemaVersion: CANONICAL_SCHEMA_VERSION,
     curationPipelineVersion: CURATION_PIPELINE_VERSION,
     ticketSportsAdapterVersion: ADAPTER_VERSION_TICKETSPORTS,

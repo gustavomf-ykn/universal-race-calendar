@@ -2,6 +2,7 @@ import { repairMojibake, sourceModality } from "./text-normalization.js";
 import { countryEvidenceForRaw } from "./country-evidence.js";
 import { dateLocationEvidenceForRaw, editionTextForRaw, relatedJsonLdForEdition } from "./date-location-evidence.js";
 import { randomUUID } from "node:crypto";
+import { runtimeProfile } from "@race-calendar/utils";
 import { createAIProviderFromEnv, type AIProvider } from "@race-calendar/ai";
 import {
   completeExtractionJob,
@@ -374,7 +375,10 @@ export async function importTicketSportsEvents(
   const allDiscovered = options.discoverEvents
     ? await options.discoverEvents()
     : await discoverTicketSportsEvents(discoverOptions);
-  const eligibleDiscovered = allDiscovered.filter((event) => !event.country || event.country.toUpperCase() === "BR");
+  const pilotStates = runtimeProfile()?.catalogPilot.states;
+  const eligibleDiscovered = allDiscovered.filter((event) =>
+    (!event.country || event.country.toUpperCase() === "BR") &&
+    (!pilotStates || !event.state || pilotStates.includes(event.state)));
   const discovered = eligibleDiscovered.slice(offset, offset + quantity);
   const failures: TicketSportsImportResult["failures"] = [];
   let processedCount = 0;

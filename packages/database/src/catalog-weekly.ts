@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { CatalogWeeklyOccurrence, CatalogWeeklySchedule, Prisma } from "@prisma/client";
-import { inspectLocalResources } from "@race-calendar/utils";
+import { inspectLocalResources, runtimeProfile } from "@race-calendar/utils";
 import { prisma } from "./index.js";
 import { assertCapacity, capacityGrowth, CapacityDeferred } from "./capacity.js";
 import { enqueueTask, stableJson, TaskConflict } from "./tasks.js";
@@ -15,6 +15,7 @@ import {
 } from "./catalog-weekly-clock.js";
 
 const version = 1;
+// A pilot profile never authorizes recurring work.
 const sources = ["ticketsports", "corridasbr", "openresults"] as const;
 const terminal = ["completed", "completed_with_review", "partial", "cancelled"];
 const hash = (value: unknown) => createHash("sha256").update(stableJson(value)).digest("hex");
@@ -132,6 +133,7 @@ export async function configureWeeklyCatalog(
   input: WeeklyConfiguration,
   now = new Date(),
 ) {
+  if (input.enabled && runtimeProfile()) throw new TaskConflict("pilot_schedule_disabled");
   const request = validate(input),
     requestHash = hash(request);
   if (!actorId || !key || key.length > 100) throw new TaskConflict("weekly_configuration_invalid");

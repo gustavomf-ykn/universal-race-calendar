@@ -1278,6 +1278,7 @@ function withoutUndefined<T extends Record<string, unknown>>(value: T): any {
 
 export {
   campaignDefaults,
+  catalogCampaignDefaults,
   startCatalogCampaign,
   readCatalogCampaigns,
   getCatalogCampaign,

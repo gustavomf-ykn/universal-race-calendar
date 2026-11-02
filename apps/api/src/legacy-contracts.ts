@@ -113,6 +113,9 @@ export function installLegacyContracts(app: FastifyInstance) {
           200: object(
             {
               ...fields("status backendVersion gitSha canonicalSchemaVersion curationPipelineVersion"),
+              supabaseProjectRef: { type: ["string", "null"] },
+              environmentProfile: { type: ["object", "null"], additionalProperties: true },
+              features: object({ catalogCampaigns: { type: "boolean" } }, true),
               adapters: object({}, true),
             },
             true,

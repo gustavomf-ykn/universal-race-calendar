@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { prisma } from "./index.js";
 import type { Prisma, CollectionTask } from "@prisma/client";
 import type { LocalResourceDeferred } from "@race-calendar/utils";
+import { assertPilotTask } from "@race-calendar/utils";
 
 export async function deferLocalResourceTask(
   task: CollectionTask,
@@ -33,6 +34,8 @@ export async function enqueueTask(
   payload: Prisma.InputJsonValue,
   db: Prisma.TransactionClient = prisma,
 ) {
+  try { assertPilotTask(kind, payload as Record<string, unknown>); }
+  catch (error) { throw new TaskConflict(error instanceof Error ? error.message : "pilot_scope_exceeded"); }
   const requestHash = createHash("sha256").update(stableJson({ source, kind, payload })).digest("hex");
   const task = await db.collectionTask.upsert({
     where: { ownerId_idempotencyKey: { ownerId, idempotencyKey } },

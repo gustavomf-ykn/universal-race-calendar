@@ -19,7 +19,7 @@ import {
 } from "@race-calendar/database";
 import { syncCatalog } from "./catalog.js";
 import { existsSync } from "node:fs";
-import { workerIdleDelay, writeWorkerHealth, assertAwsStaging } from "@race-calendar/utils";
+import { workerIdleDelay, writeWorkerHealth, assertAwsStaging, assertRuntimeDestination, assertPilotTask } from "@race-calendar/utils";
 import { BatchRun } from "./batch.js";
 import { taskError } from "./task-error.js";
 import { setSourceRequestGuard, enterSourceRequestScope } from "@race-calendar/sources";
@@ -58,6 +58,7 @@ process.on("SIGINT", () => {
   stopping = true;
 });
 export async function runQueue() {
+  assertRuntimeDestination(process.env, ["DATABASE_URL"]);
   assertAwsStaging(process.env, ["DATABASE_URL"]);
   const run = new BatchRun();
   const watchdog = run.watchdog();
@@ -147,6 +148,7 @@ export async function runQueue() {
         assertLocalResources();
         await assertCapacity();
         const input = task.payload as Record<string, unknown>;
+        assertPilotTask(task.kind, input);
         let status = "completed";
         if (task.kind === "catalog-sync") {
           progress = await syncCatalog(input);

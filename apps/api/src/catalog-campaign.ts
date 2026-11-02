@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { requireAdmin } from "./auth.js";
 import {
-  campaignDefaults,
+  catalogCampaignDefaults,
   startCatalogCampaign,
   readCatalogCampaigns,
   getCatalogCampaign,
@@ -37,6 +37,7 @@ function reject(reply: import("fastify").FastifyReply, e: unknown) {
   throw e;
 }
 export async function registerCatalogCampaign(app: FastifyInstance) {
+  const campaignDefaults = catalogCampaignDefaults();
   app.get(
     path,
     {

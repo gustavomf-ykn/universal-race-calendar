@@ -3,6 +3,10 @@ import os
 from urllib.parse import urlparse,parse_qs
 def assert_aws_staging():
  if os.environ.get('HOSTING_TARGET')!='aws':return
+ if os.environ.get('RUNFINDER_PROFILE'):
+  from local_profile import assert_runtime_destination
+  assert_runtime_destination()
+  return
  try:
   ref='sggrijhyblejlgimgzzc';u=urlparse(os.environ['WORKER_DATABASE_URL']);q=parse_qs(u.query)
   direct=u.hostname=='db.'+ref+'.supabase.co' and u.username=='postgres'
