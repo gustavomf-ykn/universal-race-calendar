@@ -191,6 +191,8 @@ async function inspect(
   };
 }
 export async function previewEventReconciliation(sourceId: string, targetId: string) {
+  // Loading both editions and their relations crosses the remote pooler many
+  // times; keep the same bounded transaction budget as the merge operation.
   return prisma.$transaction(async (tx) => {
     const state = await inspect(tx, await resolveEventId(sourceId, tx), await resolveEventId(targetId, tx));
     const summary = (row: Row) => ({
@@ -221,7 +223,7 @@ export async function previewEventReconciliation(sourceId: string, targetId: str
       automaticReason: state.automaticReason,
       runningTasks: state.running,
     };
-  });
+  }, { timeout: 30000 });
 }
 export type ReconciliationInput = {
   sourceId: string;

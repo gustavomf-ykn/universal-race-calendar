@@ -199,6 +199,13 @@ dois conjuntos e 762 resultados. As contas técnicas foram removidas. O vínculo
 Mountain Do/TicketSports/OpenResults já estava resolvido; não foi recriada uma
 pendência artificial para repetir sua resolução.
 
+A busca visual da prévia de união expôs erro 500/P2028: carregar as relações das
+duas edições pelo pooler excedeu os cinco segundos padrão do Prisma. A prévia
+passou a ter o mesmo prazo limitado de 30 segundos da união, sem mudar regras
+de identidade ou executar união. Uma regressão usa PostgreSQL descartável com
+latência controlada de 5,1 segundos dentro da transação, preservando as duas
+edições. Não se usa atraso artificial no Supabase de homologação.
+
 O script reproduzível é `scripts/profile-panel-smoke.py`; modos e limites no
 runbook. A suíte de recuperação/interrupção por lease continua separada, no
 PostgreSQL descartável do CI. Uma campanha prolongada com processamento real
