@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { CURATION_PIPELINE_VERSION } from "@race-calendar/utils";
+import { CURATION_PIPELINE_VERSION, stagingPrismaUrl } from "@race-calendar/utils";
 export { inspectLocalResources, assertLocalResources, LocalResourceDeferred } from "@race-calendar/utils";
 export type { LocalResources } from "@race-calendar/utils";
 import { assertTaskLease } from "./lease.js";
@@ -50,7 +50,8 @@ import type {
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
-export const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const profileUrl = stagingPrismaUrl();
+export const prisma = globalForPrisma.prisma ?? new PrismaClient(profileUrl ? { datasourceUrl: profileUrl } : undefined);
 
 export async function withPostgresAdvisoryLock<T>(key: string, run: () => Promise<T>): Promise<T | null> {
   return prisma.$transaction(

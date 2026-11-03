@@ -1,18 +1,47 @@
 # Integração do painel
 
-Contrato em desenvolvimento de [cruzamento global durável](CATALOG-RECONCILIATION.md): início/listagem/detalhes de varreduras, decisões paginadas e pausa/retomada/cancelamento via JWT admin. Depende de duas migrations aditivas e atualização explícita da API/executor TypeScript; ainda sem publicação ou aceite real. Etapa concluída não significa ciclo completo ou cobertura nacional.
+## Homologação local atual
 
-Implementação ainda não publicada de descoberta ampliada, continuidade, pausa/retomada e comparação por fonte: [catálogo nacional](NATIONAL-CATALOG.md). O documento distingue o contrato em desenvolvimento da cobertura realmente comprovada. Não habilitar carga nacional antes dos limites e do circuito por fonte.
+Destino exclusivo: `gpkodfsofwiroskdmeax`, iniciado vazio. As 32 migrations foram
+aplicadas e auditadas; não importar o projeto anterior. Painel publicado:
+https://runfinder-rithmy.lovable.app. API desta sessão:
+https://commons-wrapped-dublin-depot.trycloudflare.com. API, TypeScript e Python
+rodam no PC, com limites de conexões; o túnel e o computador devem permanecer
+ligados. A URL muda ao reiniciar o túnel e exige atualizar/publicar o frontend.
+Não usar o endpoint Render antigo para este perfil.
 
-Painel de homologação: https://runfinder-rithmy.lovable.app. API:
-https://universal-race-calendar.onrender.com. Evidências e limites da rodada real:
-[homologação de calendário e exportação](STAGING-ROUND-2026-09-21.md).
+Configurações públicas: `VITE_API_BASE_URL`, `VITE_API_DOCS_URL`,
+`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_APP_ENV_LABEL`.
+O `.env` do frontend foi preparado e o proprietário confirmou publicação e
+login. Antes de enviar consultas/JWT, o painel confere `/v1/version`: API e Auth
+devem identificar o mesmo projeto. Ausência ou divergência bloqueia uso.
+Runbook: [novo ambiente](NEW-SUPABASE-LOCAL.md). Evidências atuais e IDs:
+[ensaio real](evidence/2026-11-02-new-supabase-local.md).
 
-Estado operacional atualizado em 30/09/2026: [PANEL-OPERATIONS.md](PANEL-OPERATIONS.md).
-A revisão administrativa pelo navegador aguarda o deploy da correção de preflight
-PATCH do PR #10; somente ajustar CORS_ORIGINS não corrige os métodos anunciados.
-Não apresentar uma edição como publicada antes da confirmação da API. O diagnóstico
-e os testes estão em [STAGING-CORS-2026-09-30.md](STAGING-CORS-2026-09-30.md).
+Escopo obrigatório do piloto: SC, lotes de até cinco, prefixo 25 por fonte,
+uma página na descoberta OpenResults. `/v1/version.environmentProfile` informa
+os limites; API e executores também os impõem. Agenda semanal bloqueada.
+Quantidade processada não significa registros novos. O catálogo novo tem
+14 edições, duas publicadas e 12 pendentes de revisão; pendentes ficam na
+administração e não no calendário público. Resultados não são importados em massa.
+
+Login, detalhes, total 435, filtro 5k=91, segunda página e exportação XLSX com
+download foram testados em Chromium isolado no site publicado. O teste de
+resposta perdida após aceitação e dois cliques seguintes retornou uma única
+tarefa/artefato. A conta técnica foi removida, sem acessar a sessão do proprietário.
+Uma segunda edição acrescentou 327 resultados: total atual 762 em duas edições.
+Pelo painel foram selecionadas ambas, gerados e baixados um ZIP com dois XLSX
+(435 e 327 linhas) e um XLSX consolidado com 762 linhas. Os arquivos foram abertos
+e conferidos, com 19 colunas. Cancelamento, nova tentativa e controles de campanha
+também passaram pelo navegador com executores desligados; os pedidos técnicos
+foram cancelados sem execução. Cobertura nacional e operação prolongada da
+campanha ainda não têm aceite no ambiente real.
+
+Contratos implementados: [cruzamento durável](CATALOG-RECONCILIATION.md) e
+[catálogo](NATIONAL-CATALOG.md). Suas referências a implantação anterior são
+históricas. Etapa concluída não significa cobertura completa. Registros de
+setembro: [rodada](STAGING-ROUND-2026-09-21.md), [operações](PANEL-OPERATIONS.md),
+[CORS](STAGING-CORS-2026-09-30.md); não são configuração ativa deste novo perfil.
 
 O backend é a autoridade de migrations; **não criar
 ou modificar tabelas no Lovable**. Consumir HTTP da API, não as tabelas via PostgREST.
@@ -37,7 +66,7 @@ Clientes externos usam `X-Client-Key`, separado do login do painel. Escopos:
 `results:read`, `exports:write`, `tasks:read`. Não podem obter escopo administrativo.
 Chave aparece apenas uma vez ao criar; armazenada no backend como SHA-256, com
 revogação e contador horário compartilhado em PostgreSQL. Nunca inserir
-`INTERNAL_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY` ou URLs do banco no Lovable.
+`INTERNAL_API_KEY`, `SUPABASE_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY` ou URLs do banco no Lovable.
 
 ## Operações
 
@@ -54,7 +83,13 @@ revogação e contador horário compartilhado em PostgreSQL. Nunca inserir
 | Resolver associação | `POST /v1/admin/source-matches/{id}/resolve` | Admin |
 | Histórico/progresso | `GET /v1/tasks`, `GET /v1/tasks/{id}` | tasks:read; próprio ou admin |
 | Cancelar tarefa aguardando | `POST /v1/tasks/{id}/cancel` | Admin |
+| Repetir falha ou parcial | `POST /v1/tasks/{id}/retry`, body `mode: resume` ou `restart`, Idempotency-Key | Admin |
+| Catálogo administrativo | `GET /v1/admin/catalog/events`, `PATCH /v1/admin/catalog/events/{id}` com motivo | Admin |
+| Publicar/ocultar/rejeitar | `POST /v1/admin/events/{id}/publish`, `/hide`, `/reject` | Admin |
+| Campanhas | `POST /v1/admin/catalog/campaigns`, `GET /v1/admin/catalog/campaigns`, `GET /v1/admin/catalog/campaigns/{id}` | Admin |
+| Controlar campanha | `POST /v1/admin/catalog/campaigns/{id}/pause`, `/resume`, `/cancel`, motivo e Idempotency-Key | Admin |
 | Solicitar XLSX | `POST /v1/events/{id}/exports` | exports:write |
+| Histórico próprio e seleção para exportação | `GET /v1/exports`, `POST /v1/exports` | exports:write; seleção administrativa exige admin |
 | Consultar exportação/link | `GET /v1/exports/{id}` | exports:write; próprio ou admin |
 | Criar/revogar API key | `POST /v1/admin/api-keys`, `DELETE /v1/admin/api-keys/{id}` | Admin |
 
@@ -67,7 +102,7 @@ de anos diferentes ou criar perfil global de atleta por nome.
 ## Fluxo principal
 
 1. Listar calendário e guardar o ID interno da edição.
-2. Inspecionar a URL OpenResults (ou descobrir até 10 páginas do catálogo):
+2. Inspecionar a URL OpenResults (no piloto, descoberta limitada a uma página):
 
 ```http
 POST /v1/admin/source-matches
@@ -87,7 +122,7 @@ Resposta `202`, `Location: /v1/tasks/<id>`:
 3. Consultar pendências e enviar `{"eventId":"id-interno"}` a `/resolve`.
 Datas conhecidas devem coincidir. Nome parecido não autoriza associação automática.
 
-Na branch nacional, a pendência também retorna `country` nullable: mostrar nome, data, cidade, UF e país antes da seleção. País ausente deve aparecer como não confirmado; UF brasileira não substitui evidência de país. `/register` mantém o país observado ao cadastrar edição independente pending_review. Exige migration `20261002000000_source_match_country` e atualização da API/executor Python; ainda sem publicação. Registros antigos permanecem sem país na pendência até nova observação, sem preenchimento presumido.
+A pendência retorna `country` nullable: mostrar nome, data, cidade, UF e país antes da seleção. País ausente deve aparecer como não confirmado; UF brasileira não substitui evidência de país. `/register` mantém o país observado ao cadastrar edição independente pending_review. A migration `20261002000000_source_match_country` integra as 32 já aplicadas neste novo ambiente. Registros sem evidência permanecem sem país na pendência até nova observação, sem preenchimento presumido.
 
 `/resolve` rejeita `409 edition_location_conflict` quando cidade, UF ou país conhecidos divergem; não insistir no mesmo vínculo. Datas divergentes retornam `edition_date_mismatch`. A decisão relê os dados bloqueados e registra auditoria uma única vez para a associação efetivada. Reinspeção pode devolver a pendência a `pending` por conflito/evidência incompleta, sem apagar a referência nem resultados anteriores. Conflitos de edição no executor TypeScript são falhas terminais para revisão, não atualização concluída.
 
@@ -107,6 +142,16 @@ Content-Type: application/json
 Fechar a página não cancela o trabalho. Para uma nova coleta, gerar nova chave de
 idempotência. Reenviar a mesma intenção com a mesma chave retorna a mesma tarefa;
 reutilizar a chave para outro conteúdo retorna 409.
+
+O painel mantém intenções separadas por usuário, edição, operação e payload.
+Resposta perdida não autoriza gerar outra chave; a mesma intenção acompanha o
+pedido original, inclusive após concluir ou cancelar. Uma nova solicitação
+intencional exige os botões de nova coleta/exportação. `retry` cria outra tarefa
+vinculada à falha; `resume` só é oferecido com checkpoint compatível, e `restart`
+refaz a operação preservando resultados válidos até a substituição completa.
+`source_access_blocked` exige interromper aquela fonte e revisão/espera, sem
+tentativas repetidas ou contorno de proteção. Falha/bloqueio não são atualização
+concluída; o histórico e os resultados anteriores permanecem disponíveis.
 6. Consultar resultados paginados. `resultSet` contém fonte, URL e atualização.
 
 ```json

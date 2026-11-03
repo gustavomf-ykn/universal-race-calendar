@@ -32,6 +32,7 @@ from source_observation import edition_observation
 from edition_metadata import IDENTITY_ERRORS, metadata_identity_reason, normalized_location, reviewed_metadata_fields
 from event_aliases import payload as canonical_payload
 from local_resources import inspect_resources, assert_resources, LocalResourceDeferred
+from idle_database import idle_database_call, diagnostic
 
 
 def storage_headers():
@@ -372,41 +373,49 @@ async def main():
     tick=0
     empty_polls=0
     worker_id=str(uuid.uuid4())
+    phase='startup'
+    async def idle_call(operation, label):
+        return await idle_database_call(operation, label,
+            lambda: not run.batch and run.active_task_id is None,
+            lambda: stopped or stop_requested())
     async def presence_pulse():
       nonlocal stopped
       while not stopped:
         await asyncio.sleep(20)
         try:
-          await asyncio.to_thread(announce,query,worker_id,'stopping' if stop_requested() else 'busy' if run.active_task_id else 'available',run.active_task_id)
+          await idle_call(lambda: announce(query,worker_id,'stopping' if stop_requested() else 'busy' if run.active_task_id else 'available',run.active_task_id),'presence')
         except Exception:
           stopped=True
           print('Results: connection lost; stopping before the next task.',flush=True)
     presence_task=None
     try:
-      await asyncio.to_thread(announce,query,worker_id,'available')
+      await idle_call(lambda: announce(query,worker_id,'available'),'startup_presence')
       presence_task=asyncio.create_task(presence_pulse())
       print('Results executor connected; waiting for panel requests.',flush=True)
       initial_resources=await asyncio.to_thread(inspect_resources)
       if not initial_resources['reason']:
-        await asyncio.to_thread(cleanup_checkpoints,connection)
+        await idle_call(lambda: cleanup_checkpoints(connection),'startup_cleanup')
       # Batch runs may finish before the old 60-tick cleanup cadence.
       if run.batch and os.environ.get('SUPABASE_URL') and not initial_resources['reason']:
         try: await cleanup_exports()
         except (httpx.HTTPError,KeyError): print('Export cleanup pending; verify Storage configuration.',flush=True)
       while not stopped and not stop_requested() and run.can_claim():
+        phase='resources'
         resources=await asyncio.to_thread(inspect_resources)
         if resources['reason']:
-            await asyncio.to_thread(announce,query,worker_id,'resource_wait')
+            await idle_call(lambda: announce(query,worker_id,'resource_wait'),'resource_presence')
             if run.batch:
                 run.reason='local_resource_wait'
                 break
             await asyncio.sleep(5)
             continue
-        task=await asyncio.to_thread(claim_next_task)
+        phase='claim'
+        task=await idle_call(claim_next_task,'claim')
         if task:
             empty_polls=0
             run.claimed += 1
             run.active_task_id = task['id']
+            phase='active_task'
             await asyncio.to_thread(announce,query,worker_id,'busy',task['id'])
             print(f"Results task {task['id']}: started.",flush=True)
             await execute(task)
@@ -425,10 +434,12 @@ async def main():
         tick+=1
         if tick%60==0:
             try:
-                await asyncio.to_thread(cleanup_checkpoints,connection)
+                phase='cleanup'
+                await idle_call(lambda: cleanup_checkpoints(connection),'cleanup')
                 await cleanup_exports()
             except (httpx.HTTPError,KeyError): print('Export cleanup pending; verify Storage configuration.',flush=True)
-    except Exception:
+    except Exception as error:
+        diagnostic(error, phase)
         run.reason = 'worker_failed'
         raise RuntimeError('worker_failed') from None
     finally:

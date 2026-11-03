@@ -10,6 +10,21 @@ Destino exclusivo autorizado em 02/11/2026: gpkodfsofwiroskdmeax. Banco inicialm
 4. Após aplicar e auditar migrations, abrir **Iniciar API local.cmd**, **Iniciar executores novo Supabase.cmd** e **Iniciar tunel HTTPS.cmd**. Os executores são iniciados uma vez e aguardam pedidos do painel. Conferir fila e consumidores antes de aceitar um início com tarefas pendentes.
 5. Para parar os dois workers, abrir **Encerrar executores novo Supabase.cmd** e aguardar a tarefa atual. Só então encerrar API e túnel com Ctrl+C nas janelas correspondentes. Um encerramento forçado exige recuperação por lease.
 
+O Python contínuo tenta recuperar conexões transitórias durante a espera por
+tarefas, com intervalos de 1 a 15 segundos. Enquanto aguarda, o health local fica
+indisponível; isso não é uma coleta concluída. Permissão/senha inválida falham
+sem repetição, assim como I/O ambígua de uma tarefa já ativa ou execução em lote.
+O diagnóstico registra somente fase, classe de erro e SQLSTATE, sem mensagens,
+connection strings ou payloads. A reconexão ociosa não substitui lease/checkpoint
+na recuperação de trabalho interrompido.
+
+No perfil piloto, cada cliente Prisma (API e TypeScript) usa no máximo duas
+conexões persistentes, preservando um limite explícito menor. Isso reserva
+conexões para Python, supervisor e diagnóstico dentro das 15 sessões observadas
+no Session Pooler. A limitação é aplicada no cliente nativo e na imagem Docker,
+sem editar a credencial criptografada ou acrescentar parâmetros Prisma à URI
+Python. O erro observado foi `EMAXCONNSESSION`; não exigiu trocar senha ou plano.
+
 O túnel usa um binário oficial com digest SHA256 verificado e encaminha somente a API 127.0.0.1:3000. A API conserva Auth/JWT nas rotas protegidas. A URL muda a cada sessão; manter o túnel aberto durante o aceite. Não usar esse endereço como hospedagem permanente.
 
 ## Preparação controlada
@@ -61,3 +76,32 @@ Os scripts `profile-calendar-pilot.py` e `profile-real-results.py` usam intenç�
 fixas e relatórios privados para acompanhar o mesmo pedido após interrupções.
 Não são importadores em massa. Uma nova tentativa de resultado, após correção
 de estrutura, usa a rota de retry/restart e preserva a tarefa original falha.
+
+`scripts/profile-panel-smoke.py` testa o site publicado em Chromium isolado,
+criando/removendo uma identidade técnica no novo projeto. O padrão consulta
+calendário, login, detalhes, 435 resultados, modalidade e paginação. `--collect`
+faz uma coleta intencional da edição conhecida; `--export` solicita uma única
+exportação por intenção, simula resposta perdida/repetição e baixa o XLSX pela
+interface. Usa dados reais, não insere fixtures e guarda só relatórios/arquivos
+privados. `--from-environment` é a alternativa ao DPAPI em outro sistema.
+
+`--controls` exige fila vazia e todos os executores desligados. Testa, pelo
+painel, cancelar um pedido pendente, repetir uma falha sem checkpoint compatível
+e iniciar/pausar/retomar/cancelar uma campanha. Cancela os cinco pedidos técnicos
+antes de execução e preserva resultados/histórico. É um teste dos controles,
+sem comprovar processamento ou continuação prolongada da campanha. Não combinar
+esse modo com `--collect` ou `--export`; conferir a fila antes de religar workers.
+
+`--zip` verifica metadados reais da segunda edição conhecida (OpenResults
+42536, até 500 resultados), revisa/publica o registro existente com evidências,
+solicita sua coleta e baixa um ZIP das duas edições pela interface. Usa o
+adaptador e o controle de requisições existentes; não contorna bloqueios. Não
+precisa de um cache privado deixado por outro computador. `--consolidated`
+exporta os resultados já persistidos dessas duas edições, sem nova coleta.
+`--association` preserva a associação resolvida e testa busca visual/prévia
+de união incompatível, sem efetivar união. Esses modos pressupõem os IDs do
+piloto descritos nas evidências e não são inicializadores de um banco vazio.
+
+O smoke de Auth lê o ID privado preparado por `profile-owner.py` e apenas
+confere o papel do proprietário. Não concede privilégios silenciosamente.
+Contas técnicas são criadas para os testes e removidas ao final, sem convites.

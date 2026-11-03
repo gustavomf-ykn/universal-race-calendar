@@ -1,5 +1,17 @@
 # Retomar o Runfinder de outro dispositivo
 
+Atualização operacional de 02/11/2026: o ambiente ativo passou ao novo Supabase
+`gpkodfsofwiroskdmeax`, com API e executores nativos e túnel temporário no PC.
+Backend #15 e frontend #4 foram integrados; o proprietário confirmou publicação
+e login no painel. Para operar ou repetir o ensaio, começar pelo
+[runbook atual](docs/NEW-SUPABASE-LOCAL.md) e suas
+[evidências](docs/evidence/2026-11-02-new-supabase-local.md).
+Não executar a configuração AWS/Render antiga esperando troca automática de
+projeto. Secrets DPAPI não são portáveis; cadastrá-los no dispositivo autorizado
+com o formulário protegido, nunca transferir pelo chat ou Git.
+
+O inventário de 19/10 abaixo é histórico e não representa o destino ativo.
+
 Estado conferido no GitHub em 19/10/2026. Este arquivo é o ponto de entrada para um novo operador ou agente. Não depende da pasta, do histórico do chat ou do perfil Windows do computador anterior.
 
 ## Repositórios e versões

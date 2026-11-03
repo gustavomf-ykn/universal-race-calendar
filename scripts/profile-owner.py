@@ -25,7 +25,6 @@ for label, hidden in [("Seu email", False), ("Senha nova (mínimo 12 caracteres)
     e = ttk.Entry(frame, show="*" if hidden else "", width=75)
     e.pack(fill="x")
     entries.append(e)
-entries[0].insert(0, "gustavomf.empresa@gmail.com")
 ttk.Label(frame, text="Guarde a senha no seu gerenciador. Ela não será salva em arquivos ou logs.").pack(anchor="w", pady=14)
 def save():
     email, password, confirm = (e.get() for e in entries)

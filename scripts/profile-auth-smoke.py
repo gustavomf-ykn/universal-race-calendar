@@ -93,13 +93,20 @@ try:
         if not all(h in allowed for h in ("authorization", "idempotency-key", "content-type")):
             raise RuntimeError("cors_headers_incomplete")
     report["checks"]["cors_publication_and_preview"] = "passed"
-    listing = call("GET", BASE + "/auth/v1/admin/users?page=1&per_page=100", 200, headers=admin_headers)
-    owned = [u for u in listing.get("users", []) if u.get("email", "").lower() == "gustavomf.empresa@gmail.com"]
-    report["ownerUserAlreadyPresent"] = len(owned) == 1
-    if len(owned) == 1:
+    # The smoke test must never grant privileges to a real user. Explicit owner
+    # setup belongs to profile-owner.py; this check only reads its private ID.
+    owner_file = RUNTIME / "owner-account.json"
+    report["ownerUserAlreadyPresent"] = owner_file.exists()
+    if owner_file.exists():
         stage = "owner_admin_metadata"
-        metadata = {**owned[0].get("app_metadata", {}), "role": "admin"}
-        call("PUT", BASE + "/auth/v1/admin/users/" + owned[0]["id"], 200, headers=admin_headers, json={"app_metadata": metadata})
+        owned = json.loads(owner_file.read_text(encoding="utf-8"))
+        if owned.get("projectRef") != REF:
+            raise RuntimeError("owner_project_mismatch")
+        from uuid import UUID
+        owner_id = str(UUID(owned["userId"]))
+        user = call("GET", BASE + "/auth/v1/admin/users/" + owner_id, 200, headers=admin_headers)
+        if user.get("app_metadata", {}).get("role") != "admin":
+            raise RuntimeError("owner_admin_not_confirmed")
         report["checks"][stage] = "passed"
     report["status"] = "passed"
 except Exception as error:

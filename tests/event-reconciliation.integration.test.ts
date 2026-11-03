@@ -1,5 +1,6 @@
 import { randomUUID, createHash } from "node:crypto";
-import { beforeAll, afterAll, afterEach, describe, expect, it } from "vitest";
+import { beforeAll, afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import type { Prisma } from "@prisma/client";
 import { generateEventFingerprint } from "@race-calendar/utils";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
@@ -118,6 +119,28 @@ describe.skipIf(!process.env.DATABASE_URL)("transactional reconciliation of sepa
     const source = await edition("openresults", target.sourceUrl!);
     return { source, target };
   }
+  it("previews safely when remote database latency exceeds Prisma's default transaction deadline", async () => {
+    const { source, target } = await pair();
+    const transaction = prisma.$transaction.bind(prisma);
+    const delayed = (async (
+      run: (tx: Prisma.TransactionClient) => Promise<unknown>,
+      options?: { timeout?: number },
+    ) => transaction(async (tx) => {
+      // Model round trips on the remote pooler, inside the real transaction.
+      await tx.$executeRaw`SELECT pg_sleep(5.1)`;
+      return run(tx);
+    }, options)) as typeof prisma.$transaction;
+    const spy = vi.spyOn(prisma, "$transaction").mockImplementationOnce(delayed);
+    try {
+      const preview = await previewEventReconciliation(source.id, target.id);
+      expect(preview.canMerge).toBe(true);
+      expect(preview.source.id).toBe(source.id);
+      expect(preview.target.id).toBe(target.id);
+      expect(await prisma.event.count({ where: { id: { in: [source.id, target.id] } } })).toBe(2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
   const request = (sourceId: string, targetId: string, revision: string) => ({
     sourceId,
     targetId,
