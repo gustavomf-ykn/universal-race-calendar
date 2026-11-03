@@ -18,6 +18,13 @@ O diagnóstico registra somente fase, classe de erro e SQLSTATE, sem mensagens,
 connection strings ou payloads. A reconexão ociosa não substitui lease/checkpoint
 na recuperação de trabalho interrompido.
 
+No perfil piloto, cada cliente Prisma (API e TypeScript) usa no máximo duas
+conexões persistentes, preservando um limite explícito menor. Isso reserva
+conexões para Python, supervisor e diagnóstico dentro das 15 sessões observadas
+no Session Pooler. A limitação é aplicada no cliente nativo e na imagem Docker,
+sem editar a credencial criptografada ou acrescentar parâmetros Prisma à URI
+Python. O erro observado foi `EMAXCONNSESSION`; não exigiu trocar senha ou plano.
+
 O túnel usa um binário oficial com digest SHA256 verificado e encaminha somente a API 127.0.0.1:3000. A API conserva Auth/JWT nas rotas protegidas. A URL muda a cada sessão; manter o túnel aberto durante o aceite. Não usar esse endereço como hospedagem permanente.
 
 ## Preparação controlada

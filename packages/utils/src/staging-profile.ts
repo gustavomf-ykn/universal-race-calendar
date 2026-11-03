@@ -34,6 +34,20 @@ export function assertRuntimeDestination(env: Record<string, string | undefined>
     }
   } catch { throw Error("runtime_destination_rejected"); }
 }
+/** A Session Pooler shares a small connection budget across all native processes. */
+export function stagingPrismaUrl(env: Record<string, string | undefined> = process.env): string | undefined {
+  if (!runtimeProfile(env)) return undefined;
+  assertRuntimeDestination(env, ["DATABASE_URL"]);
+  const url = new URL(env.DATABASE_URL!);
+  // API and TS each get at most two persistent connections. Reserve room for
+  // Python's short transactions, heartbeats, the supervisor and diagnostics.
+  const requested = url.searchParams.getAll("connection_limit");
+  if (requested.length > 1 || (requested[0] !== undefined && !/^[1-9][0-9]*$/.test(requested[0])))
+    throw Error("runtime_pool_configuration_invalid");
+  url.searchParams.set("connection_limit", requested[0] === "1" ? "1" : "2");
+  url.searchParams.set("pool_timeout", "15");
+  return url.toString();
+}
 /** Runs before enqueue as well as before worker I/O. Never silently truncate an intention. */
 export function assertPilotTask(kind: string, payload: Record<string, unknown>) {
   const p = runtimeProfile();

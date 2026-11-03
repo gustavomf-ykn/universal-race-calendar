@@ -243,4 +243,4 @@ export { workerIdleDelay } from "./worker-polling.js";
 export { writeWorkerHealth, checkWorkerHealth } from "./worker-health.js";
 
 export { assertAwsStaging } from "./aws-staging.js";
-export { runtimeProfile, assertRuntimeDestination, assertPilotTask, type RuntimeProfile } from "./staging-profile.js";
+export { runtimeProfile, assertRuntimeDestination, assertPilotTask, stagingPrismaUrl, type RuntimeProfile } from "./staging-profile.js";
