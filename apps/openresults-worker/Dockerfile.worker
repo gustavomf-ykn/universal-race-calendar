@@ -7,7 +7,7 @@ COPY apps/openresults-worker/worker.py apps/openresults-worker/batch.py apps/ope
 COPY apps/openresults-worker/presence.py apps/openresults-worker/catalog_sync.py apps/openresults-worker/edition_metadata.py apps/openresults-worker/selection_export.py ./
 COPY apps/openresults-worker/source_requests.py apps/openresults-worker/source_observation.py apps/openresults-worker/capacity.py apps/openresults-worker/result_checkpoints.py apps/openresults-worker/event_aliases.py ./
 COPY apps/openresults-worker/local_resources.py apps/openresults-worker/worker_health.py apps/openresults-worker/aws_staging.py ./
-COPY apps/openresults-worker/local_profile.py ./
+COPY apps/openresults-worker/local_profile.py apps/openresults-worker/idle_database.py ./
 COPY config ./config
 # Check imports used at startup and deferred by inspection/export paths, without
 # connecting to the database or a source. A successful image build must include them.

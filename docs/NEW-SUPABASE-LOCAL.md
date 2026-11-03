@@ -10,6 +10,14 @@ Destino exclusivo autorizado em 02/11/2026: gpkodfsofwiroskdmeax. Banco inicialm
 4. Após aplicar e auditar migrations, abrir **Iniciar API local.cmd**, **Iniciar executores novo Supabase.cmd** e **Iniciar tunel HTTPS.cmd**. Os executores são iniciados uma vez e aguardam pedidos do painel. Conferir fila e consumidores antes de aceitar um início com tarefas pendentes.
 5. Para parar os dois workers, abrir **Encerrar executores novo Supabase.cmd** e aguardar a tarefa atual. Só então encerrar API e túnel com Ctrl+C nas janelas correspondentes. Um encerramento forçado exige recuperação por lease.
 
+O Python contínuo tenta recuperar conexões transitórias durante a espera por
+tarefas, com intervalos de 1 a 15 segundos. Enquanto aguarda, o health local fica
+indisponível; isso não é uma coleta concluída. Permissão/senha inválida falham
+sem repetição, assim como I/O ambígua de uma tarefa já ativa ou execução em lote.
+O diagnóstico registra somente fase, classe de erro e SQLSTATE, sem mensagens,
+connection strings ou payloads. A reconexão ociosa não substitui lease/checkpoint
+na recuperação de trabalho interrompido.
+
 O túnel usa um binário oficial com digest SHA256 verificado e encaminha somente a API 127.0.0.1:3000. A API conserva Auth/JWT nas rotas protegidas. A URL muda a cada sessão; manter o túnel aberto durante o aceite. Não usar esse endereço como hospedagem permanente.
 
 ## Preparação controlada
