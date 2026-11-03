@@ -91,3 +91,17 @@ e iniciar/pausar/retomar/cancelar uma campanha. Cancela os cinco pedidos técnic
 antes de execução e preserva resultados/histórico. É um teste dos controles,
 sem comprovar processamento ou continuação prolongada da campanha. Não combinar
 esse modo com `--collect` ou `--export`; conferir a fila antes de religar workers.
+
+`--zip` verifica metadados reais da segunda edição conhecida (OpenResults
+42536, até 500 resultados), revisa/publica o registro existente com evidências,
+solicita sua coleta e baixa um ZIP das duas edições pela interface. Usa o
+adaptador e o controle de requisições existentes; não contorna bloqueios. Não
+precisa de um cache privado deixado por outro computador. `--consolidated`
+exporta os resultados já persistidos dessas duas edições, sem nova coleta.
+`--association` preserva a associação resolvida e testa busca visual/prévia
+de união incompatível, sem efetivar união. Esses modos pressupõem os IDs do
+piloto descritos nas evidências e não são inicializadores de um banco vazio.
+
+O smoke de Auth lê o ID privado preparado por `profile-owner.py` e apenas
+confere o papel do proprietário. Não concede privilégios silenciosamente.
+Contas técnicas são criadas para os testes e removidas ao final, sem convites.

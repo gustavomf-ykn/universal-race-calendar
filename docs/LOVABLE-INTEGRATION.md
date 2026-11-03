@@ -22,15 +22,17 @@ Escopo obrigatório do piloto: SC, lotes de até cinco, prefixo 25 por fonte,
 uma página na descoberta OpenResults. `/v1/version.environmentProfile` informa
 os limites; API e executores também os impõem. Agenda semanal bloqueada.
 Quantidade processada não significa registros novos. O catálogo novo tem
-14 edições, uma publicada e 13 pendentes de revisão; pendentes ficam na
+14 edições, duas publicadas e 12 pendentes de revisão; pendentes ficam na
 administração e não no calendário público. Resultados não são importados em massa.
 
 Login, detalhes, total 435, filtro 5k=91, segunda página e exportação XLSX com
 download foram testados em Chromium isolado no site publicado. O teste de
 resposta perdida após aceitação e dois cliques seguintes retornou uma única
 tarefa/artefato. A conta técnica foi removida, sem acessar a sessão do proprietário.
-ZIP foi validado separadamente com divisão local controlada; não equivale a
-download ZIP pelo painel. Cancelamento, nova tentativa e controles de campanha
+Uma segunda edição acrescentou 327 resultados: total atual 762 em duas edições.
+Pelo painel foram selecionadas ambas, gerados e baixados um ZIP com dois XLSX
+(435 e 327 linhas) e um XLSX consolidado com 762 linhas. Os arquivos foram abertos
+e conferidos, com 19 colunas. Cancelamento, nova tentativa e controles de campanha
 também passaram pelo navegador com executores desligados; os pedidos técnicos
 foram cancelados sem execução. Cobertura nacional e operação prolongada da
 campanha ainda não têm aceite no ambiente real.

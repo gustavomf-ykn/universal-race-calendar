@@ -1,11 +1,15 @@
 """Fresh-context published-panel checks; never reads the owner's browser/session."""
 import asyncio
+import io
 import json
+import os
 from pathlib import Path
 import re
 import runpy
 import secrets
 import sys
+import traceback
+import zipfile
 from urllib.parse import urlsplit
 import httpx
 from playwright.async_api import async_playwright
@@ -29,11 +33,40 @@ async def run():
     assert v["supabaseProjectRef"] == c["REF"]
     report['backendCommit'] = v['gitSha']
     if '--controls' in sys.argv:
-        assert '--collect' not in sys.argv and '--export' not in sys.argv
+        assert not any(mode in sys.argv for mode in ('--collect', '--export', '--zip', '--consolidated', '--association'))
         with c['connection'](env) as db:
             db.execute('SET default_transaction_read_only=on')
             assert db.execute('SELECT count(*) FROM "WorkerPresence" WHERE "lastSeenAt">now()-interval \'75 seconds\' AND state<>\'stopped\'').fetchone()[0] == 0
             assert db.execute('SELECT count(*) FROM "CollectionTask" WHERE status IN (\'queued\',\'running\')').fetchone()[0] == 0
+            report['controlResultsBefore'] = db.execute('SELECT count(*) FROM "RaceResult"').fetchone()[0]
+    if '--zip' in sys.argv:
+        stage = 'second_edition_metadata'
+        # Discover live expectations; another device needs only the protected
+        # environment, not a metadata file left on this computer.
+        os.environ.update(env)
+        from worker import query
+        from app.config import Settings
+        from app.services.openresults.metadata import EventMetadataService
+        from app.services.source_requests import request_hooks
+        from source_requests import database_request_hooks
+        second_id = 'evt_1cf7803294e8c66bf1e1d4f0'
+        with c['connection'](env) as db:
+            db.execute('SET default_transaction_read_only=on')
+            row = db.execute('SELECT name,date,city,state,country,"sourceUrl" FROM "Event" WHERE id=%s', (second_id,)).fetchone()
+        assert row
+        token = request_hooks.set(database_request_hooks(query))
+        try:
+            metadata, groups = await EventMetadataService(Settings.from_env()).fetch(row[5], enrich_roadrunners=True)
+        finally:
+            request_hooks.reset(token)
+        assert metadata.event_id == '42536' and metadata.country == 'BR' and metadata.raw_metadata.get('related_edition_status') == 'compatible'
+        assert metadata.event_date == row[1].date() and metadata.city == row[2] and metadata.state == row[3]
+        assert 'corrida de rua' in metadata.name.casefold()
+        expected_second = metadata.expected_total
+        assert expected_second and 0 < expected_second <= 500
+        assert sum(sum(group.expected_by_gender.values()) for group in groups) == expected_second
+        second = {'stored': {'name': row[0]}, 'expectedTotal': expected_second}
+        report['secondSourceExpectedTotal'] = expected_second
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(viewport={"width": 1280, "height": 900}, accept_downloads=True)
@@ -168,11 +201,11 @@ async def run():
                 tasks = db.execute('SELECT id,kind,status,attempt FROM "CollectionTask" WHERE "ownerId"=(SELECT "ownerId" FROM "CollectionTask" WHERE id=%s) ORDER BY "createdAt"', (task['id'],)).fetchall()
                 assert len(tasks) == 5 and all(t[2] == 'cancelled' and t[3] == 0 for t in tasks)
                 assert db.execute('SELECT status FROM "CollectionTask" WHERE id=%s', (old_id,)).fetchone()[0] == 'failed'
-                assert db.execute('SELECT count(*) FROM "RaceResult"').fetchone()[0] == 435
+                assert db.execute('SELECT count(*) FROM "RaceResult"').fetchone()[0] == report['controlResultsBefore']
                 assert db.execute('SELECT count(*) FROM "CollectionTask" WHERE status IN (\'queued\',\'running\')').fetchone()[0] == 0
                 assert not db.execute('SELECT enabled FROM "CatalogWeeklySchedule" WHERE id=1').fetchone()[0]
             report['checks'][stage] = {'steps': ['start','pause','resume','cancel'], 'tasks': tasks,
-                'sourceTasksExecuted': 0, 'resultsPreserved': 435}
+                'sourceTasksExecuted': 0, 'resultsPreserved': report['controlResultsBefore']}
         if '--collect' in sys.argv:
             stage = 'browser_collection'
             with c['connection'](env) as db:
@@ -244,6 +277,129 @@ async def run():
             book.close()
             assert count == 435 and len(headers) == 19
             report['checks'][stage] = {'rows': count, 'columns': len(headers), 'downloadedThroughUi': True}
+        if '--zip' in sys.argv:
+            stage = 'browser_second_edition_review'
+            second_id = 'evt_1cf7803294e8c66bf1e1d4f0'
+            second_name = second['stored']['name']
+            await page.goto(PANEL + '/admin/', wait_until='networkidle')
+            row = page.get_by_role('row').filter(has=page.get_by_role('checkbox', name='Selecionar ' + second_name, exact=True))
+            await row.get_by_role('button', name='Revisar', exact=True).click()
+            for label, value in [('Nome revisado',second_name),('Data revisada','2026-11-01'),('Cidade revisada','Maravilha'),('UF revisada','SC'),('País revisado','BR')]:
+                assert await page.get_by_label(label, exact=True).input_value() == value
+            await page.get_by_label('Modalidade revisada', exact=True).select_option('road')
+            await page.get_by_label('Justificativa da revisão', exact=True).fill('Fonte declara corrida de rua no nome; data/cidade/UF e pais BR confirmados no enriquecimento estruturado da mesma edicao. Revisao para piloto ZIP.')
+            async with page.expect_response(lambda r: urlsplit(r.url).path == '/v1/admin/catalog/events/' + second_id and r.request.method == 'PATCH' and r.status == 200, timeout=60000) as pending:
+                await page.get_by_role('button', name='published', exact=True).click()
+            reviewed = await (await pending.value).json()
+            assert reviewed['event']['publicationStatus'] == 'published' and reviewed['event']['modality'] == 'road'
+            report['checks'][stage] = {'eventId': second_id, 'countryConfirmed': True, 'modality': 'road', 'noNewEditionCreated': True}
+            stage = 'browser_second_edition_collection'
+            await page.goto(PANEL + '/eventos/' + second_id, wait_until='networkidle')
+            await page.get_by_role('tab', name='Ações', exact=True).click()
+            async with page.expect_response(lambda r: urlsplit(r.url).path == '/v1/collections' and r.request.method == 'POST' and r.status == 202, timeout=60000) as pending:
+                await page.get_by_role('button', name='Coletar / acompanhar resultados', exact=True).click()
+            collected = await (await pending.value).json()
+            report['secondCollectionTaskId'] = collected['id']
+            await page.get_by_text(re.compile('^(Concluída|Falhou|Parcial|Cancelada)$')).first.wait_for(timeout=900000)
+            assert await page.get_by_text('Concluída', exact=True).count() > 0
+            await page.get_by_role('tab', name='Resultados', exact=True).click()
+            await page.get_by_text(re.compile(str(second['expectedTotal']) + ' registros no total')).wait_for(timeout=60000)
+            report['checks'][stage] = {'displayedResults': second['expectedTotal']}
+            stage = 'browser_zip_selection'
+            await page.goto(PANEL + '/admin/', wait_until='networkidle')
+            await page.get_by_label('Situação de publicação', exact=True).select_option('published')
+            await page.get_by_role('checkbox', name='Selecionar ' + second_name, exact=True).check()
+            await page.get_by_role('checkbox', name=re.compile('^Selecionar MOUNTAIN.*SANTINHO', re.I)).check()
+            async with page.expect_response(lambda r: urlsplit(r.url).path == '/v1/exports' and r.request.method == 'POST' and r.status == 202, timeout=60000) as pending:
+                await page.get_by_role('button', name='Resultados individuais / ZIP', exact=True).click()
+            selected = await (await pending.value).json()
+            report['zipExportId'], report['zipTaskId'] = selected['id'], selected['taskId']
+            await page.get_by_role('link', name='Minhas exportações', exact=True).first.click()
+            zip_row = page.get_by_role('row').filter(has=page.get_by_text(selected['id'], exact=True))
+            await zip_row.wait_for(timeout=60000)
+            await page.bring_to_front()
+            await page.wait_for_timeout(25000)
+            async with page.expect_download(timeout=180000) as download:
+                await zip_row.get_by_role('button', name='Baixar', exact=True).click(timeout=150000)
+            destination = out / 'downloads' / 'browser-results.zip'
+            await (await download.value).save_as(destination)
+            parts = []
+            with zipfile.ZipFile(destination) as archive:
+                assert len(archive.namelist()) == 2
+                for name in archive.namelist():
+                    assert name.endswith('.xlsx')
+                    book = load_workbook(io.BytesIO(archive.read(name)), read_only=True)
+                    sheet = book.active
+                    columns = len(next(sheet.iter_rows(values_only=True)))
+                    count = sum(1 for _ in sheet.iter_rows(min_row=2, values_only=True))
+                    book.close(); parts.append({'rows': count, 'columns': columns})
+            assert sorted(p['rows'] for p in parts) == sorted([second['expectedTotal'],435]) and all(p['columns'] == 19 for p in parts)
+            report['checks'][stage] = {'parts': parts, 'totalRows': 435 + second['expectedTotal'], 'downloadedThroughUi': True}
+        if '--association' in sys.argv:
+            stage = 'browser_visual_reconciliation_safety'
+            with c['connection'](env) as db:
+                db.execute('SET default_transaction_read_only=on')
+                match = db.execute('SELECT status,"eventId" FROM "SourceMatch" WHERE source=\'openresults\' AND "externalId"=\'37007\'').fetchone()
+                refs_before = db.execute('SELECT count(*) FROM "EventSourceReference"').fetchone()[0]
+            assert match == ('resolved', 'evt_e27edbae921b459b9fa8bf1f')
+            # Preserve the valid resolved association. Preview an incompatible
+            # pair through visual search without submitting a merge.
+            await page.goto(PANEL + '/admin/', wait_until='networkidle')
+            source_row = page.get_by_role('row').filter(has=page.get_by_role('checkbox', name=re.compile('^Selecionar MOUNTAIN.*SANTINHO', re.I)))
+            await source_row.get_by_role('button', name='Unir mesma edição', exact=True).click()
+            dialog = page.get_by_role('dialog', name='Unir registros da mesma edição')
+            await dialog.get_by_label('Buscar edição de destino', exact=True).fill('Aabb Maravilha')
+            await dialog.get_by_role('button', name='Buscar', exact=True).click()
+            radio = dialog.get_by_role('radio', name=re.compile('Circuito.*2026-11-01.*Maravilha.SC.*BR.*openresults', re.I))
+            await radio.first.wait_for(timeout=30000)
+            report['reconciliationCandidates'] = await radio.count()
+            assert await radio.count() == 1
+            await radio.check()
+            async with page.expect_response(lambda r: urlsplit(r.url).path == '/v1/admin/catalog/reconciliations/preview' and r.status == 200, timeout=60000) as pending:
+                await dialog.get_by_role('button', name='Conferir prévia da união', exact=True).click()
+            preview = await (await pending.value).json()
+            assert preview['canMerge'] is False
+            await page.keyboard.press('Escape')
+            with c['connection'](env) as db:
+                db.execute('SET default_transaction_read_only=on')
+                assert db.execute('SELECT count(*) FROM "EventSourceReference"').fetchone()[0] == refs_before
+            report['checks'][stage] = {'matchedByVisibleNameDateCityStateSource': True, 'typedInternalIds': False,
+                'existingResolvedReferencePreserved': True, 'differentEditionsMergeBlocked': True, 'newReferences': 0}
+        if '--consolidated' in sys.argv:
+            stage = 'browser_consolidated_selection'
+            ids = ['evt_1cf7803294e8c66bf1e1d4f0','evt_e27edbae921b459b9fa8bf1f']
+            with c['connection'](env) as db:
+                db.execute('SET default_transaction_read_only=on')
+                expected = {r[0]: r[1] for r in db.execute('SELECT "externalId",count FROM "ResultSet" WHERE "eventId"=ANY(%s)', (ids,)).fetchall()}
+            assert set(expected) == {'37007','42536'}
+            await page.goto(PANEL + '/admin/', wait_until='networkidle')
+            await page.get_by_label('Situação de publicação', exact=True).select_option('published')
+            await page.get_by_role('checkbox', name=re.compile('^Selecionar Circuito De Corrida De Rua Aabb Maravilha$', re.I)).check()
+            await page.get_by_role('checkbox', name=re.compile('^Selecionar MOUNTAIN.*SANTINHO', re.I)).check()
+            async with page.expect_response(lambda r: urlsplit(r.url).path == '/v1/exports' and r.request.method == 'POST' and r.status == 202, timeout=60000) as pending:
+                await page.get_by_role('button', name='Exportar results', exact=True).click()
+            response = await pending.value
+            payload = response.request.post_data_json
+            assert payload['layout'] == 'consolidated' and sorted(payload['eventIds']) == sorted(ids)
+            artifact = await response.json()
+            report['consolidatedExportId'], report['consolidatedTaskId'] = artifact['id'], artifact['taskId']
+            await page.get_by_role('link', name='Minhas exportações', exact=True).first.click()
+            row = page.get_by_role('row').filter(has=page.get_by_text(artifact['id'], exact=True))
+            await row.wait_for(timeout=60000)
+            await page.bring_to_front(); await page.wait_for_timeout(25000)
+            async with page.expect_download(timeout=180000) as download:
+                await row.get_by_role('button', name='Baixar', exact=True).click(timeout=150000)
+            target = out / 'downloads' / 'browser-consolidated.xlsx'
+            await (await download.value).save_as(target)
+            book = load_workbook(target, read_only=True)
+            sheet = book.active
+            columns = len(next(sheet.iter_rows(values_only=True)))
+            observed = {}
+            for row in sheet.iter_rows(min_row=2, values_only=True):
+                source_id = str(row[0]); observed[source_id] = observed.get(source_id,0) + 1
+            book.close()
+            assert observed == expected and columns == 19
+            report['checks'][stage] = {'countsBySourceEdition': observed, 'rows': sum(observed.values()), 'columns': columns, 'downloadedThroughUi': True}
         report["pageErrorCount"] = len(page_errors)
         report["apiOrigin"] = API
         report["authOrigin"] = BASE
@@ -255,6 +411,10 @@ try:
     asyncio.run(run())
 except Exception as error:
     report.update(status="failed", failedStage=stage, errorType=type(error).__name__)
+    report['harnessLines'] = [frame.lineno for frame in traceback.extract_tb(error.__traceback__)
+                              if Path(frame.filename).name == Path(__file__).name]
+    report['harnessErrorHints'] = [hint for hint in ('strict mode violation', 'not visible', 'not attached', 'did not change its checked state')
+                                   if hint in str(error)]
 finally:
     if '--controls' in sys.argv and report.get('status') != 'passed':
         # Clean only this technical test's own IDs; never touch unrelated history.

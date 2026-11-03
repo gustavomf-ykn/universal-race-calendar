@@ -110,7 +110,7 @@ praias e dunas nos percursos principais, com auditoria via API.
 | Calendário/enriquecimento/deduplicação | Lotes pequenos acima, persistência real | Aprovado na amostra |
 | Associação/435 resultados/XLSX | API local, workers locais, Storage real | Aprovado |
 | Cancelamento, resposta perdida, checkpoints, interrupção, lease antigo e preservação após falhas/expiração | Testes automatizados no PostgreSQL descartável/CI | Aprovado controlado; não equivale a interrupção desta coleta real |
-| ZIP via API, Storage e navegador | Divisão local controlada; faltam seleção/fluxo real no painel | Pendente |
+| ZIP e XLSX consolidado via API, Storage e navegador | Duas edições selecionadas pelo painel, 435 + 327 linhas, arquivos baixados e abertos | Aprovado |
 | Login, calendário, detalhes, resultados, coleta, exportação, download e repetição de cliques no painel | Publicação confirmada e ensaio autenticado em Chromium isolado abaixo | Aprovado nos cenários descritos |
 | Cancelamento, nova tentativa e controles de campanha no painel | Executores desligados, cinco tarefas técnicas canceladas antes da execução | Aprovado controlado |
 | Continuação prolongada da campanha com dados reais | Controles testados separadamente; não foi executada varredura integral | Pendente |
@@ -171,8 +171,35 @@ processos com o código integrado.
   permaneceram em 435 e a fila terminou sem tarefas pendentes/em execução. Não
   houve processamento de coleta nesses testes de controle.
 
+## Segunda edição, revisão e exportações selecionadas pelo painel
+
+A edição existente `evt_1cf7803294e8c66bf1e1d4f0`, Circuito De Corrida De Rua
+Aabb Maravilha, OpenResults `42536`, foi conferida em 01/11/2026, Maravilha/SC.
+O adaptador verificou metadados estruturados da página relacionada compatível
+por data/cidade/UF, incluindo país BR. O nome observado declara corrida de rua.
+Revisão/publicação foram feitas na administração do painel, com justificativa
+auditada; não foi criada outra edição nem inferido país apenas pela UF.
+
+- Coleta pelo painel `1848558f-0783-4561-b230-511e7e54baf5`: concluída pelo
+  Python local, 327 resultados novos; 5 km F139/M83, 10 km F46/M59. A interface
+  mostrou 327. Nenhum bloqueio da fonte ou contorno foi observado.
+- Seleção das duas edições e opção individual/ZIP: exportação
+  `105b2534-92b3-4131-8001-d8d0a3e7e6e2`, tarefa
+  `47f0501a-6fa4-42bf-9cdb-f78a68fe32e6`, concluída. Download real pelo navegador,
+  Storage 200 `application/zip`. ZIP aberto: dois XLSX, 327 e 435 linhas,
+  19 colunas cada. A divisão em partes menores continua coberta pelo ensaio
+  controlado anterior; este ZIP real usa o limite normal.
+- Seleção consolidada: exportação `569b65d4-8a8c-405b-9b73-63d68972bfea`, tarefa
+  `6027ee59-1698-447c-9020-e21d1211c80e`, concluída. Download real pelo navegador,
+  Storage 200 XLSX, aberto: 762 linhas, 19 colunas. Contagem pela coluna de edição
+  confirmou 37007=435 e 42536=327. Não houve nova coleta nesta exportação.
+
+Estado após os ensaios: 14 edições, duas publicadas, 12 pendentes de revisão,
+dois conjuntos e 762 resultados. As contas técnicas foram removidas. O vínculo
+Mountain Do/TicketSports/OpenResults já estava resolvido; não foi recriada uma
+pendência artificial para repetir sua resolução.
+
 O script reproduzível é `scripts/profile-panel-smoke.py`; modos e limites no
 runbook. A suíte de recuperação/interrupção por lease continua separada, no
-PostgreSQL descartável do CI. ZIP pelo navegador e uma campanha prolongada
-com processamento real permanecem pendentes; não há afirmação de cobertura
-nacional ou prontidão de produção.
+PostgreSQL descartável do CI. Uma campanha prolongada com processamento real
+permanece pendente; não há afirmação de cobertura nacional ou prontidão de produção.
