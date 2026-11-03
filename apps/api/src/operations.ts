@@ -4,6 +4,7 @@ import { prisma, enqueueTask, publicTask, TaskConflict, catalogCheckpoint, contr
 import { requireAdmin, authorize } from "./auth.js";
 import { reserveResultCheckpoint, resultCheckpointRoot } from "@race-calendar/database";
 import { eventPublicationError, brazilianStateCodes } from "@race-calendar/database";
+import { runtimeProfile } from "@race-calendar/utils";
 
 const str = { type: "string" };
 const ids = { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, maxItems: 100, uniqueItems: true };
@@ -64,6 +65,7 @@ export function adminEventFilter(q: Record<string, any>) {
   return { AND };
 }
 export async function registerOperations(app: FastifyInstance) {
+  const pilot = runtimeProfile()?.catalogPilot;
   app.addHook("onRoute", (route) => {
     if (route.url.includes(":id") && route.schema)
       route.schema.params ??= object({ id: { type: "string", minLength: 1 } }, ["id"]);
@@ -418,10 +420,10 @@ export async function registerOperations(app: FastifyInstance) {
               },
               from: { type: "string", format: "date" },
               to: { type: "string", format: "date" },
-              batchSize: { type: "integer", minimum: 1, maximum: 25, default: 5 },
-              snapshotLimit: { type: "integer", minimum: 5, maximum: 1000, default: 250 },
+              batchSize: { type: "integer", minimum: 1, maximum: pilot?.batchSize ?? 25, default: 5 },
+              snapshotLimit: { type: "integer", minimum: 5, maximum: pilot ? 250 : 1000, default: 250 },
               discoveryMode: { enum: ["bounded", "national"], default: "bounded" },
-              prefixLimit: { type: "integer", minimum: 25, maximum: 10000, default: 10000 },
+              prefixLimit: { type: "integer", minimum: 25, maximum: pilot?.prefixLimit ?? 10000, default: pilot?.prefixLimit ?? 10000 },
               autoContinue: { type: "boolean", default: false },
             },
             ["source"],

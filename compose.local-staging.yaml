@@ -1,0 +1,49 @@
+# External Supabase only. No database, seeds, schedules or automatic migrations.
+x-profile: &profile
+  RUNFINDER_PROFILE: local-staging
+  RUNFINDER_PROFILE_CONFIG: /app/config/staging-profiles.json
+  EXPECTED_SUPABASE_PROJECT_REF: gpkodfsofwiroskdmeax
+  SUPABASE_URL: https://gpkodfsofwiroskdmeax.supabase.co
+  HOSTING_TARGET: local
+  WORKER_MODE: continuous
+x-runtime: &runtime
+  init: true
+  restart: "no"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ["/tmp:size=1g,mode=1777"]
+  logging: {driver: local, options: {max-size: "10m", max-file: "3"}}
+  env_file:
+    - path: ${LOCAL_STAGING_ENV_FILE:?Provide a protected absolute env path outside the repository}
+      format: raw
+services:
+  api:
+    <<: *runtime
+    build: {context: ., dockerfile: Dockerfile.backend}
+    environment: {<<: *profile, HOST: 0.0.0.0, PORT: 3000}
+    ports: ["127.0.0.1:3000:3000"]
+    mem_limit: 768m
+  calendar-worker:
+    <<: *runtime
+    profiles: [workers]
+    build: {context: ., dockerfile: Dockerfile.backend}
+    command: [node, apps/worker/dist/apps/worker/src/queue.js]
+    environment: *profile
+    mem_limit: 1536m
+    stop_grace_period: 31m
+  results-worker:
+    <<: *runtime
+    profiles: [workers]
+    build: {context: ., dockerfile: apps/openresults-worker/Dockerfile.worker}
+    environment: *profile
+    mem_limit: 4g
+    shm_size: 512m
+    stop_grace_period: 31m
+  migration:
+    <<: *runtime
+    profiles: [maintenance]
+    build: {context: ., dockerfile: Dockerfile.backend}
+    environment: *profile
+    command: [node, scripts/profile-migrate.mjs]
+    mem_limit: 768m

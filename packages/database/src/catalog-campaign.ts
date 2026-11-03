@@ -6,9 +6,12 @@ import { enqueueTask, stableJson, TaskConflict } from "./tasks.js";
 import { brazilianStateCodes } from "./publication-policy.js";
 import { catalogCheckpoint } from "./catalog-continuation.js";
 import { observeCatalogCycle } from "./catalog-weekly.js";
-import { inspectLocalResources } from "@race-calendar/utils";
+import { inspectLocalResources, runtimeProfile, assertPilotTask } from "@race-calendar/utils";
 
 export const campaignDefaults = { states: [...brazilianStateCodes].sort(), batchSize: 25, prefixLimit: 10000 };
+export function catalogCampaignDefaults() {
+  return runtimeProfile()?.catalogPilot ?? campaignDefaults;
+}
 export type CampaignInput = { reason: string; states?: string[]; batchSize?: number; prefixLimit?: number };
 const sources = ["ticketsports", "corridasbr", "openresults"];
 const terminal = ["completed", "completed_with_review", "partial", "cancelled"];
@@ -34,9 +37,10 @@ export function publicCampaign(r: CatalogCampaign) {
   };
 }
 export async function startCatalogCampaign(actorId: string, key: string, input: CampaignInput) {
-  const states = input.states ?? campaignDefaults.states;
-  const batchSize = input.batchSize ?? campaignDefaults.batchSize,
-    prefixLimit = input.prefixLimit ?? campaignDefaults.prefixLimit;
+  const defaults = catalogCampaignDefaults();
+  const states = input.states ?? defaults.states;
+  const batchSize = input.batchSize ?? defaults.batchSize,
+    prefixLimit = input.prefixLimit ?? defaults.prefixLimit;
   if (
     !actorId ||
     !key ||
@@ -58,6 +62,8 @@ export async function startCatalogCampaign(actorId: string, key: string, input: 
   )
     throw new TaskConflict("campaign_request_invalid");
   const request = { reason: input.reason.trim(), states: [...states].sort(), batchSize, prefixLimit };
+  try { assertPilotTask("catalog-sync", { ...request }); }
+  catch { throw new TaskConflict("pilot_scope_exceeded"); }
   const id = "campaign_" + digest([actorId, key]).slice(0, 32),
     requestHash = digest(request);
   return prisma.$transaction(

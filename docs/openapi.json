@@ -53,6 +53,28 @@
                     "curationPipelineVersion": {
                       "type": "string"
                     },
+                    "supabaseProjectRef": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "environmentProfile": {
+                      "type": [
+                        "null",
+                        "object"
+                      ],
+                      "additionalProperties": true
+                    },
+                    "features": {
+                      "type": "object",
+                      "properties": {
+                        "catalogCampaigns": {
+                          "type": "boolean"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
                     "adapters": {
                       "type": "object",
                       "properties": {},
@@ -94,6 +116,28 @@
                     },
                     "curationPipelineVersion": {
                       "type": "string"
+                    },
+                    "supabaseProjectRef": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "environmentProfile": {
+                      "type": [
+                        "null",
+                        "object"
+                      ],
+                      "additionalProperties": true
+                    },
+                    "features": {
+                      "type": "object",
+                      "properties": {
+                        "catalogCampaigns": {
+                          "type": "boolean"
+                        }
+                      },
+                      "additionalProperties": true
                     },
                     "adapters": {
                       "type": "object",

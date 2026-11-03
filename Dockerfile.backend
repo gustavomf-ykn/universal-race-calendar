@@ -4,12 +4,15 @@ RUN npm install --global pnpm@9.15.4
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig*.json ./
 COPY packages ./packages
+COPY config ./config
 COPY apps/api ./apps/api
 COPY apps/worker ./apps/worker
 COPY scripts/staging-preflight.mjs ./scripts/staging-preflight.mjs
+COPY scripts/profile-migrate.mjs ./scripts/profile-migrate.mjs
 COPY scripts/check-runner-env.mjs scripts/start-staging-api.mjs scripts/worker-health.mjs scripts/aws-queue-preflight.mjs scripts/check-staging-database.mjs scripts/check-staging-storage.mjs scripts/aws-migrate.mjs ./scripts/
 RUN pnpm install --frozen-lockfile && pnpm db:generate && pnpm build
 USER node
 ENV NODE_ENV=production
+ENV RUNFINDER_PROFILE_CONFIG=/app/config/staging-profiles.json
 EXPOSE 3000
 CMD ["node","apps/api/dist/apps/api/src/server.js"]

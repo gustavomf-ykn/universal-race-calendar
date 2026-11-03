@@ -1,6 +1,10 @@
 # Backend unificado de corridas
 
-API Fastify, executor TypeScript e executor Python OpenResults separados, com PostgreSQL/Supabase, fila durável e Storage privado. Nenhum painel novo foi criado.
+API Fastify, executor TypeScript e executor Python OpenResults separados, com PostgreSQL/Supabase, fila durável e Storage privado. O painel Runfinder está no repositório [runfinder-rithmy](https://github.com/gustavomf-ykn/runfinder-rithmy).
+
+- **[Comece aqui para continuar de outro dispositivo](CONTINUITY.md)** — versões, branches, acessos e pendências.
+- [Hospedagem AWS e operação contínua](docs/AWS-HOSTING.md)
+- [Histórico de decisões e homologação](docs/history/README.md)
 
 - [Operação local, Supabase, implantação, diagnóstico e rollback](docs/RUNBOOK.md)
 - [Migrations e transferência controlada de dados](docs/MIGRATIONS.md)

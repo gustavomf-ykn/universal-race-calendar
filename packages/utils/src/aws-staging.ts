@@ -1,6 +1,8 @@
+import { assertRuntimeDestination } from "./staging-profile.js";
 /** AWS release artifacts are staging-only. Errors contain no connection values. */
 export function assertAwsStaging(env: Record<string, string | undefined>, names: string[]) {
   if (env.HOSTING_TARGET !== "aws") return;
+  if (env.RUNFINDER_PROFILE) { assertRuntimeDestination(env, names); return; }
   const ref = "sggrijhyblejlgimgzzc";
   try {
     if (env.SUPABASE_URL !== `https://${ref}.supabase.co`) throw Error();

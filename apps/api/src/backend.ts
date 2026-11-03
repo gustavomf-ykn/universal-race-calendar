@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { enqueueTask, prisma, publicTask, TaskConflict, listWorkers, readResultCheckpoint, editionLocationEvidence, resolveEventId, resolveEventIds } from "@race-calendar/database";
 import { authorize, keyHash, requireAdmin } from "./auth.js";
 import { resultSchema, disciplineSchema, matchSchema } from "./contracts.js";
+import { runtimeProfile } from "@race-calendar/utils";
 
 const text = { type: "string" } as const;
 const idParams = { type: "object", required: ["id"], properties: { id: text } };
@@ -94,6 +95,7 @@ export async function acceptTask(
   }
 }
 export async function registerBackend(app: FastifyInstance) {
+  const pilot = runtimeProfile()?.catalogPilot;
   app.get("/v1/executors", {
     onRequest: authorize("tasks:read"),
     schema: { tags: ["Operations"], security, response: { 200: {
@@ -125,8 +127,8 @@ export async function registerBackend(app: FastifyInstance) {
           properties: {
             from: { type: "string", format: "date" },
             to: { type: "string", format: "date" },
-            maxPages: { type: "integer", minimum: 1, maximum: 10, default: 1 },
-            limit: { type: "integer", minimum: 1, maximum: 100, default: 25 },
+            maxPages: { type: "integer", minimum: 1, maximum: pilot ? 1 : 10, default: 1 },
+            limit: { type: "integer", minimum: 1, maximum: pilot?.collectionQuantity ?? 100, default: pilot?.collectionQuantity ?? 25 },
           },
         },
         response: { 202: taskSchema, ...errors },
@@ -154,7 +156,7 @@ export async function registerBackend(app: FastifyInstance) {
             source: { enum: ["ticketsports", "corridasbr", "openresults"] },
             eventId: text,
             url: text,
-            quantity: { type: "integer", minimum: 1, maximum: 500, default: 25 },
+            quantity: { type: "integer", minimum: 1, maximum: pilot?.collectionQuantity ?? 500, default: pilot?.collectionQuantity ?? 25 },
             force: { type: "boolean", default: false },
             states: { type: "array", items: { type: "string", pattern: "^[A-Z]{2}$" }, maxItems: 27 },
           },
@@ -186,7 +188,7 @@ export async function registerBackend(app: FastifyInstance) {
       return acceptTask(req, reply, body.source, "calendar", {
         quantity: body.quantity,
         force: body.force,
-        ...(body.states ? { states: body.states } : {}),
+        ...(body.states || pilot ? { states: body.states ?? pilot!.states } : {}),
       });
     },
   );

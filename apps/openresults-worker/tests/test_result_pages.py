@@ -29,10 +29,21 @@ def test_false_string_is_terminal_and_missing_flag_requires_total(result_page):
         parse(result_page)
 
 
+def test_cfml_integer_valued_json_numbers_preserve_end_evidence(result_page):
+    result_page[2].update(recordsTotal=1.0, recordsFiltered=1.0, nextOffset=1.0)
+    page = parse(result_page)
+    assert page.expected == 1
+    assert page.next_offset == 1
+    assert len(page.records) == 1
+    assert page.has_more is False
+
+
 @pytest.mark.parametrize('field,value',[
     ('recordsTotal',1.5),('recordsTotal','1.5'),('recordsTotal',True),('recordsTotal',-1),
     ('recordsTotal','Infinity'),('hasMore','maybe'),('hasMore',1),('html',None),
     ('nextOffset',2),('nextOffset','1.5'),('ok','false'),('recordsFiltered',2),('hasMore',True),
+    ('nextOffset',1.5),('nextOffset',float('inf')),('nextOffset',float('nan')),
+    ('nextOffset',-1.0),('nextOffset',2147483648.0),
 ])
 def test_inconsistent_page_never_becomes_complete(result_page,field,value):
     result_page[2][field]=value

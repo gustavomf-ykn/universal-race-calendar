@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "profiles": {
+    "local-staging": {
+      "id": "local-staging",
+      "name": "Runfinder local staging",
+      "projectRef": "gpkodfsofwiroskdmeax",
+      "supabaseUrl": "https://gpkodfsofwiroskdmeax.supabase.co",
+      "catalogPilot": {
+        "states": ["SC"],
+        "batchSize": 5,
+        "prefixLimit": 25,
+        "collectionQuantity": 5
+      }
+    }
+  }
+}

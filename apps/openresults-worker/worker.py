@@ -264,6 +264,8 @@ async def execute(task):
                 raise RuntimeError('lease_lost')
     async def work():
         nonlocal checkpoint
+        from local_profile import assert_pilot_task
+        assert_pilot_task(task['kind'], task['payload'])
         await asyncio.to_thread(assert_resources)
         await asyncio.to_thread(database_capacity, query)
         settings=replace(Settings.from_env(),scrape_concurrency=1,catalog_concurrency=1,metadata_concurrency=1)
@@ -356,6 +358,8 @@ async def execute(task):
 
 
 async def main():
+    from local_profile import assert_runtime_destination
+    assert_runtime_destination()
     from aws_staging import assert_aws_staging
     assert_aws_staging()
     run = BatchRun()

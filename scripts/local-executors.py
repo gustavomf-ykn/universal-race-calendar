@@ -11,10 +11,13 @@ from datetime import datetime, timezone
 import psycopg
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "apps" / "openresults-worker"))
 
 
 def main():
-    runtime = ROOT / '.secrets' / 'executors'
+    from local_profile import assert_runtime_destination
+    assert_runtime_destination(names=("WORKER_DATABASE_URL",))
+    runtime = Path(os.environ.get("WORKER_RUNTIME_DIR", str(ROOT / '.secrets' / 'executors')))
     runtime.mkdir(parents=True, exist_ok=True)
     lock = (runtime / 'session.lock').open('a+b')
     lock.seek(0); lock.write(b'1'); lock.flush(); lock.seek(0)
@@ -85,6 +88,9 @@ def main():
             running = db.execute('SELECT count(*) FROM "CollectionTask" WHERE status=\'running\' AND \"leaseUntil\">now()').fetchone()[0]
         if active or running:
             log('Outro executor recente ou tarefa em execução detectada. Não iniciamos concorrentes; confira o painel e aguarde a presença expirar.')
+            return 2
+        if os.environ.get("RUNFINDER_PROFILE") and weekly[0]:
+            log('Perfil piloto exige agenda desligada. Nenhum executor iniciado.')
             return 2
         log(f'Conexão aprovada. {len(pending)} pedidos elegíveis; {protected} pedidos protegidos; nenhum executor recente.')
         if weekly[0] and selected is None:
