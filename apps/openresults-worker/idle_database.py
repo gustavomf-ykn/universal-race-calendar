@@ -8,6 +8,14 @@ from worker_health import write_health
 
 def transient_connection_error(error):
     state = getattr(error, 'sqlstate', None)
+    # Some pooler errors omit SQLSTATE. Classify known permanent diagnostics
+    # in memory without ever logging their messages or connection details.
+    if isinstance(error, psycopg.OperationalError) and state is None:
+        message = str(error).casefold()
+        if any(marker in message for marker in (
+                'password authentication failed', 'invalid password', 'tenant or user not found',
+                'certificate verify failed', 'certificate verification failed')):
+            return False
     return isinstance(error, psycopg.OperationalError) and (
         state is None or state.startswith('08') or state in ('57P01', '57P02', '57P03', '53300'))
 

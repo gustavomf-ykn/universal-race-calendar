@@ -111,10 +111,68 @@ praias e dunas nos percursos principais, com auditoria via API.
 | Associação/435 resultados/XLSX | API local, workers locais, Storage real | Aprovado |
 | Cancelamento, resposta perdida, checkpoints, interrupção, lease antigo e preservação após falhas/expiração | Testes automatizados no PostgreSQL descartável/CI | Aprovado controlado; não equivale a interrupção desta coleta real |
 | ZIP via API, Storage e navegador | Divisão local controlada; faltam seleção/fluxo real no painel | Pendente |
-| Campanha e todos os botões no painel publicado com novo projeto | Frontend preparado; exige publicação e sessão nova | Pendente |
+| Login, calendário, detalhes, resultados, coleta, exportação, download e repetição de cliques no painel | Publicação confirmada e ensaio autenticado em Chromium isolado abaixo | Aprovado nos cenários descritos |
+| Cancelamento, nova tentativa e controles de campanha no painel | Executores desligados, cinco tarefas técnicas canceladas antes da execução | Aprovado controlado |
+| Continuação prolongada da campanha com dados reais | Controles testados separadamente; não foi executada varredura integral | Pendente |
 | Cobertura nacional/agenda/AWS | Fora do piloto; agenda bloqueada, AWS não provisionada | Não executado |
 
-O controle automatizado do navegador falhou ao inicializar nesta sessão. Não
-foi realizado aceite autenticado do painel publicado com o novo projeto. CI,
-202, health ou fila vazia não são usados como substitutos desse aceite.
+O helper de controle do navegador nativo falhou ao inicializar. Após o proprietário
+confirmar publicação/login, o site foi testado em Chromium headless isolado, com
+identidades técnicas próprias e sem ler sua sessão/senha. As tentativas iniciais
+do harness exigiram aguardar hidratação e manter o tab de polling em primeiro
+plano; não foram interpretadas como falha de login do proprietário. CI, 202,
+health ou fila vazia não substituem as evidências de processamento/download.
 Arquivos completos e relatórios privados ficam em `.secrets/gpkodfsofwiroskdmeax/`.
+
+## Aceite após publicação e correção do Session Pooler
+
+O painel publicado consultou a URL HTTPS/Supabase novos. Login técnico via Auth
+retornou 200; detalhes abriram; a interface mostrou 435 registros e filtro 5k com
+91 registros, incluindo página dois. Nenhum erro JavaScript foi observado. As
+contas técnicas foram removidas após cada ensaio, sem convites.
+
+Durante a espera, o Python encerrou e o supervisor parou ambos os executores. A
+investigação confirmou `EMAXCONNSESSION`: 15 clientes no Session Pooler. A causa
+não foi atribuída à senha. O PR #16 limita API e TypeScript a duas conexões Prisma
+cada no perfil piloto (nativo/Docker), preserva SSL/credenciais e mantém a URI
+Python livre de opções Prisma. Também recupera falhas transitórias ociosas com
+backoff/health indisponível, sem repetir I/O ativa ou batch. Erros permanentes
+de senha, tenant e certificado, inclusive sem SQLSTATE, não são repetidos. Os
+logs incluem só fase, classe e SQLSTATE, omitindo mensagens/DSNs.
+
+O candidato `934a61b14df8f07a20d0d502bae8af0a77a1c966` passou no CI
+[41553831289](https://github.com/gustavomf-ykn/universal-race-calendar/actions/runs/41553831289)
+e no ensaio abaixo. Os dois executores permaneceram disponíveis após a redução
+de conexões, inclusive além do intervalo em que a interrupção havia ocorrido.
+Os testes extras de classificação de erros permanentes e este relatório devem
+ser integrados somente após o CI do último commit do PR. Não há nova migration
+nem alteração de frontend; atualizar API/TypeScript/Python requer reiniciar os
+processos com o código integrado.
+
+- **Coleta efetiva pelo painel:** `97df5400-6697-4ab0-8087-1220b8a4d7a8`,
+  concluída pelo Python local. Repetição da mesma intenção retornou o mesmo ID.
+  Foram confirmados novamente 435 resultados: zero chaves novas, zero removidas,
+  zero duplicatas. Isso é coleta bem-sucedida de dados iguais, não mera
+  preservação após falha. Nenhum executor GitHub processou a tarefa.
+- **Exportação pelo painel após essa coleta:**
+  `9382bfd9-63d6-43a1-b050-f0911c28e450`, tarefa
+  `ab50cb69-50dc-4efa-b714-a2a256512c02`. A primeira resposta foi descartada pelo
+  harness após a API aceitar. Dois cliques posteriores usaram a mesma chave e
+  retornaram o mesmo artefato/tarefa. A interface mostrou pronto para baixar e o
+  navegador baixou do Storage (200) o XLSX: 435 linhas e 19 colunas, aberto e
+  conferido. Há uma tarefa por intenção; ensaios técnicos separados usam usuários
+  diferentes e geraram suas próprias exportações pequenas.
+- **Controles pelo painel, executores desligados:** campanha
+  `campaign_1f0199e247d34e9cb1adb255f22f0d01`, início, pausa, retomada e
+  cancelamento aprovados. Suas três tarefas `catalog-sync`, a tarefa de coleta
+  técnica `e34d3a98-4bdb-49ce-8d7d-58ff4a08b31b` e a nova tentativa
+  `e1ff1a54-550f-42ac-b76a-f06757ef6a7d` foram canceladas com attempt=0. A falha
+  original foi mantida e o checkpoint inválido não ofereceu retomada. Resultados
+  permaneceram em 435 e a fila terminou sem tarefas pendentes/em execução. Não
+  houve processamento de coleta nesses testes de controle.
+
+O script reproduzível é `scripts/profile-panel-smoke.py`; modos e limites no
+runbook. A suíte de recuperação/interrupção por lease continua separada, no
+PostgreSQL descartável do CI. ZIP pelo navegador e uma campanha prolongada
+com processamento real permanecem pendentes; não há afirmação de cobertura
+nacional ou prontidão de produção.

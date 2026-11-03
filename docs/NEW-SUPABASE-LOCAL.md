@@ -76,3 +76,18 @@ Os scripts `profile-calendar-pilot.py` e `profile-real-results.py` usam intenç�
 fixas e relatórios privados para acompanhar o mesmo pedido após interrupções.
 Não são importadores em massa. Uma nova tentativa de resultado, após correção
 de estrutura, usa a rota de retry/restart e preserva a tarefa original falha.
+
+`scripts/profile-panel-smoke.py` testa o site publicado em Chromium isolado,
+criando/removendo uma identidade técnica no novo projeto. O padrão consulta
+calendário, login, detalhes, 435 resultados, modalidade e paginação. `--collect`
+faz uma coleta intencional da edição conhecida; `--export` solicita uma única
+exportação por intenção, simula resposta perdida/repetição e baixa o XLSX pela
+interface. Usa dados reais, não insere fixtures e guarda só relatórios/arquivos
+privados. `--from-environment` é a alternativa ao DPAPI em outro sistema.
+
+`--controls` exige fila vazia e todos os executores desligados. Testa, pelo
+painel, cancelar um pedido pendente, repetir uma falha sem checkpoint compatível
+e iniciar/pausar/retomar/cancelar uma campanha. Cancela os cinco pedidos técnicos
+antes de execução e preserva resultados/histórico. É um teste dos controles,
+sem comprovar processamento ou continuação prolongada da campanha. Não combinar
+esse modo com `--collect` ou `--export`; conferir a fila antes de religar workers.

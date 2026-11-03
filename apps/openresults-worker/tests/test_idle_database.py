@@ -65,3 +65,16 @@ async def test_stop_during_reconnect_does_not_claim_again():
 def test_non_connection_errors_are_not_retried():
     assert not transient_connection_error(psycopg.errors.InsufficientPrivilege())
     assert not transient_connection_error(ValueError('configuration'))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('reason', ['FATAL: Tenant or user not found', 'password authentication failed', 'certificate verify failed'])
+async def test_pooler_permanent_errors_without_sqlstate_are_not_retried(reason, capsys):
+    calls = []
+    def operation():
+        calls.append(True)
+        raise psycopg.OperationalError(reason + ' private-connection-details')
+    with pytest.raises(psycopg.OperationalError):
+        await idle_database_call(operation, 'claim', lambda: True, lambda: False)
+    assert len(calls) == 1
+    assert 'private-connection-details' not in capsys.readouterr().out
