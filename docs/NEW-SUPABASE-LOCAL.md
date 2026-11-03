@@ -30,6 +30,14 @@ Campanha: SC, batchSize até 5, prefixLimit até 25 por fonte. Coletas de calend
 
 Preencher o build com VITE_API_BASE_URL e VITE_API_DOCS_URL do túnel atual, VITE_SUPABASE_URL=https://gpkodfsofwiroskdmeax.supabase.co, VITE_SUPABASE_PUBLISHABLE_KEY do novo projeto e VITE_APP_ENV_LABEL=Homologação local.
 
+Após iniciar o túnel, a ação `frontend-config` prepara
+`.secrets/gpkodfsofwiroskdmeax/lovable-public.env` com somente esses cinco valores
+públicos. Ela confere a identidade da API HTTPS antes de gravar e não imprime a
+chave. Nenhuma chave privilegiada é incluída. O `.env` público do PR do frontend
+foi preparado para a sessão de 02/11/2026. Confirmar se há variáveis externas da
+Lovable sobrescrevendo o arquivo antes de publicar. Ao trocar a URL do túnel,
+atualizar as duas URLs da API no build e publicar novamente.
+
 Publicação: https://runfinder-rithmy.lovable.app .
 Preview: https://id-preview--e21cded7-e20c-4cde-affb-e861bee99b6e.lovable.app .
 Essas origens exatas são usadas no CORS. Configurar Site URL/Redirect URLs do novo Supabase, sair e entrar novamente. O usuário do projeto anterior não é transferido. scripts/profile-owner.py prepara a conta do proprietário por formulário, preservando metadados/senha de uma conta já existente.
@@ -47,3 +55,9 @@ A receita AWS anterior continua fixada no projeto antigo até uma revisão expl�
 ## Aceite
 
 Registrar separadamente testes automatizados em PostgreSQL descartável, ensaios reais por API e navegador autenticado. Realizar pilotos pequenos, comparação com fontes, deduplicação, associação por identidade, resultados, XLSX/ZIP aberto, links autorizados e recuperação. Não repetir bloqueios ou tratar health/202/queue_empty como coleta concluída. Relatórios privados ficam somente no diretório do novo perfil; senhas/tokens/dados de atletas não entram nos relatórios públicos.
+
+Evidências desta rodada: [02/11/2026](evidence/2026-11-02-new-supabase-local.md).
+Os scripts `profile-calendar-pilot.py` e `profile-real-results.py` usam intenções
+fixas e relatórios privados para acompanhar o mesmo pedido após interrupções.
+Não são importadores em massa. Uma nova tentativa de resultado, após correção
+de estrutura, usa a rota de retry/restart e preserva a tarefa original falha.
